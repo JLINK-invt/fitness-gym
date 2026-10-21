@@ -1,0 +1,27 @@
+[package]
+name = "gym-desktop"
+description = "Shell Tauri v2 del core local de Fitness Gym"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gym_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono.workspace = true
+gym-backup.workspace = true
+gym-contracts.workspace = true
+gym-core.workspace = true
+gym-data.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tracing.workspace = true
+tracing-subscriber.workspace = true

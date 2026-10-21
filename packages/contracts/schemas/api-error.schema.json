@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fitness-gym.local/contracts/api-error.schema.json",
+  "title": "ApiError",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "enum": ["invalidRequest", "notFound", "storage", "backup", "unauthorized", "internal"]
+    },
+    "message": { "type": "string" },
+    "details": { "type": "string" }
+  }
+}

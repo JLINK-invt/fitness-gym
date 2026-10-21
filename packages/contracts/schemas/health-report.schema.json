@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fitness-gym.local/contracts/health-report.schema.json",
+  "title": "HealthReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "service",
+    "version",
+    "contractVersion",
+    "status",
+    "modules",
+    "database",
+    "checkedAt"
+  ],
+  "properties": {
+    "service": { "type": "string" },
+    "version": { "type": "string" },
+    "contractVersion": { "const": "1.0.0" },
+    "status": { "enum": ["ok", "degraded", "down"] },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "enum": ["ok", "degraded", "down"] },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "database": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "encrypted", "schemaVersion", "integrityOk", "organizations"],
+          "properties": {
+            "path": { "type": "string" },
+            "encrypted": { "type": "boolean" },
+            "cipherVersion": { "type": "string" },
+            "schemaVersion": { "type": "integer" },
+            "integrityOk": { "type": "boolean" },
+            "organizations": { "type": "integer" }
+          }
+        }
+      ]
+    },
+    "checkedAt": { "type": "string", "format": "date-time" }
+  }
+}

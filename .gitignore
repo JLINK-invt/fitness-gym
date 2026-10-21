@@ -1,0 +1,15 @@
+node_modules/
+dist/
+target/
+.turbo/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.gymbak
+coverage/
+apps/gym-desktop/src-tauri/gen/
