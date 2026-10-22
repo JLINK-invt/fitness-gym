@@ -10,8 +10,9 @@ mod key;
 mod migrations;
 
 pub use db::{
-    verify_encrypted_database, Db, LocalDatabaseStatus, ModuleEventRecord, OrganizationRecord,
-    RecordedModuleEvent, SiteRecord, StaffRecord, UserCredentialRecord, UserRecord,
+    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, Db, LocalDatabaseStatus,
+    ModuleEventRecord, OrganizationRecord, RecordedModuleEvent, SiteRecord, StaffRecord,
+    UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

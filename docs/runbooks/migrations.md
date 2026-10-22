@@ -13,7 +13,8 @@ SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY versi
 PRAGMA integrity_check;
 ```
 
-La app expone el mismo estado en la pantalla de diagnóstico.
+La app expone el mismo estado en la pantalla de diagnóstico. Versión actual: 4
+(`0004_immutable_audit.sql`).
 
 ## Rollback
 

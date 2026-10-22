@@ -106,7 +106,7 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría | Implementado; auditoría de login básica |
+| Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría encadenada | Implementado |
 | Sesión abierta en mostrador | Bloqueo por inactividad (15 min) y cierre de sesión manual | Implementado |
 | Backup restaurado para hacerse pasar por otro usuario | Restore requiere `ManageBackups`; auditoría; aviso de reemplazo total | Parcial |
 | PIN compartido | PIN no será factor único | Decidido |
@@ -121,13 +121,13 @@ Fronteras:
 | Alterar backups | SHA-256 del sobre en sidecar; passphrase para descifrar | Implementado |
 | Manipular `-wal`/`-shm` durante restore | Cierre, checkpoint y limpieza antes del swap | Implementado |
 | Cambiar código del frontend | CSP, assets locales y binario empaquetado | Implementado |
-| Modificar logs de auditoría | Falta cadena de hashes/append-only | Pendiente |
+| Modificar logs de auditoría | Triggers append-only + hash chain SHA-256; verificación desde la UI | Implementado; truncado del final requiere copia externa |
 
 ### R — Repudiation
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, sedes y personal; ventas pendientes |
+| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, sedes, personal, acceso y backups; ventas pendientes |
 | Cuenta compartida | Identidad por persona y bloqueo de sesión | Decidido |
 | Restore sin responsable | Registrar actor, backup y resultado | Pendiente |
 
@@ -230,7 +230,7 @@ su propio ADR antes de implementarse.
 | --- | --- | --- |
 | Sesión desbloqueada comprometida | Alto | Aceptado; EDR, bloqueo por inactividad, backups |
 | Rollback a una base válida anterior | Medio | Aceptado en Phase 1; evaluar ancla monotónica en Phase 2 |
-| Auditoría editable por el owner | Medio | Aceptado; hash chain + copia externa en Phase 2 |
+| Truncado del final de la cadena de auditoría | Medio | Parcial; copia externa y anclaje monotónico en una fase posterior |
 | Pérdida de passphrase de backups | Alto | Aceptado; educación y prueba trimestral de restore |
 | Dependencia comprometida | Medio | Lockfiles, auditorías y builds firmados |
 | Keychain no disponible | Bajo | Fallback dev con advertencia; no se crea base en claro |
@@ -255,6 +255,7 @@ su propio ADR antes de implementarse.
 - [x] CSP y capability mínima configuradas; pruebas estáticas validan la allowlist y la ausencia de web storage.
 - [x] Clave migrada al keychain del SO (2026-10-21).
 - [x] Login local, sesión y RBAC conectados a auth, sedes y personal.
+- [x] Auditoría append-only con hash chain, consulta por sede y verificación.
 - [ ] Extender RBAC y auditoría a recepción, finanzas e inventario.
 - [x] Vertical slice de acceso simulado con deduplicación por `idempotency_key`.
 - [x] Backup/restore desde la UI con IPC simulado; el binario nativo se valida

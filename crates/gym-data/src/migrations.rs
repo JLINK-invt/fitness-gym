@@ -36,4 +36,18 @@ pub const MIGRATIONS: &[Migration] = &[
         down: "DROP INDEX IF EXISTS idx_staff_one_membership_per_user; \
                DROP INDEX IF EXISTS idx_sites_organization_name;",
     },
+    Migration {
+        version: 4,
+        name: "immutable_audit",
+        up: include_str!("../migrations/0004_immutable_audit.sql"),
+        down: "DROP TRIGGER IF EXISTS audit_events_no_delete; \
+               DROP TRIGGER IF EXISTS audit_events_no_update; \
+               DROP INDEX IF EXISTS idx_audit_organization_site_sequence; \
+               DROP INDEX IF EXISTS idx_audit_organization_sequence; \
+               ALTER TABLE audit_events DROP COLUMN event_hash; \
+               ALTER TABLE audit_events DROP COLUMN prev_hash; \
+               ALTER TABLE audit_events DROP COLUMN origin; \
+               ALTER TABLE audit_events DROP COLUMN site_id; \
+               ALTER TABLE audit_events DROP COLUMN sequence;",
+    },
 ];

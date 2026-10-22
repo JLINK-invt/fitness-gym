@@ -1,6 +1,6 @@
 # Contrato local · sedes y personal (Phase 2)
 
-- **Versión de contrato:** 1.3.0 (aditiva sobre 1.2.0)
+- **Versión de contrato:** 1.3.0 (sin cambios de DTO; compatible con 1.4.0)
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 - **Esquema:** v3 (`0003_sites_staff.sql`)
@@ -67,8 +67,8 @@ interface StaffSummary {
   encargados, no mueve personal a otra sede y no ve otras sedes.
 - Desactivar (`revoked`) impide el siguiente login. Reactivar exige una sede
   activa.
-- Cambiar rol o sede aplica en el siguiente comando; la sesión abierta conserva
-  los permisos con los que fue creada hasta expirar o cerrar sesión.
+- Cambiar rol o sede aplica en el siguiente inicio de sesión; la sesión abierta
+  conserva los permisos con los que fue creada hasta expirar o cerrar sesión.
 
 ## Errores
 
@@ -93,4 +93,4 @@ No se guardan contraseñas, hashes ni datos innecesarios en la auditoría.
 
 Borrado físico de sedes o personas, transferencia de membresías entre
 instalaciones, permisos personalizados, múltiples dueños y edición del perfil
-propio. La recuperación del dueño requiere una decisión posterior.
+propio. La recuperación del dueño se difiere a Phase 5 (endurecimiento).

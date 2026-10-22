@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 
-/// Roles enabled in V1. Coach, marketing and member are V2.
+/// Roles enabled in V1. Coach, marketing and member are pending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {

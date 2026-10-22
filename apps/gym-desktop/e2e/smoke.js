@@ -147,6 +147,9 @@ async (page) => {
   if ((await page.getByRole("link", { name: "Sedes" }).count()) > 0) {
     throw new Error("El cajero no debería ver Sedes.");
   }
+  if ((await page.getByRole("link", { name: "Auditoría" }).count()) > 0) {
+    throw new Error("El cajero no debería ver Auditoría.");
+  }
   await page.getByRole("link", { name: "Acceso" }).waitFor();
   pass("cajero no ve módulos administrativos");
 
@@ -154,6 +157,14 @@ async (page) => {
   await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-segura-123");
   await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("link", { name: "Auditoría" }).click();
+  await page.getByRole("heading", { name: "Auditoría" }).waitFor();
+  await page.getByText(/Cadena íntegra:/).waitFor();
+  if ((await page.locator("tbody tr").count()) === 0) {
+    throw new Error("La auditoría no mostró eventos.");
+  }
+  pass("auditoría lista eventos y verifica la cadena");
+
   await page.getByRole("link", { name: "Equipo" }).click();
   const cashierRow = page.locator("tbody tr", { hasText: "Carlos Caja" });
   await cashierRow.getByRole("button", { name: "Desactivar" }).click();

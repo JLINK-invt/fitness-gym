@@ -3,27 +3,31 @@
 Core de escritorio para gimnasios independientes: Tauri v2 + React + TypeScript,
 backend Rust modular y SQLite cifrada con SQLCipher.
 
-La **Fase 1 — Fundación desktop Rust/SQLite** está cerrada. La **Fase 2** inicia
-con identidad local, sesiones y autorización real en Rust antes de construir
-Recepción, miembros y cobros.
+Las **Fases 1 y 2** están cerradas: fundación desktop Rust/SQLite, identidad
+local, sesiones, tenancy, RBAC y auditoría inmutable. La **Fase 3** añade POS,
+caja, inventario y suscripciones para usuarios comunes. CRM, socios, membresías
+y clases forman parte de la misma versión desktop. Mobile queda para próximamente.
 
 ## Estado actual
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v3 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v4 |
 | Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
 | RBAC por rol en comandos Tauri | Operativo para auth, sedes y personal, con alcance por sede |
 | Sedes y personal | Operativo: crear, renombrar, cerrar/reabrir sedes y administrar accesos con auditoría |
-| Recepción, miembros, planes y cobros | Siguiente vertical slice de Fase 2 |
-| Validación Windows/macOS | Diferida a Fase 6 por falta de hardware macOS |
-| Smoke E2E de interfaz | 14 comprobaciones en verde con IPC simulado |
+| Auditoría inmutable | Operativo: append-only, hash chain, consulta por sede y verificación de integridad |
+| Suscripciones | Siguiente en Fase 3: planes, altas, renovaciones y vencimientos |
+| CRM, socios y membresías | Misma versión desktop, Fase 4 |
+| Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
+| Smoke E2E de interfaz | 15 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 exige login, administra sedes y accesos del equipo con permisos revalidados en
-Rust, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo se
+Rust, registra auditoría append-only con hash chain, simula accesos y crea
+snapshots cifrados. Funciona sin Internet. Solo se
 admite un gimnasio por instalación; la pantalla no expone conceptos de
 multi-organización.
 
@@ -106,8 +110,8 @@ npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 El script cubre primer arranque con dueño, health, acceso permitido/denegado con
 idempotencia, validación de frase, creación de backup, rechazo de frase
 incorrecta, restauración y cierre de sesión. También crea una sede y un cajero,
-comprueba que el cajero no ve módulos administrativos y que una cuenta
-desactivada ya no puede iniciar sesión.
+comprueba que el cajero no ve módulos administrativos, verifica la cadena de
+auditoría y confirma que una cuenta desactivada ya no puede iniciar sesión.
 
 ## Estructura
 
@@ -132,7 +136,8 @@ docs/
 - [ADRs](docs/adr/README.md): arquitectura local-first, identidad, cifrado y backups.
 - [Threat model](docs/threat-model.md): STRIDE, activos, fronteras y riesgos residuales.
 - [Matriz de permisos](docs/security/permission-matrix.md): roles, sedes y acciones.
-- [Contrato de sedes y personal](docs/contracts/sites-staff.md): comandos, reglas y auditoría.
+- [Contrato de sedes y personal](docs/contracts/sites-staff.md): comandos y reglas.
+- [Contrato de auditoría](docs/contracts/audit.md): append-only, hash chain y consulta.
 - [Runbook de migraciones](docs/runbooks/migrations.md).
 
 ## Seguridad implementada
@@ -152,16 +157,18 @@ docs/
 - Migraciones con checksum y `user_version`; drift detectado al abrir.
 - Acceso simulado protegido por sesión y permiso de operación, sin guardar la
   credencial y con deduplicación durable por `idempotency_key`.
+- Auditoría append-only con triggers anti `UPDATE`/`DELETE`, hash chain SHA-256 y
+  verificación de integridad desde la UI.
 - Logs sin claves ni passphrases.
 
-## Siguientes pasos de Phase 2
+## Siguientes pasos
 
-1. Recepción real: búsqueda de miembros, membresías, cobros y check-in.
-2. Extender auditoría y RBAC a recepción, finanzas e inventario.
-3. Política de recuperación del dueño y revisión de MFA/OIDC.
-4. Validar el binario Tauri en Windows y macOS durante Phase 6; Playwright solo
-   cubre la UI con IPC simulado.
+1. Phase 3: POS, caja, inventario y suscripciones para usuarios comunes.
+2. Phase 4: CRM, socios, membresías, clases, snapshots y analítica.
+3. Phase 5: hardening, piloto y validación/empaquetado en Windows/macOS.
+4. Mobile: próximamente, fuera de la versión desktop.
 
 Contratos: [acceso simulado](docs/contracts/access-simulated.md),
-[auth local](docs/contracts/auth-local.md) y
-[sedes y personal](docs/contracts/sites-staff.md).
+[auth local](docs/contracts/auth-local.md),
+[sedes y personal](docs/contracts/sites-staff.md) y
+[auditoría](docs/contracts/audit.md).
