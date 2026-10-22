@@ -104,7 +104,7 @@ async (page) => {
   await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
   pass("restore correcto cierra la sesión");
 
-  await page.getByLabel("Nombre").fill("Ana E2E");
+  await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-segura-123");
   await page.getByRole("button", { name: "Entrar" }).click();
   await page.getByRole("heading", { name: "Backups cifrados" }).waitFor();
@@ -114,6 +114,60 @@ async (page) => {
   }
   pass("login posterior al restore conserva el backup");
 
-  await page.screenshot({ path: "backups-e2e.png", fullPage: true });
+  await page.getByRole("link", { name: "Sedes" }).click();
+  await page.getByRole("heading", { name: "Sedes", exact: true }).waitFor();
+  await page.getByLabel("Nombre de la sede").fill("Sucursal Norte");
+  await page.getByRole("button", { name: "Crear sede" }).click();
+  await page.getByLabel("Nombre de Sucursal Norte").waitFor();
+  pass("crear sede y listarla");
+
+  await page.getByRole("link", { name: "Equipo" }).click();
+  await page.getByRole("heading", { name: "Equipo" }).waitFor();
+  await page.getByLabel("Nombre del empleado").fill("Carlos Caja");
+  await page.getByLabel("Sede de la nueva cuenta").selectOption({ label: "Sucursal Norte" });
+  await page.getByLabel("Contraseña inicial").fill("clave-carlos-123");
+  await page.getByRole("button", { name: "Crear acceso" }).click();
+  await page.getByText("Acceso creado. Ya puede iniciar sesión.").waitFor();
+  await page.getByText("Carlos Caja").waitFor();
+  pass("crear acceso de cajero");
+
+  await page.getByRole("button", { name: "Salir" }).click();
+  await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
+  await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
+  await page.getByLabel("Contraseña").fill("clave-carlos-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  await page.getByText("Cajero", { exact: true }).waitFor();
+  if ((await page.getByRole("link", { name: "Backups" }).count()) > 0) {
+    throw new Error("El cajero no debería ver Backups.");
+  }
+  if ((await page.getByRole("link", { name: "Equipo" }).count()) > 0) {
+    throw new Error("El cajero no debería ver Equipo.");
+  }
+  if ((await page.getByRole("link", { name: "Sedes" }).count()) > 0) {
+    throw new Error("El cajero no debería ver Sedes.");
+  }
+  await page.getByRole("link", { name: "Acceso" }).waitFor();
+  pass("cajero no ve módulos administrativos");
+
+  await page.getByRole("button", { name: "Salir" }).click();
+  await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
+  await page.getByLabel("Contraseña").fill("clave-segura-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("link", { name: "Equipo" }).click();
+  const cashierRow = page.locator("tbody tr", { hasText: "Carlos Caja" });
+  await cashierRow.getByRole("button", { name: "Desactivar" }).click();
+  await cashierRow.getByText("Inactivo").waitFor();
+  pass("desactivar acceso de empleado");
+
+  await page.getByRole("button", { name: "Salir" }).click();
+  await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
+  await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
+  await page.getByLabel("Contraseña").fill("clave-carlos-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByText("Nombre o contraseña incorrectos.").waitFor();
+  pass("empleado desactivado ya no puede entrar");
+
+  await page.screenshot({ path: "e2e-smoke.png", fullPage: true });
   return { checks: passed.length, passed };
 }

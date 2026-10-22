@@ -5,13 +5,13 @@ use gym_backup::{
 use gym_contracts::{
     AccessDecision, AccessEventSummary, AccessRequest, ApiError, BackupSummary, ErrorCode,
     HealthReport, HealthStatus, ModuleHealth, RestoreOutcome, SessionSummary, SetupState,
-    StaffRole, CONTRACT_VERSION,
+    SiteStatus, SiteSummary, StaffRole, StaffStatus, StaffSummary, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
     auth::{
         hash_password, normalize_person_name, verify_password, IDLE_TIMEOUT_MINUTES,
-        LOGIN_LOCK_MINUTES, MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS,
+        LOGIN_LOCK_MINUTES, MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS, STAFF_MIN_PASSWORD_CHARS,
     },
     rbac::{self, Permission, Role},
     CORE_VERSION, SERVICE_NAME,
@@ -284,6 +284,91 @@ fn build_session(
         name: credentials.name,
         role,
     })
+}
+
+fn site_status(value: &str) -> SiteStatus {
+    match value {
+        "closed" => SiteStatus::Closed,
+        _ => SiteStatus::Active,
+    }
+}
+
+fn site_status_str(value: SiteStatus) -> &'static str {
+    match value {
+        SiteStatus::Active => "active",
+        SiteStatus::Closed => "closed",
+    }
+}
+
+fn staff_status(value: &str) -> StaffStatus {
+    match value {
+        "revoked" => StaffStatus::Revoked,
+        _ => StaffStatus::Active,
+    }
+}
+
+fn staff_status_str(value: StaffStatus) -> &'static str {
+    match value {
+        StaffStatus::Active => "active",
+        StaffStatus::Revoked => "revoked",
+    }
+}
+
+fn role_from_contract(role: StaffRole) -> Role {
+    match role {
+        StaffRole::Owner => Role::Owner,
+        StaffRole::Manager => Role::Manager,
+        StaffRole::Cashier => Role::Cashier,
+        StaffRole::Accounting => Role::Accounting,
+    }
+}
+
+fn site_summary(record: gym_data::SiteRecord) -> SiteSummary {
+    SiteSummary {
+        id: record.id,
+        name: record.name,
+        status: site_status(&record.status),
+        created_at: record.created_at,
+    }
+}
+
+fn staff_summary(record: gym_data::StaffRecord) -> StaffSummary {
+    StaffSummary {
+        user_id: record.user_id,
+        name: record.name,
+        role: role_from_str(&record.role)
+            .map(staff_role)
+            .unwrap_or(StaffRole::Cashier),
+        site_id: record.site_id,
+        site_name: record.site_name,
+        status: staff_status(&record.status),
+        last_login_at: record.last_login_at,
+        created_at: record.created_at,
+    }
+}
+
+fn site_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::SiteAlreadyExists => ApiError::invalid("ya existe una sede con ese nombre"),
+        DataError::SiteNotFound => ApiError::new(ErrorCode::NotFound, "la sede no existe"),
+        DataError::SiteHasActiveStaff => ApiError::invalid(
+            "no puedes cerrar una sede con personal activo; reasigna o desactiva primero",
+        ),
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo guardar la sede")
+            .with_details(other.to_string()),
+    }
+}
+
+fn staff_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::UserAlreadyExists => ApiError::invalid("ya existe una persona con ese nombre"),
+        DataError::SiteNotFound => ApiError::invalid("selecciona una sede válida"),
+        DataError::StaffNotFound => ApiError::new(ErrorCode::NotFound, "el empleado no existe"),
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo guardar al empleado")
+            .with_details(other.to_string()),
+    }
 }
 
 /// Fixed Argon2id hash used to keep unknown-user logins as slow as known ones.
@@ -655,6 +740,222 @@ fn list_access_events(
 }
 
 #[tauri::command]
+fn list_sites(state: State<'_, AppState>) -> Result<Vec<SiteSummary>, ApiError> {
+    let session = state.authorize(Permission::ManageStaff)?;
+    let db = state.db()?;
+    let mut sites = db
+        .list_sites(&session.organization_id)
+        .map_err(site_api_error)?;
+    if session.role == Role::Manager {
+        sites.retain(|site| Some(&site.id) == session.site_id.as_ref());
+    }
+    Ok(sites.into_iter().map(site_summary).collect())
+}
+
+#[tauri::command]
+fn create_site(name: String, state: State<'_, AppState>) -> Result<SiteSummary, ApiError> {
+    let session = state.authorize(Permission::ManageSettings)?;
+    let name = normalize_person_name(&name)
+        .map_err(|error| ApiError::invalid(format!("nombre de sede inválido: {error}")))?;
+    let db = state.db()?;
+    let site = db
+        .create_site(&session.organization_id, &name)
+        .map_err(site_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "site.created",
+        "site",
+        "allowed",
+        None,
+    );
+    Ok(site_summary(site))
+}
+
+#[tauri::command]
+fn update_site(
+    site_id: String,
+    name: String,
+    status: SiteStatus,
+    state: State<'_, AppState>,
+) -> Result<SiteSummary, ApiError> {
+    let session = state.authorize(Permission::ManageSettings)?;
+    let name = normalize_person_name(&name)
+        .map_err(|error| ApiError::invalid(format!("nombre de sede inválido: {error}")))?;
+    let db = state.db()?;
+    let site = db
+        .update_site(
+            &session.organization_id,
+            &site_id,
+            &name,
+            site_status_str(status),
+        )
+        .map_err(site_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "site.updated",
+        "site",
+        "allowed",
+        None,
+    );
+    Ok(site_summary(site))
+}
+
+#[tauri::command]
+fn list_staff(state: State<'_, AppState>) -> Result<Vec<StaffSummary>, ApiError> {
+    let session = state.authorize(Permission::ManageStaff)?;
+    let db = state.db()?;
+    let mut staff = db
+        .list_staff(&session.organization_id)
+        .map_err(staff_api_error)?;
+    if session.role == Role::Manager {
+        staff.retain(|member| member.role != "owner" && member.site_id == session.site_id);
+    }
+    Ok(staff.into_iter().map(staff_summary).collect())
+}
+
+#[tauri::command]
+fn create_staff(
+    name: String,
+    role: StaffRole,
+    site_id: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<StaffSummary, ApiError> {
+    let session = state.authorize(Permission::ManageStaff)?;
+    let role = role_from_contract(role);
+    if role == Role::Owner {
+        return Err(ApiError::invalid(
+            "el dueño se crea solo durante la configuración inicial",
+        ));
+    }
+    if session.role == Role::Manager && role == Role::Manager {
+        return Err(ApiError::new(
+            ErrorCode::Unauthorized,
+            "un encargado no puede crear otro encargado",
+        ));
+    }
+
+    let site_id = if session.role == Role::Manager {
+        session
+            .site_id
+            .clone()
+            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"))?
+    } else {
+        let value = site_id.trim();
+        if value.is_empty() {
+            return Err(ApiError::invalid("selecciona una sede"));
+        }
+        value.to_string()
+    };
+
+    let name = normalize_person_name(&name)
+        .map_err(|error| ApiError::invalid(format!("nombre inválido: {error}")))?;
+    let password_hash = hash_password(&password, STAFF_MIN_PASSWORD_CHARS)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+
+    let db = state.db()?;
+    let staff = db
+        .create_staff(
+            &session.organization_id,
+            &name,
+            &password_hash,
+            role.as_str(),
+            &site_id,
+        )
+        .map_err(staff_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "staff.created",
+        "staff_membership",
+        "allowed",
+        None,
+    );
+    Ok(staff_summary(staff))
+}
+
+#[tauri::command]
+fn update_staff(
+    user_id: String,
+    role: StaffRole,
+    site_id: String,
+    status: StaffStatus,
+    state: State<'_, AppState>,
+) -> Result<StaffSummary, ApiError> {
+    let session = state.authorize(Permission::ManageStaff)?;
+    if user_id == session.user_id {
+        return Err(ApiError::invalid("no puedes modificar tu propia cuenta"));
+    }
+
+    let role = role_from_contract(role);
+    if role == Role::Owner {
+        return Err(ApiError::invalid(
+            "la cuenta del dueño no se puede modificar",
+        ));
+    }
+
+    let db = state.db()?;
+    let current = db
+        .list_staff(&session.organization_id)
+        .map_err(staff_api_error)?
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "el empleado no existe"))?;
+    if current.role == "owner" {
+        return Err(ApiError::invalid(
+            "la cuenta del dueño no se puede modificar",
+        ));
+    }
+
+    let site_id = if session.role == Role::Manager {
+        if current.site_id != session.site_id || role == Role::Manager {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "solo puedes administrar cajeros y contabilidad de tu sede",
+            ));
+        }
+        let own_site = session
+            .site_id
+            .clone()
+            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"))?;
+        if site_id != own_site {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "no puedes mover personal a otra sede",
+            ));
+        }
+        own_site
+    } else {
+        let value = site_id.trim();
+        if value.is_empty() {
+            return Err(ApiError::invalid("selecciona una sede"));
+        }
+        value.to_string()
+    };
+
+    let staff = db
+        .update_staff(
+            &session.organization_id,
+            &user_id,
+            role.as_str(),
+            &site_id,
+            staff_status_str(status),
+        )
+        .map_err(staff_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "staff.updated",
+        "staff_membership",
+        "allowed",
+        None,
+    );
+    Ok(staff_summary(staff))
+}
+
+#[tauri::command]
 fn create_backup(
     passphrase: String,
     state: State<'_, AppState>,
@@ -774,7 +1075,13 @@ pub fn run() {
             list_access_events,
             create_backup,
             list_backups,
-            restore_backup
+            restore_backup,
+            list_sites,
+            create_site,
+            update_site,
+            list_staff,
+            create_staff,
+            update_staff
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fitness Gym");

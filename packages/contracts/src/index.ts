@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "1.2.0";
+export const CONTRACT_VERSION = "1.3.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -79,6 +79,28 @@ export interface SessionSummary {
   name: string;
   role: StaffRole;
   permissions: Permission[];
+}
+
+export type SiteStatus = "active" | "closed";
+
+export type StaffStatus = "active" | "revoked";
+
+export interface SiteSummary {
+  id: string;
+  name: string;
+  status: SiteStatus;
+  createdAt: string;
+}
+
+export interface StaffSummary {
+  userId: string;
+  name: string;
+  role: StaffRole;
+  siteId: string | null;
+  siteName: string | null;
+  status: StaffStatus;
+  lastLoginAt: string | null;
+  createdAt: string;
 }
 
 export interface BackupSummary {

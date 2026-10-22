@@ -11,7 +11,7 @@ mod migrations;
 
 pub use db::{
     verify_encrypted_database, Db, LocalDatabaseStatus, ModuleEventRecord, OrganizationRecord,
-    RecordedModuleEvent, UserCredentialRecord, UserRecord,
+    RecordedModuleEvent, SiteRecord, StaffRecord, UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

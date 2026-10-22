@@ -1,12 +1,16 @@
-import type { SessionSummary } from "@gym/contracts";
+import type { Permission, SessionSummary } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate, Route, Routes } from "react-router-dom";
+import type { ReactNode } from "react";
+import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
 
+import type { LayoutContext } from "./components/Layout";
 import { Layout } from "./components/Layout";
 import { AccessPage } from "./pages/AccessPage";
 import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
+import { SitesPage } from "./pages/SitesPage";
+import { StaffPage } from "./pages/StaffPage";
 import { api, isTauriRuntime } from "./lib/tauri";
 
 export function App() {
@@ -63,11 +67,56 @@ export function App() {
         }
       >
         <Route index element={<DiagnosticsPage />} />
-        <Route path="access" element={<AccessPage />} />
-        <Route path="backups" element={<BackupsPage />} />
+        <Route
+          path="access"
+          element={
+            <Guarded permission="operatePos">
+              <AccessPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="staff"
+          element={
+            <Guarded permission="manageStaff">
+              <StaffPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="sites"
+          element={
+            <Guarded permission="manageSettings">
+              <SitesPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="backups"
+          element={
+            <Guarded permission="manageBackups">
+              <BackupsPage />
+            </Guarded>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+  );
+}
+
+function Guarded({
+  permission,
+  children,
+}: {
+  permission: Permission;
+  children: ReactNode;
+}) {
+  const { session } = useOutletContext<LayoutContext>();
+  return session.permissions.includes(permission) ? (
+    children
+  ) : (
+    <Navigate to="/" replace />
   );
 }
 

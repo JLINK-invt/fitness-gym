@@ -4,6 +4,10 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { isTauriRuntime } from "../lib/tauri";
 
+export type LayoutContext = {
+  session: SessionSummary;
+};
+
 type NavigationItem = {
   to: string;
   label: string;
@@ -13,6 +17,8 @@ type NavigationItem = {
 const navigation: NavigationItem[] = [
   { to: "/", label: "Diagnóstico" },
   { to: "/access", label: "Acceso", permission: "operatePos" },
+  { to: "/staff", label: "Equipo", permission: "manageStaff" },
+  { to: "/sites", label: "Sedes", permission: "manageSettings" },
   { to: "/backups", label: "Backups", permission: "manageBackups" },
 ];
 
@@ -95,7 +101,7 @@ export function Layout({
       )}
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-        <Outlet />
+        <Outlet context={{ session } satisfies LayoutContext} />
       </main>
 
       <footer className="border-t border-slate-200 bg-white px-6 py-3 text-center text-xs text-slate-400">
