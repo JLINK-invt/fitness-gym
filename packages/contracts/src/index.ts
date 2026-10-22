@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "1.3.0";
+export const CONTRACT_VERSION = "1.4.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -101,6 +101,28 @@ export interface StaffSummary {
   status: StaffStatus;
   lastLoginAt: string | null;
   createdAt: string;
+}
+
+export type AuditResult = "allowed" | "denied" | "failed";
+
+export interface AuditEventSummary {
+  id: string;
+  sequence: number;
+  actorId: string | null;
+  actorName: string | null;
+  siteId: string | null;
+  action: string;
+  resource: string;
+  result: AuditResult;
+  origin: string;
+  correlationId: string | null;
+  createdAt: string;
+}
+
+export interface AuditIntegrity {
+  valid: boolean;
+  checkedEvents: number;
+  firstBrokenSequence: number | null;
 }
 
 export interface BackupSummary {

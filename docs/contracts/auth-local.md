@@ -1,7 +1,7 @@
 # Contrato local · autenticación y sesión (Phase 2)
 
 - **Versión:** 1.2.0 (aditiva sobre 1.1.0)
-- **Estado:** implementado para el primer slice de Phase 2
+- **Estado:** implementado para V1; MFA y recuperación del dueño diferidos a Phase 5
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 
 ## Flujo
@@ -55,5 +55,6 @@ Los mensajes de credenciales inválidas no distinguen si el nombre existe.
 ## Fuera de alcance
 
 MFA, OIDC, recuperación por correo, múltiples dueños, permisos personalizados y
-sesiones persistentes entre reinicios. La recuperación del dueño requiere una
-decisión posterior.
+sesiones persistentes entre reinicios. Por decisión de producto, MFA y
+recuperación del dueño quedan diferidos a Phase 5 (endurecimiento); V1 exige
+custodiar la contraseña del dueño y no ofrece reset automático.

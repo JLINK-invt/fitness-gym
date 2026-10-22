@@ -73,14 +73,16 @@ Cada comando sensible debe registrar en `audit_events`:
 
 ## Estado de implementación
 
-- Aplicado en auth, sedes y personal: permisos, alcance por sede, membresía
-  activa, validación de recurso y auditoría de altas/cambios.
+- Aplicado en auth, sedes, personal, acceso y backups: permisos, alcance por
+  sede, membresía activa, validación de recurso y auditoría append-only.
+- `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
+  edición o borrado.
 - Pendiente al construir cada módulo: recepción, finanzas, inventario y
   exportaciones.
 
-## Pendientes antes de Phase 2
+## Pendientes de endurecimiento (Phase 5)
 
-- Definir permisos de socios, entrenadores y marketing (V2).
+- Definir permisos de socios, entrenadores y marketing en la misma versión desktop.
 - Evaluar separar `ManageInventory` en consulta vs ajuste.
 - Añadir aprobación de dos personas para cambios de configuración críticos.
-- Hash chain o exportación inmutable de auditoría.
+- Exportación inmutable o copia externa de auditoría (hash chain ya implementada).

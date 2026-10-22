@@ -59,6 +59,28 @@ pub struct StaffRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEventRecord {
+    pub id: String,
+    pub sequence: i64,
+    pub actor_id: Option<String>,
+    pub actor_name: Option<String>,
+    pub site_id: Option<String>,
+    pub action: String,
+    pub resource: String,
+    pub result: String,
+    pub origin: String,
+    pub correlation_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditIntegrityRecord {
+    pub valid: bool,
+    pub checked_events: i64,
+    pub first_broken_sequence: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleEventRecord {
     pub id: String,
     pub event_type: String,
@@ -741,37 +763,189 @@ impl Db {
         })
     }
 
+    /// Appends a tamper-evident audit event. The hash chain is computed inside
+    /// the same transaction as the insert, so each row commits with its
+    /// predecessor hash. Triggers in migration 4 reject updates and deletes.
     #[allow(clippy::too_many_arguments)]
     pub fn record_audit_event(
         &self,
         organization_id: &str,
         actor_id: Option<&str>,
+        site_id: Option<&str>,
         action: &str,
         resource: &str,
         result: &str,
+        origin: &str,
         correlation_id: Option<&str>,
     ) -> Result<(), DataError> {
         if !matches!(result, "allowed" | "denied" | "failed") {
             return Err(DataError::InvalidValue("invalid audit result".into()));
         }
+        if action.trim().is_empty() || resource.trim().is_empty() || origin.trim().is_empty() {
+            return Err(DataError::InvalidValue(
+                "audit action, resource and origin cannot be empty".into(),
+            ));
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+        let previous: Option<(i64, Option<String>)> = transaction
+            .query_row(
+                "SELECT sequence, event_hash
+                 FROM audit_events
+                 WHERE organization_id = ?1
+                 ORDER BY sequence DESC
+                 LIMIT 1",
+                params![organization_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let sequence = previous.as_ref().map_or(1, |(sequence, _)| sequence + 1);
+        let prev_hash = previous.and_then(|(_, hash)| hash);
+        let event_hash = audit_event_hash(
+            sequence,
+            organization_id,
+            &id,
+            actor_id,
+            site_id,
+            action,
+            resource,
+            result,
+            origin,
+            correlation_id,
+            &created_at,
+            prev_hash.as_deref(),
+        );
+        transaction.execute(
+            "INSERT INTO audit_events
+                 (id, organization_id, actor_id, site_id, action, resource, result,
+                  origin, correlation_id, sequence, prev_hash, event_hash, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                id,
+                organization_id,
+                actor_id,
+                site_id,
+                action,
+                resource,
+                result,
+                origin,
+                correlation_id,
+                sequence,
+                prev_hash,
+                event_hash,
+                created_at
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Returns newest audit rows first. A `site_id` filter is mandatory for
+    /// non-owner roles so a manager cannot read another site's history.
+    pub fn list_audit_events(
+        &self,
+        organization_id: &str,
+        site_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AuditEventRecord>, DataError> {
         self.with_connection(|conn| {
-            conn.execute(
-                "INSERT INTO audit_events
-                     (id, organization_id, actor_id, action, resource, result,
-                      correlation_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    organization_id,
-                    actor_id,
-                    action,
-                    resource,
-                    result,
-                    correlation_id,
-                    chrono::Utc::now().to_rfc3339()
-                ],
+            let mut statement = conn.prepare(
+                "SELECT a.id, a.sequence, a.actor_id, u.name, a.site_id, a.action,
+                        a.resource, a.result, a.origin, a.correlation_id, a.created_at
+                 FROM audit_events a
+                 LEFT JOIN users u ON u.id = a.actor_id
+                 WHERE a.organization_id = ?1
+                   AND (?2 IS NULL OR a.site_id = ?2)
+                 ORDER BY a.sequence DESC
+                 LIMIT ?3",
             )?;
-            Ok(())
+            let rows = statement.query_map(params![organization_id, site_id, limit], |row| {
+                Ok(AuditEventRecord {
+                    id: row.get(0)?,
+                    sequence: row.get(1)?,
+                    actor_id: row.get(2)?,
+                    actor_name: row.get(3)?,
+                    site_id: row.get(4)?,
+                    action: row.get(5)?,
+                    resource: row.get(6)?,
+                    result: row.get(7)?,
+                    origin: row.get(8)?,
+                    correlation_id: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    /// Recomputes the hash chain from the oldest hashed event to the newest.
+    /// Legacy rows migrated from schema 3 have no hash and are skipped; the
+    /// chain starts at the first post-migration append.
+    pub fn verify_audit_chain(
+        &self,
+        organization_id: &str,
+    ) -> Result<AuditIntegrityRecord, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT sequence, id, actor_id, site_id, action, resource, result,
+                        origin, correlation_id, created_at, prev_hash, event_hash
+                 FROM audit_events
+                 WHERE organization_id = ?1 AND event_hash IS NOT NULL
+                 ORDER BY sequence ASC",
+            )?;
+            let mut rows = statement.query(params![organization_id])?;
+            let mut checked_events = 0;
+            let mut previous_sequence: Option<i64> = None;
+            let mut previous_hash: Option<String> = None;
+            while let Some(row) = rows.next()? {
+                checked_events += 1;
+                let sequence: i64 = row.get(0)?;
+                let id: String = row.get(1)?;
+                let actor_id: Option<String> = row.get(2)?;
+                let site_id: Option<String> = row.get(3)?;
+                let action: String = row.get(4)?;
+                let resource: String = row.get(5)?;
+                let result: String = row.get(6)?;
+                let origin: String = row.get(7)?;
+                let correlation_id: Option<String> = row.get(8)?;
+                let created_at: String = row.get(9)?;
+                let prev_hash: Option<String> = row.get(10)?;
+                let event_hash: String = row.get(11)?;
+                let expected = audit_event_hash(
+                    sequence,
+                    organization_id,
+                    &id,
+                    actor_id.as_deref(),
+                    site_id.as_deref(),
+                    &action,
+                    &resource,
+                    &result,
+                    &origin,
+                    correlation_id.as_deref(),
+                    &created_at,
+                    prev_hash.as_deref(),
+                );
+                let sequence_ok = previous_sequence.is_none_or(|value| sequence == value + 1);
+                let hash_ok = expected == event_hash && prev_hash == previous_hash;
+                if !sequence_ok || !hash_ok {
+                    return Ok(AuditIntegrityRecord {
+                        valid: false,
+                        checked_events,
+                        first_broken_sequence: Some(sequence),
+                    });
+                }
+                previous_sequence = Some(sequence);
+                previous_hash = Some(event_hash);
+            }
+            Ok(AuditIntegrityRecord {
+                valid: true,
+                checked_events,
+                first_broken_sequence: None,
+            })
         })
     }
 
@@ -926,6 +1100,52 @@ impl Db {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn audit_event_hash(
+    sequence: i64,
+    organization_id: &str,
+    id: &str,
+    actor_id: Option<&str>,
+    site_id: Option<&str>,
+    action: &str,
+    resource: &str,
+    result: &str,
+    origin: &str,
+    correlation_id: Option<&str>,
+    created_at: &str,
+    prev_hash: Option<&str>,
+) -> String {
+    fn push_field(buffer: &mut String, label: &str, value: Option<&str>) {
+        buffer.push_str(label);
+        buffer.push('=');
+        match value {
+            Some(value) => {
+                buffer.push_str(&value.len().to_string());
+                buffer.push(':');
+                buffer.push_str(value);
+            }
+            None => buffer.push('-'),
+        }
+        buffer.push('\n');
+    }
+
+    let mut buffer = String::with_capacity(512);
+    buffer.push_str("fitness-gym-audit-v1\n");
+    push_field(&mut buffer, "sequence", Some(&sequence.to_string()));
+    push_field(&mut buffer, "organization", Some(organization_id));
+    push_field(&mut buffer, "id", Some(id));
+    push_field(&mut buffer, "actor", actor_id);
+    push_field(&mut buffer, "site", site_id);
+    push_field(&mut buffer, "action", Some(action));
+    push_field(&mut buffer, "resource", Some(resource));
+    push_field(&mut buffer, "result", Some(result));
+    push_field(&mut buffer, "origin", Some(origin));
+    push_field(&mut buffer, "correlation", correlation_id);
+    push_field(&mut buffer, "created_at", Some(created_at));
+    push_field(&mut buffer, "prev_hash", prev_hash);
+    crate::sha256_hex(buffer)
+}
+
 /// Opens an encrypted database with `key` and runs `PRAGMA integrity_check`.
 /// Used by restore to validate a snapshot before replacing the live file.
 pub fn verify_encrypted_database(path: &Path, key: &DbKey) -> Result<(), DataError> {
@@ -977,7 +1197,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 3);
+        assert_eq!(second_status.schema_version, 4);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -1124,6 +1344,105 @@ mod tests {
             .expect_err("closed site rejects active staff"),
             DataError::InvalidValue(_)
         ));
+    }
+
+    #[test]
+    fn audit_chain_is_append_only_and_tamper_evident() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let site = db
+            .create_site(&organization_id, "Centro")
+            .expect("creates site");
+
+        db.record_audit_event(
+            &organization_id,
+            Some("user-1"),
+            Some(&site.id),
+            "auth.login",
+            "session",
+            "allowed",
+            "tauri",
+            None,
+        )
+        .expect("records login");
+        db.record_audit_event(
+            &organization_id,
+            Some("user-1"),
+            Some(&site.id),
+            "staff.updated",
+            "staff_membership",
+            "allowed",
+            "tauri",
+            Some("corr-1"),
+        )
+        .expect("records update");
+        db.record_audit_event(
+            &organization_id,
+            None,
+            None,
+            "auth.login",
+            "session",
+            "failed",
+            "tauri",
+            None,
+        )
+        .expect("records failure");
+
+        let events = db
+            .list_audit_events(&organization_id, None, 10)
+            .expect("lists audit");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].sequence, 3);
+        assert_eq!(events[2].sequence, 1);
+        assert_eq!(events[1].correlation_id.as_deref(), Some("corr-1"));
+
+        let site_events = db
+            .list_audit_events(&organization_id, Some(&site.id), 10)
+            .expect("lists site audit");
+        assert_eq!(site_events.len(), 2);
+        assert!(site_events
+            .iter()
+            .all(|event| event.site_id.as_deref() == Some(&site.id)));
+        let unassigned_events = db
+            .list_audit_events(&organization_id, Some("__unassigned__"), 10)
+            .expect("lists unassigned audit");
+        assert!(unassigned_events.is_empty());
+
+        let integrity = db
+            .verify_audit_chain(&organization_id)
+            .expect("verifies chain");
+        assert!(integrity.valid);
+        assert_eq!(integrity.checked_events, 3);
+
+        let update = db.with_connection(|conn| {
+            conn.execute("UPDATE audit_events SET result = 'denied'", [])
+                .map_err(DataError::from)
+        });
+        assert!(update.is_err(), "updates must be rejected");
+        let delete = db.with_connection(|conn| {
+            conn.execute("DELETE FROM audit_events", [])
+                .map_err(DataError::from)
+        });
+        assert!(delete.is_err(), "deletes must be rejected");
+
+        db.with_connection(|conn| {
+            conn.execute("DROP TRIGGER audit_events_no_update", [])?;
+            conn.execute(
+                "UPDATE audit_events SET result = 'denied' WHERE sequence = 2",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("simulates local tampering");
+        let tampered = db
+            .verify_audit_chain(&organization_id)
+            .expect("verifies tampered chain");
+        assert!(!tampered.valid);
+        assert_eq!(tampered.first_broken_sequence, Some(2));
     }
 
     #[test]

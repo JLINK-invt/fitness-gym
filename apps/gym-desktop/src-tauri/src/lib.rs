@@ -3,9 +3,10 @@ use gym_backup::{
     create_backup as write_backup, list_backups as read_backups, restore_backup as apply_restore,
 };
 use gym_contracts::{
-    AccessDecision, AccessEventSummary, AccessRequest, ApiError, BackupSummary, ErrorCode,
-    HealthReport, HealthStatus, ModuleHealth, RestoreOutcome, SessionSummary, SetupState,
-    SiteStatus, SiteSummary, StaffRole, StaffStatus, StaffSummary, CONTRACT_VERSION,
+    AccessDecision, AccessEventSummary, AccessRequest, ApiError, AuditEventSummary, AuditIntegrity,
+    AuditResult, BackupSummary, ErrorCode, HealthReport, HealthStatus, ModuleHealth,
+    RestoreOutcome, SessionSummary, SetupState, SiteStatus, SiteSummary, StaffRole, StaffStatus,
+    StaffSummary, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
@@ -286,6 +287,74 @@ fn build_session(
     })
 }
 
+fn resolve_staff_creation_site(
+    session: &gym_core::auth::Session,
+    role: Role,
+    requested_site_id: &str,
+) -> Result<String, ApiError> {
+    if role == Role::Owner {
+        return Err(ApiError::invalid(
+            "el dueño se crea solo durante la configuración inicial",
+        ));
+    }
+    if session.role == Role::Manager {
+        if role == Role::Manager {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "un encargado no puede crear otro encargado",
+            ));
+        }
+        return session
+            .site_id
+            .clone()
+            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"));
+    }
+
+    let value = requested_site_id.trim();
+    if value.is_empty() {
+        return Err(ApiError::invalid("selecciona una sede"));
+    }
+    Ok(value.to_string())
+}
+
+fn resolve_staff_update_site(
+    session: &gym_core::auth::Session,
+    current_site_id: Option<&str>,
+    role: Role,
+    requested_site_id: &str,
+) -> Result<String, ApiError> {
+    if role == Role::Owner {
+        return Err(ApiError::invalid(
+            "la cuenta del dueño no se puede modificar",
+        ));
+    }
+    if session.role == Role::Manager {
+        if current_site_id != session.site_id.as_deref() || role == Role::Manager {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "solo puedes administrar cajeros y contabilidad de tu sede",
+            ));
+        }
+        let own_site = session
+            .site_id
+            .clone()
+            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"))?;
+        if requested_site_id != own_site {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "no puedes mover personal a otra sede",
+            ));
+        }
+        return Ok(own_site);
+    }
+
+    let value = requested_site_id.trim();
+    if value.is_empty() {
+        return Err(ApiError::invalid("selecciona una sede"));
+    }
+    Ok(value.to_string())
+}
+
 fn site_status(value: &str) -> SiteStatus {
     match value {
         "closed" => SiteStatus::Closed,
@@ -343,6 +412,30 @@ fn staff_summary(record: gym_data::StaffRecord) -> StaffSummary {
         site_name: record.site_name,
         status: staff_status(&record.status),
         last_login_at: record.last_login_at,
+        created_at: record.created_at,
+    }
+}
+
+fn audit_result(value: &str) -> AuditResult {
+    match value {
+        "denied" => AuditResult::Denied,
+        "failed" => AuditResult::Failed,
+        _ => AuditResult::Allowed,
+    }
+}
+
+fn audit_summary(record: gym_data::AuditEventRecord) -> AuditEventSummary {
+    AuditEventSummary {
+        id: record.id,
+        sequence: record.sequence,
+        actor_id: record.actor_id,
+        actor_name: record.actor_name,
+        site_id: record.site_id,
+        action: record.action,
+        resource: record.resource,
+        result: audit_result(&record.result),
+        origin: record.origin,
+        correlation_id: record.correlation_id,
         created_at: record.created_at,
     }
 }
@@ -467,9 +560,11 @@ fn bootstrap_owner(
     let _ = db.record_audit_event(
         &organization.id,
         Some(&owner.id),
+        None,
         "auth.owner_created",
         "staff_membership",
         "allowed",
+        "tauri",
         None,
     );
 
@@ -561,9 +656,11 @@ fn login(
         let _ = db.record_audit_event(
             &organization.id,
             None,
+            None,
             "auth.login",
             "session",
             "failed",
+            "tauri",
             None,
         );
         return Err(ApiError::new(
@@ -594,9 +691,11 @@ fn login(
     let _ = db.record_audit_event(
         &organization.id,
         Some(&session.user_id),
+        session.site_id.as_deref(),
         "auth.login",
         "session",
         "allowed",
+        "tauri",
         None,
     );
 
@@ -608,7 +707,26 @@ fn login(
 
 #[tauri::command]
 fn logout(state: State<'_, AppState>) {
-    state.clear_session();
+    let session = state
+        .auth
+        .lock()
+        .ok()
+        .and_then(|mut auth| auth.session.take())
+        .map(|active| active.session);
+    if let Some(session) = session {
+        if let Ok(db) = state.db() {
+            let _ = db.record_audit_event(
+                &session.organization_id,
+                Some(&session.user_id),
+                session.site_id.as_deref(),
+                "auth.logout",
+                "session",
+                "allowed",
+                "tauri",
+                None,
+            );
+        }
+    }
 }
 
 #[tauri::command]
@@ -703,6 +821,18 @@ fn simulate_access(
     }
 
     let allowed = recorded.event.event_type == "access.allowed";
+    if recorded.inserted {
+        let _ = db.record_audit_event(
+            &organization_id,
+            Some(&session.user_id),
+            session.site_id.as_deref(),
+            "access.simulated",
+            ACCESS_AGGREGATE,
+            if allowed { "allowed" } else { "denied" },
+            "tauri",
+            Some(&recorded.event.id),
+        );
+    }
     Ok(AccessDecision {
         event_id: recorded.event.id,
         allowed,
@@ -764,9 +894,11 @@ fn create_site(name: String, state: State<'_, AppState>) -> Result<SiteSummary, 
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
+        Some(&site.id),
         "site.created",
         "site",
         "allowed",
+        "tauri",
         None,
     );
     Ok(site_summary(site))
@@ -794,9 +926,11 @@ fn update_site(
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
+        Some(&site.id),
         "site.updated",
         "site",
         "allowed",
+        "tauri",
         None,
     );
     Ok(site_summary(site))
@@ -825,30 +959,7 @@ fn create_staff(
 ) -> Result<StaffSummary, ApiError> {
     let session = state.authorize(Permission::ManageStaff)?;
     let role = role_from_contract(role);
-    if role == Role::Owner {
-        return Err(ApiError::invalid(
-            "el dueño se crea solo durante la configuración inicial",
-        ));
-    }
-    if session.role == Role::Manager && role == Role::Manager {
-        return Err(ApiError::new(
-            ErrorCode::Unauthorized,
-            "un encargado no puede crear otro encargado",
-        ));
-    }
-
-    let site_id = if session.role == Role::Manager {
-        session
-            .site_id
-            .clone()
-            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"))?
-    } else {
-        let value = site_id.trim();
-        if value.is_empty() {
-            return Err(ApiError::invalid("selecciona una sede"));
-        }
-        value.to_string()
-    };
+    let site_id = resolve_staff_creation_site(&session, role, &site_id)?;
 
     let name = normalize_person_name(&name)
         .map_err(|error| ApiError::invalid(format!("nombre inválido: {error}")))?;
@@ -868,9 +979,11 @@ fn create_staff(
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
+        staff.site_id.as_deref(),
         "staff.created",
         "staff_membership",
         "allowed",
+        "tauri",
         None,
     );
     Ok(staff_summary(staff))
@@ -890,12 +1003,6 @@ fn update_staff(
     }
 
     let role = role_from_contract(role);
-    if role == Role::Owner {
-        return Err(ApiError::invalid(
-            "la cuenta del dueño no se puede modificar",
-        ));
-    }
-
     let db = state.db()?;
     let current = db
         .list_staff(&session.organization_id)
@@ -909,31 +1016,7 @@ fn update_staff(
         ));
     }
 
-    let site_id = if session.role == Role::Manager {
-        if current.site_id != session.site_id || role == Role::Manager {
-            return Err(ApiError::new(
-                ErrorCode::Unauthorized,
-                "solo puedes administrar cajeros y contabilidad de tu sede",
-            ));
-        }
-        let own_site = session
-            .site_id
-            .clone()
-            .ok_or_else(|| ApiError::invalid("tu cuenta no tiene una sede asignada"))?;
-        if site_id != own_site {
-            return Err(ApiError::new(
-                ErrorCode::Unauthorized,
-                "no puedes mover personal a otra sede",
-            ));
-        }
-        own_site
-    } else {
-        let value = site_id.trim();
-        if value.is_empty() {
-            return Err(ApiError::invalid("selecciona una sede"));
-        }
-        value.to_string()
-    };
+    let site_id = resolve_staff_update_site(&session, current.site_id.as_deref(), role, &site_id)?;
 
     let staff = db
         .update_staff(
@@ -947,9 +1030,11 @@ fn update_staff(
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
+        staff.site_id.as_deref(),
         "staff.updated",
         "staff_membership",
         "allowed",
+        "tauri",
         None,
     );
     Ok(staff_summary(staff))
@@ -960,9 +1045,21 @@ fn create_backup(
     passphrase: String,
     state: State<'_, AppState>,
 ) -> Result<BackupSummary, ApiError> {
-    state.authorize(Permission::ManageBackups)?;
+    let session = state.authorize(Permission::ManageBackups)?;
     let db = state.db()?;
-    write_backup(db, &state.paths.backups_dir, &passphrase).map_err(backup_api_error)
+    let backup =
+        write_backup(db, &state.paths.backups_dir, &passphrase).map_err(backup_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "backup.created",
+        "backup",
+        "allowed",
+        "tauri",
+        Some(&backup.id),
+    );
+    Ok(backup)
 }
 
 #[tauri::command]
@@ -1015,6 +1112,42 @@ fn restore_backup(
     state.clear_session();
 
     Ok(outcome)
+}
+
+#[tauri::command]
+fn list_audit_events(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AuditEventSummary>, ApiError> {
+    let session = state.authorize(Permission::ViewAudit)?;
+    let db = state.db()?;
+    let site_filter = match session.role {
+        Role::Owner => None,
+        _ => Some(session.site_id.as_deref().unwrap_or("__unassigned__")),
+    };
+    let limit = i64::from(limit.unwrap_or(100).clamp(1, 200));
+    db.list_audit_events(&session.organization_id, site_filter, limit)
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo leer la auditoría")
+                .with_details(error.to_string())
+        })
+        .map(|events| events.into_iter().map(audit_summary).collect())
+}
+
+#[tauri::command]
+fn verify_audit_chain(state: State<'_, AppState>) -> Result<AuditIntegrity, ApiError> {
+    let session = state.authorize(Permission::ViewAudit)?;
+    let db = state.db()?;
+    db.verify_audit_chain(&session.organization_id)
+        .map(|integrity| AuditIntegrity {
+            valid: integrity.valid,
+            checked_events: integrity.checked_events,
+            first_broken_sequence: integrity.first_broken_sequence,
+        })
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo verificar la auditoría")
+                .with_details(error.to_string())
+        })
 }
 
 fn backup_api_error(error: gym_backup::BackupError) -> ApiError {
@@ -1081,7 +1214,9 @@ pub fn run() {
             update_site,
             list_staff,
             create_staff,
-            update_staff
+            update_staff,
+            list_audit_events,
+            verify_audit_chain
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fitness Gym");
@@ -1195,5 +1330,69 @@ mod auth_tests {
 
         assert!(auth.authorize(Permission::OperatePos).is_ok());
         assert!(auth.authorize(Permission::ManageBackups).is_err());
+    }
+
+    fn session_with_site(role: Role, site_id: Option<&str>) -> gym_core::auth::Session {
+        let mut session = active_session(role).session;
+        session.site_id = site_id.map(str::to_string);
+        session
+    }
+
+    #[test]
+    fn manager_creates_staff_only_in_own_site() {
+        let manager = session_with_site(Role::Manager, Some("site-norte"));
+
+        let site = resolve_staff_creation_site(&manager, Role::Cashier, "site-sur")
+            .expect("manager can create own-site cashier");
+        assert_eq!(site, "site-norte");
+
+        let error = resolve_staff_creation_site(&manager, Role::Manager, "site-norte")
+            .expect_err("manager cannot create another manager");
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+    }
+
+    #[test]
+    fn manager_without_site_cannot_create_staff() {
+        let manager = session_with_site(Role::Manager, None);
+        let error = resolve_staff_creation_site(&manager, Role::Cashier, "site-norte")
+            .expect_err("manager needs a site");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn owner_assigns_staff_to_the_requested_site() {
+        let owner = session_with_site(Role::Owner, None);
+        let site = resolve_staff_creation_site(&owner, Role::Cashier, " site-sur ")
+            .expect("owner can choose a site");
+        assert_eq!(site, "site-sur");
+    }
+
+    #[test]
+    fn manager_cannot_update_staff_from_another_site() {
+        let manager = session_with_site(Role::Manager, Some("site-norte"));
+        let error =
+            resolve_staff_update_site(&manager, Some("site-sur"), Role::Cashier, "site-norte")
+                .expect_err("manager cannot edit another site");
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+    }
+
+    #[test]
+    fn manager_cannot_move_or_promote_own_site_staff() {
+        let manager = session_with_site(Role::Manager, Some("site-norte"));
+
+        let moved =
+            resolve_staff_update_site(&manager, Some("site-norte"), Role::Cashier, "site-sur")
+                .expect_err("manager cannot move staff to another site");
+        assert_eq!(moved.code, ErrorCode::Unauthorized);
+
+        let promoted =
+            resolve_staff_update_site(&manager, Some("site-norte"), Role::Manager, "site-norte")
+                .expect_err("manager cannot promote staff");
+        assert_eq!(promoted.code, ErrorCode::Unauthorized);
+
+        let allowed =
+            resolve_staff_update_site(&manager, Some("site-norte"), Role::Cashier, "site-norte")
+                .expect("manager can update own-site staff");
+        assert_eq!(allowed, "site-norte");
     }
 }

@@ -37,6 +37,9 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - `staff_memberships` impone una membresía por usuario e índice único por
   gimnasio y usuario.
 - `module_events` impone `UNIQUE (organization_id, idempotency_key)`.
+- `audit_events` es append-only por trigger, con `sequence` por gimnasio y hash
+  chain SHA-256 (`prev_hash` + `event_hash`). La migración 4 conserva los eventos
+  heredados sin hash y la cadena verificable empieza después.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
 
@@ -60,8 +63,19 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - Revocar una cuenta impide el siguiente login; la sesión en memoria se invalida
   al expirar o al hacer logout. Restaurar un backup cierra la sesión porque la
   base restaurada puede tener otro dueño o personal revocado.
-- `site.created`, `site.updated`, `staff.created` y `staff.updated` se registran
-  en `audit_events` con el actor de la sesión.
+- `auth.owner_created`, `auth.login`, `auth.logout`, `site.created`,
+  `site.updated`, `staff.created`, `staff.updated`, `access.simulated` y
+  `backup.created` se registran en `audit_events` con el actor de la sesión.
+
+## Auditoría
+
+Cada evento sensible se agrega en una transacción que calcula el consecutivo y
+el hash del evento anterior. La tabla rechaza `UPDATE` y `DELETE`; la UI solo
+consulta y puede verificar la cadena. El dueño ve todo el gimnasio y los roles con
+sede solo ven sus propios eventos. La cadena detecta alteraciones de contenido,
+pero no un truncado del final sin una copia externa; ese riesgo queda documentado.
+
+El contrato completo está en [`contracts/audit.md`](contracts/audit.md).
 
 ## Sedes y personal
 

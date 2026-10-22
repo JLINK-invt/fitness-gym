@@ -2,6 +2,8 @@ import type {
   AccessDecision,
   AccessEventSummary,
   AccessRequest,
+  AuditEventSummary,
+  AuditIntegrity,
   BackupSummary,
   HealthReport,
   RestoreOutcome,
@@ -46,4 +48,7 @@ export const api = {
     invoke<BackupSummary>("create_backup", { passphrase }),
   restoreBackup: (fileName: string, passphrase: string) =>
     invoke<RestoreOutcome>("restore_backup", { fileName, passphrase }),
+  listAuditEvents: (limit = 100) =>
+    invoke<AuditEventSummary[]>("list_audit_events", { limit }),
+  verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),
 };

@@ -20,6 +20,7 @@ const navigation: NavigationItem[] = [
   { to: "/staff", label: "Equipo", permission: "manageStaff" },
   { to: "/sites", label: "Sedes", permission: "manageSettings" },
   { to: "/backups", label: "Backups", permission: "manageBackups" },
+  { to: "/audit", label: "Auditoría", permission: "viewAudit" },
 ];
 
 const roleLabels: Record<StaffRole, string> = {

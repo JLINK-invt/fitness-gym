@@ -39,6 +39,19 @@ type Backup = {
   checksum: string;
   schemaVersion: number;
 };
+type AuditEvent = {
+  id: string;
+  sequence: number;
+  actorId: string | null;
+  actorName: string | null;
+  siteId: string | null;
+  action: string;
+  resource: string;
+  result: "allowed" | "denied" | "failed";
+  origin: string;
+  correlationId: string | null;
+  createdAt: string;
+};
 
 (() => {
   const state: {
@@ -51,6 +64,7 @@ type Backup = {
     accessEntries: Map<string, AccessEntry>;
     backups: Backup[];
     secrets: Map<string, string>;
+    auditEvents: AuditEvent[];
   } = {
     organizations: [],
     owner: null,
@@ -61,6 +75,7 @@ type Backup = {
     accessEntries: new Map(),
     backups: [],
     secrets: new Map(),
+    auditEvents: [],
   };
 
   const now = () => new Date().toISOString();
@@ -133,10 +148,36 @@ type Backup = {
     };
   };
 
+  const recordAudit = (input: {
+    actor?: Session | null;
+    siteId?: string | null;
+    action: string;
+    resource: string;
+    result?: "allowed" | "denied" | "failed";
+    correlationId?: string | null;
+  }) => {
+    if (state.organizations.length === 0) {
+      return;
+    }
+    state.auditEvents.unshift({
+      id: uuid(),
+      sequence: state.auditEvents.length + 1,
+      actorId: input.actor?.userId ?? null,
+      actorName: input.actor?.name ?? null,
+      siteId: input.siteId ?? input.actor?.siteId ?? null,
+      action: input.action,
+      resource: input.resource,
+      result: input.result ?? "allowed",
+      origin: "tauri",
+      correlationId: input.correlationId ?? null,
+      createdAt: now(),
+    });
+  };
+
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "1.3.0",
+    contractVersion: "1.4.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -147,7 +188,7 @@ type Backup = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 3,
+      schemaVersion: 4,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -195,6 +236,11 @@ type Backup = {
             role: "owner",
             permissions: permissionsFor("owner"),
           };
+          recordAudit({
+            actor: state.session,
+            action: "auth.owner_created",
+            resource: "staff_membership",
+          });
           return { ...state.session };
         }
 
@@ -214,6 +260,11 @@ type Backup = {
               item.password === password,
           );
           if (!owner && !member) {
+            recordAudit({
+              action: "auth.login",
+              resource: "session",
+              result: "failed",
+            });
             throw apiError("unauthorized", "Nombre o contraseña incorrectos.");
           }
           if (owner) {
@@ -235,10 +286,24 @@ type Backup = {
               permissions: permissionsFor(member.role),
             };
           }
+          if (state.session) {
+            recordAudit({
+              actor: state.session,
+              action: "auth.login",
+              resource: "session",
+            });
+          }
           return state.session ? { ...state.session } : null;
         }
 
         case "logout":
+          if (state.session) {
+            recordAudit({
+              actor: state.session,
+              action: "auth.logout",
+              resource: "session",
+            });
+          }
           state.session = null;
           return null;
 
@@ -268,6 +333,12 @@ type Backup = {
             createdAt: now(),
           };
           state.sites.push(site);
+          recordAudit({
+            actor: state.session,
+            siteId: site.id,
+            action: "site.created",
+            resource: "site",
+          });
           return { ...site };
         }
 
@@ -306,6 +377,12 @@ type Backup = {
           }
           site.name = name;
           site.status = status;
+          recordAudit({
+            actor: state.session,
+            siteId: site.id,
+            action: "site.updated",
+            resource: "site",
+          });
           return { ...site };
         }
 
@@ -364,6 +441,12 @@ type Backup = {
             createdAt: now(),
           };
           state.staff.push(member);
+          recordAudit({
+            actor: state.session,
+            siteId: member.siteId,
+            action: "staff.created",
+            resource: "staff_membership",
+          });
           return staffSummary(member);
         }
 
@@ -405,6 +488,12 @@ type Backup = {
           member.role = role as StaffMember["role"];
           member.siteId = siteId;
           member.status = status;
+          recordAudit({
+            actor: state.session,
+            siteId: member.siteId,
+            action: "staff.updated",
+            resource: "staff_membership",
+          });
           return staffSummary(member);
         }
 
@@ -460,6 +549,13 @@ type Backup = {
           };
           state.accessEvents.unshift(event);
           state.accessEntries.set(idempotencyKey, { event, requestHash });
+          recordAudit({
+            actor: state.session,
+            action: "access.simulated",
+            resource: "access_decision",
+            result: allowed ? "allowed" : "denied",
+            correlationId: event.eventId,
+          });
           return {
             eventId: event.eventId,
             allowed,
@@ -501,10 +597,16 @@ type Backup = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 3,
+            schemaVersion: 4,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
+          recordAudit({
+            actor: state.session,
+            action: "backup.created",
+            resource: "backup",
+            correlationId: backup.id,
+          });
           return { ...backup };
         }
 
@@ -529,6 +631,37 @@ type Backup = {
             restoredAt: now(),
             schemaVersion: backup.schemaVersion,
             integrityOk: true,
+          };
+        }
+
+        case "list_audit_events": {
+          const session = requirePermission("viewAudit");
+          const limit = Math.max(1, Math.min(200, Number(args.limit ?? 100)));
+          return state.auditEvents
+            .filter(
+              (event) =>
+                session.role === "owner" ||
+                event.siteId === (session.siteId ?? "__unassigned__"),
+            )
+            .slice(0, limit)
+            .map((event) => ({ ...event }));
+        }
+
+        case "verify_audit_chain": {
+          requirePermission("viewAudit");
+          const ordered = [...state.auditEvents].sort((left, right) => left.sequence - right.sequence);
+          const valid = ordered.every(
+            (event, index) => index === 0 || event.sequence === ordered[index - 1]!.sequence + 1,
+          );
+          return {
+            valid,
+            checkedEvents: ordered.length,
+            firstBrokenSequence: valid
+              ? null
+              : ordered.find(
+                  (event, index) =>
+                    index > 0 && event.sequence !== ordered[index - 1]!.sequence + 1,
+                )?.sequence ?? null,
           };
         }
 

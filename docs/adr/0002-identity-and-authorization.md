@@ -34,11 +34,17 @@ alterar historial o un ex empleado con acceso al equipo.
    una sesión ya autenticada, nunca el único factor, con rate limit y auditoría.
 8. **Bootstrap:** en el primer arranque se crea el `owner` con contraseña. No
    existe usuario por defecto ni contraseña universal.
+9. **MFA y recuperación del dueño:** diferidos a Phase 5 (endurecimiento). No
+   bloquean la operación V1 porque el equipo es local, de un solo gimnasio, y el
+   dueño custodia su contraseña. Si se implementan, MFA será adicional (nunca
+   sustituto) y la recuperación exigirá presencia física más un factor de
+   recuperación auditable; no habrá reset por correo.
 
 ## Consecuencias
 
 - El equipo debe custodiar la contraseña del owner; no hay "recuperar cuenta"
-  por correo. La recuperación es restaurar un backup y rotar credenciales.
+  por correo ni reset automático. Perderla exige intervención de soporte con
+  acceso físico y un procedimiento auditado que se definirá en Phase 5.
 - Cambiar de cajero requiere login o bloqueo/desbloqueo; se medirá el costo en
   el vertical slice antes de añadir PIN.
 - La matriz de permisos es un contrato verificable en pruebas unitarias.
@@ -55,7 +61,7 @@ alterar historial o un ex empleado con acceso al equipo.
 ## Criterios de revisión
 
 - Al cerrar el piloto, con métricas de tiempo de login y cambios de turno.
-- Antes de añadir roles V2 (entrenador, marketing, socio).
+- Antes de añadir roles de entrenador, marketing y socio.
 - Si se solicita SSO, directorio corporativo o gestión remota de usuarios.
 - Tras una auditoría de seguridad o un incidente de acceso interno.
 

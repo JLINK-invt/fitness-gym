@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "1.3.0";
+pub const CONTRACT_VERSION: &str = "1.4.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +173,39 @@ pub struct StaffSummary {
     pub status: StaffStatus,
     pub last_login_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuditResult {
+    Allowed,
+    Denied,
+    Failed,
+}
+
+/// Immutable audit row rendered in the local read-only audit screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditEventSummary {
+    pub id: String,
+    pub sequence: i64,
+    pub actor_id: Option<String>,
+    pub actor_name: Option<String>,
+    pub site_id: Option<String>,
+    pub action: String,
+    pub resource: String,
+    pub result: AuditResult,
+    pub origin: String,
+    pub correlation_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditIntegrity {
+    pub valid: bool,
+    pub checked_events: i64,
+    pub first_broken_sequence: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
