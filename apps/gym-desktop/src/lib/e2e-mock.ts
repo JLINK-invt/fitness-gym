@@ -3,7 +3,6 @@ type Owner = { id: string; name: string; password: string };
 type Session = {
   userId: string;
   organizationId: string;
-  siteId?: string;
   name: string;
   role: "owner" | "manager" | "cashier" | "accounting";
   permissions: string[];
@@ -15,18 +14,11 @@ type AccessEvent = {
   occurredAt: string;
 };
 type AccessEntry = { event: AccessEvent; requestHash: string };
-type Site = {
-  id: string;
-  name: string;
-  status: "active" | "closed";
-  createdAt: string;
-};
 type StaffMember = {
   id: string;
   name: string;
   password: string;
   role: "manager" | "cashier" | "accounting";
-  siteId: string;
   status: "active" | "revoked";
   lastLoginAt: string | null;
   createdAt: string;
@@ -44,7 +36,6 @@ type AuditEvent = {
   sequence: number;
   actorId: string | null;
   actorName: string | null;
-  siteId: string | null;
   action: string;
   resource: string;
   result: "allowed" | "denied" | "failed";
@@ -88,7 +79,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
   const state: {
     organizations: Organization[];
     owner: Owner | null;
-    sites: Site[];
     staff: StaffMember[];
     session: Session | null;
     accessEvents: AccessEvent[];
@@ -101,7 +91,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
   } = {
     organizations: [],
     owner: null,
-    sites: [],
     staff: [],
     session: null,
     accessEvents: [],
@@ -164,30 +153,22 @@ type StoredPrice = CatalogPrice & { variantId: string };
           userId: state.owner.id,
           name: state.owner.name,
           role: "owner" as const,
-          siteId: null,
-          siteName: null,
           status: "active" as const,
           lastLoginAt: null,
           createdAt: now(),
         }
       : null;
-  const staffSummary = (member: StaffMember) => {
-    const site = state.sites.find((item) => item.id === member.siteId);
-    return {
-      userId: member.id,
-      name: member.name,
-      role: member.role,
-      siteId: member.siteId,
-      siteName: site?.name ?? null,
-      status: member.status,
-      lastLoginAt: member.lastLoginAt,
-      createdAt: member.createdAt,
-    };
-  };
+  const staffSummary = (member: StaffMember) => ({
+    userId: member.id,
+    name: member.name,
+    role: member.role,
+    status: member.status,
+    lastLoginAt: member.lastLoginAt,
+    createdAt: member.createdAt,
+  });
 
   const recordAudit = (input: {
     actor?: Session | null;
-    siteId?: string | null;
     action: string;
     resource: string;
     result?: "allowed" | "denied" | "failed";
@@ -201,7 +182,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
       sequence: state.auditEvents.length + 1,
       actorId: input.actor?.userId ?? null,
       actorName: input.actor?.name ?? null,
-      siteId: input.siteId ?? input.actor?.siteId ?? null,
       action: input.action,
       resource: input.resource,
       result: input.result ?? "allowed",
@@ -214,7 +194,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "1.5.0",
+    contractVersion: "2.0.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -225,7 +205,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 5,
+      schemaVersion: 6,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -398,7 +378,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
             state.session = {
               userId: member.id,
               organizationId: state.organizations[0]!.id,
-              siteId: member.siteId,
               name: member.name,
               role: member.role,
               permissions: permissionsFor(member.role),
@@ -428,89 +407,14 @@ type StoredPrice = CatalogPrice & { variantId: string };
         case "current_session":
           return state.session ? { ...state.session } : null;
 
-        case "list_sites": {
-          const session = requirePermission("manageStaff");
-          return state.sites
-            .filter((site) => session.role !== "manager" || site.id === session.siteId)
-            .map((site) => ({ ...site }));
-        }
-
-        case "create_site": {
-          requirePermission("manageSettings");
-          const name = String(args.name ?? "").trim();
-          if (name.length < 2) {
-            throw apiError("invalidRequest", "El nombre de la sede es demasiado corto.");
-          }
-          if (state.sites.some((site) => site.name.toLowerCase() === name.toLowerCase())) {
-            throw apiError("invalidRequest", "Ya existe una sede con ese nombre.");
-          }
-          const site: Site = {
-            id: uuid(),
-            name,
-            status: "active",
-            createdAt: now(),
-          };
-          state.sites.push(site);
-          recordAudit({
-            actor: state.session,
-            siteId: site.id,
-            action: "site.created",
-            resource: "site",
-          });
-          return { ...site };
-        }
-
-        case "update_site": {
-          requirePermission("manageSettings");
-          const site = state.sites.find((item) => item.id === String(args.siteId ?? ""));
-          if (!site) {
-            throw apiError("notFound", "La sede no existe.");
-          }
-          const name = String(args.name ?? "").trim();
-          const status = String(args.status ?? "");
-          if (name.length < 2) {
-            throw apiError("invalidRequest", "El nombre de la sede es demasiado corto.");
-          }
-          if (status !== "active" && status !== "closed") {
-            throw apiError("invalidRequest", "Estado de sede inválido.");
-          }
-          if (
-            state.sites.some(
-              (item) =>
-                item.id !== site.id && item.name.toLowerCase() === name.toLowerCase(),
-            )
-          ) {
-            throw apiError("invalidRequest", "Ya existe una sede con ese nombre.");
-          }
-          if (
-            status === "closed" &&
-            state.staff.some(
-              (member) => member.siteId === site.id && member.status === "active",
-            )
-          ) {
-            throw apiError(
-              "invalidRequest",
-              "No puedes cerrar una sede con personal activo; reasigna o desactiva primero.",
-            );
-          }
-          site.name = name;
-          site.status = status;
-          recordAudit({
-            actor: state.session,
-            siteId: site.id,
-            action: "site.updated",
-            resource: "site",
-          });
-          return { ...site };
-        }
-
         case "list_staff": {
           const session = requirePermission("manageStaff");
           const all = [...(ownerStaff() ? [ownerStaff()!] : []), ...state.staff.map(staffSummary)];
           return all.filter(
             (member) =>
               session.role !== "manager" ||
-              (member.role !== "owner" && member.siteId === session.siteId),
+              member.role === "cashier" ||
+              member.role === "accounting",
           );
         }
 
@@ -519,7 +423,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
           const name = String(args.name ?? "").trim();
           const password = String(args.password ?? "");
           const role = String(args.role ?? "");
-          let siteId = String(args.siteId ?? "");
           if (name.length < 2) {
             throw apiError("invalidRequest", "El nombre del empleado es demasiado corto.");
           }
@@ -535,25 +438,14 @@ type StoredPrice = CatalogPrice & { variantId: string };
           ) {
             throw apiError("invalidRequest", "Ya existe una persona con ese nombre.");
           }
-          if (session.role === "manager") {
-            if (role === "manager") {
-              throw apiError("unauthorized", "Un encargado no puede crear otro encargado.");
-            }
-            siteId = session.siteId ?? "";
-          }
-          const site = state.sites.find((item) => item.id === siteId);
-          if (!site) {
-            throw apiError("invalidRequest", "Selecciona una sede válida.");
-          }
-          if (site.status !== "active") {
-            throw apiError("invalidRequest", "No puedes asignar personal a una sede cerrada.");
+          if (session.role === "manager" && role === "manager") {
+            throw apiError("unauthorized", "Un encargado no puede crear otro encargado.");
           }
           const member: StaffMember = {
             id: uuid(),
             name,
             password,
             role: role as StaffMember["role"],
-            siteId,
             status: "active",
             lastLoginAt: null,
             createdAt: now(),
@@ -561,7 +453,6 @@ type StoredPrice = CatalogPrice & { variantId: string };
           state.staff.push(member);
           recordAudit({
             actor: state.session,
-            siteId: member.siteId,
             action: "staff.created",
             resource: "staff_membership",
           });
@@ -580,35 +471,25 @@ type StoredPrice = CatalogPrice & { variantId: string };
           }
           const role = String(args.role ?? "");
           const status = String(args.status ?? "");
-          let siteId = String(args.siteId ?? "");
           if (!["manager", "cashier", "accounting"].includes(role)) {
             throw apiError("invalidRequest", "Rol inválido.");
           }
           if (status !== "active" && status !== "revoked") {
             throw apiError("invalidRequest", "Estado inválido.");
           }
-          if (session.role === "manager") {
-            if (member.siteId !== session.siteId || role === "manager") {
-              throw apiError(
-                "unauthorized",
-                "Solo puedes administrar cajeros y contabilidad de tu sede.",
-              );
-            }
-            siteId = session.siteId ?? "";
-          }
-          const site = state.sites.find((item) => item.id === siteId);
-          if (!site) {
-            throw apiError("invalidRequest", "Selecciona una sede válida.");
-          }
-          if (status === "active" && site.status !== "active") {
-            throw apiError("invalidRequest", "No puedes activar personal en una sede cerrada.");
+          if (
+            session.role === "manager" &&
+            (member.role === "manager" || role === "manager")
+          ) {
+            throw apiError(
+              "unauthorized",
+              "Solo puedes administrar cajeros y contabilidad.",
+            );
           }
           member.role = role as StaffMember["role"];
-          member.siteId = siteId;
           member.status = status;
           recordAudit({
             actor: state.session,
-            siteId: member.siteId,
             action: "staff.updated",
             resource: "staff_membership",
           });
@@ -959,7 +840,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 5,
+            schemaVersion: 6,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
@@ -997,16 +878,9 @@ type StoredPrice = CatalogPrice & { variantId: string };
         }
 
         case "list_audit_events": {
-          const session = requirePermission("viewAudit");
+          requirePermission("viewAudit");
           const limit = Math.max(1, Math.min(200, Number(args.limit ?? 100)));
-          return state.auditEvents
-            .filter(
-              (event) =>
-                session.role === "owner" ||
-                event.siteId === (session.siteId ?? "__unassigned__"),
-            )
-            .slice(0, limit)
-            .map((event) => ({ ...event }));
+          return state.auditEvents.slice(0, limit).map((event) => ({ ...event }));
         }
 
         case "verify_audit_chain": {

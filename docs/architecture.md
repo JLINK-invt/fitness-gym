@@ -30,10 +30,8 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - Cada base local es un archivo SQLCipher con WAL.
 - La clave se inyecta con `PRAGMA key` antes de cualquier lectura.
 - `schema_migrations` guarda versión, nombre, checksum y fecha.
-- Las tablas operativas llevan `organization_id NOT NULL`; las de sede llevan
-  además `site_id`.
-- `sites` tiene nombre único por gimnasio sin distinguir mayúsculas. No se borra
-  una sede: se cierra, y conserva su historial.
+- Cada instalación tiene una sola organización (`organization_id NOT NULL`); el
+  esquema no modela sedes.
 - `staff_memberships` impone una membresía por usuario e índice único por
   gimnasio y usuario.
 - `module_events` impone `UNIQUE (organization_id, idempotency_key)`.
@@ -48,8 +46,8 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 
 ## Identidad y sesión
 
-- `users` guarda nombre, hash Argon2id y estado; `staff_memberships` guarda rol y
-  alcance de sede. Solo puede existir un `owner` activo por instalación.
+- `users` guarda nombre, hash Argon2id y estado; `staff_memberships` guarda el
+  rol. Solo puede existir un `owner` activo por instalación.
 - El primer arranque crea gimnasio y dueño en una sola operación; no hay usuario
   ni contraseña por defecto.
 - La contraseña nunca cruza al webview después del formulario; el hash queda en
@@ -58,45 +56,41 @@ La nube no participa en la operación. Todo el flujo anterior es local.
   inactividad cierran la sesión.
 - Los comandos operativos reciben el actor desde la sesión Rust, nunca desde un
   `userId` enviado por la UI.
-- El dueño opera sobre todo el gimnasio (`site_id = NULL`). Un encargado solo ve
-  y administra cajeros y contabilidad de su propia sede; no puede crear otro
-  encargado ni mover personal a otra sede.
+- El dueño administra todo el equipo. Un encargado solo ve y administra cajeros
+  y contabilidad; no puede crear ni editar encargados ni al dueño.
 - El dueño no se edita desde la UI: se crea solo en la configuración inicial. Un
   usuario tampoco puede modificar su propia membresía.
 - Revocar una cuenta impide el siguiente login; la sesión en memoria se invalida
   al expirar o al hacer logout. Restaurar un backup cierra la sesión porque la
   base restaurada puede tener otro dueño o personal revocado.
-- `auth.owner_created`, `auth.login`, `auth.logout`, `site.created`,
-  `site.updated`, `staff.created`, `staff.updated`, `access.simulated` y
-  `backup.created` se registran en `audit_events` con el actor de la sesión.
+- `auth.owner_created`, `auth.login`, `auth.logout`, `staff.created`,
+  `staff.updated`, `access.simulated` y `backup.created` se registran en
+  `audit_events` con el actor de la sesión.
 
 ## Auditoría
 
 Cada evento sensible se agrega en una transacción que calcula el consecutivo y
 el hash del evento anterior. La tabla rechaza `UPDATE` y `DELETE`; la UI solo
-consulta y puede verificar la cadena. El dueño ve todo el gimnasio y los roles con
-sede solo ven sus propios eventos. La cadena detecta alteraciones de contenido,
-pero no un truncado del final sin una copia externa; ese riesgo queda documentado.
+consulta y puede verificar la cadena. Todos los roles con `ViewAudit` ven los
+eventos de la instalación. La cadena detecta alteraciones de contenido, pero no un
+truncado del final sin una copia externa; ese riesgo queda documentado.
 
 El contrato completo está en [`contracts/audit.md`](contracts/audit.md).
 
-## Sedes y personal
+## Personal
 
-La pantalla **Sedes** requiere `ManageSettings` y permite crear, renombrar,
-cerrar y reabrir sedes. Cerrar exige que no queden miembros activos asignados.
 La pantalla **Equipo** requiere `ManageStaff` y permite crear accesos, cambiar
-rol o sede, y desactivar o reactivar cuentas.
+rol y desactivar o reactivar cuentas.
 
 Reglas de autorización aplicadas en Rust:
 
 - No se puede crear ni elevar una cuenta a `owner`.
-- Un `manager` solo administra `cashier` y `accounting` de su sede.
-- No se asigna personal a una sede cerrada.
+- Un `manager` solo lista y administra `cashier` y `accounting`.
 - Solo puede existir una membresía por usuario.
-- Los comandos filtran por `organization_id` y, para `manager`, por `site_id`.
+- Los comandos filtran por `organization_id` y validan el rol actual antes de
+  modificarlo.
 
-El contrato completo está en
-[`contracts/sites-staff.md`](contracts/sites-staff.md).
+El contrato completo está en [`contracts/staff.md`](contracts/staff.md).
 
 ## Catálogo y precios
 

@@ -11,7 +11,7 @@
 
 ## 1. Supuestos
 
-- Un gimnasio por instalación; varias sedes dentro de la organización.
+- Un gimnasio por instalación, sin sedes múltiples.
 - El sistema operativo está actualizado y la cuenta del equipo tiene contraseña.
 - El disco usa cifrado del SO (recomendado, no obligatorio).
 - No hay administrador local hostil; el dueño controla el equipo.
@@ -60,7 +60,7 @@ Principios de consentimiento:
 | Actor | Confianza | Objetivo |
 | --- | --- | --- |
 | Owner | Alta | Operar y administrar el gimnasio |
-| Manager | Media-alta | Operar sede, personal y backups |
+| Manager | Media-alta | Operar el gimnasio, personal y backups |
 | Cashier | Media | Cobrar y ajustar inventario |
 | Accounting | Media | Consultar finanzas y auditoría |
 | Ladrón de equipo | Ninguna | Extraer PII o extorsionar |
@@ -127,7 +127,7 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, sedes, personal, acceso y backups; ventas pendientes |
+| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, personal, acceso y backups; ventas pendientes |
 | Cuenta compartida | Identidad por persona y bloqueo de sesión | Decidido |
 | Restore sin responsable | Registrar actor, backup y resultado | Pendiente |
 
@@ -158,8 +158,8 @@ Fronteras:
 | Cajero invoca comandos de finanzas/backups | Autorización obligatoria en Rust, denegado por defecto | Implementado en los comandos actuales |
 | XSS en el webview invoca IPC arbitrario | CSP estricta, sin contenido remoto, allowlist de comandos | Parcial |
 | Acceso a shell/filesystem desde la UI | Sin plugins shell/fs; solo comandos propios | Implementado |
-| Cruce de organización o sede | Filtro por `organization_id`/`site_id` en cada consulta | Implementado en sedes/personal; extender a módulos operativos |
-| Encargado edita personal de otra sede o crea otro encargado | Alcance por sede y roles permitidos validados en Rust | Implementado |
+| Cruce de organización | Filtro por `organization_id` en cada consulta | Implementado en personal; extender a módulos operativos |
+| Encargado edita a otro encargado o al dueño | Roles permitidos y rol actual validados en Rust | Implementado |
 | Path traversal en restore | Se exige nombre de archivo simple dentro de `backups/` | Implementado |
 
 ### Supply chain y actualizaciones
@@ -200,7 +200,7 @@ su propio ADR antes de implementarse.
 | Dispositivo suplantado | Pairing con clave única y autenticación mutua | 2+ |
 | Repetición de eventos de acceso | Nonce, timestamp y deduplicación por `idempotency_key` | 2+ |
 | Alteración del veredicto de acceso | Firma de mensajes y verificación en ambos lados | 2+ |
-| Caída del módulo | Política fail-open/fail-closed explícita por sede y auditoría | 2+ |
+| Caída del módulo | Política fail-open/fail-closed explícita y auditoría | 2+ |
 | Biometría expuesta | La plantilla vive en el dispositivo; la app solo guarda el evento | 2+ |
 | Red local hostil | Segmentación, TLS o canal firmado, sin exponer la base | 2+ |
 
@@ -254,8 +254,8 @@ su propio ADR antes de implementarse.
 - [x] Restore verifica checksum e integridad y funciona con la base cerrada.
 - [x] CSP y capability mínima configuradas; pruebas estáticas validan la allowlist y la ausencia de web storage.
 - [x] Clave migrada al keychain del SO (2026-10-21).
-- [x] Login local, sesión y RBAC conectados a auth, sedes y personal.
-- [x] Auditoría append-only con hash chain, consulta por sede y verificación.
+- [x] Login local, sesión y RBAC conectados a auth y personal.
+- [x] Auditoría append-only con hash chain y verificación.
 - [ ] Extender RBAC y auditoría a recepción, finanzas e inventario.
 - [x] Vertical slice de acceso simulado con deduplicación por `idempotency_key`.
 - [x] Backup/restore desde la UI con IPC simulado; el binario nativo se valida

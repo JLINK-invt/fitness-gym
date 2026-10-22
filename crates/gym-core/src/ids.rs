@@ -41,7 +41,6 @@ macro_rules! domain_id {
 }
 
 domain_id!(OrganizationId);
-domain_id!(SiteId);
 domain_id!(UserId);
 
 #[cfg(test)]

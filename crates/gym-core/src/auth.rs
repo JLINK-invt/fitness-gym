@@ -43,7 +43,6 @@ pub enum AuthError {
 pub struct Session {
     pub user_id: String,
     pub organization_id: String,
-    pub site_id: Option<String>,
     pub name: String,
     pub role: Role,
 }

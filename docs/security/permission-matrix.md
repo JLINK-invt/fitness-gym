@@ -9,7 +9,7 @@ acciones. **El backend siempre revalida.**
 | Rol | Uso previsto |
 | --- | --- |
 | `owner` | Dueño del gimnasio; configuración, personal, finanzas y backups |
-| `manager` | Encargado de sede; operación, personal, inventario, catálogo y backups |
+| `manager` | Encargado; operación, personal, inventario, catálogo y backups |
 | `cashier` | Mostrador; cobros y ajustes operativos de inventario |
 | `accounting` | Contabilidad; consulta de finanzas y auditoría, sin operar caja |
 
@@ -33,13 +33,14 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 
 1. **Organización:** toda consulta y escritura filtra por `organization_id`. Un
    usuario no puede cruzar organizaciones aunque conozca un UUID.
-2. **Sede:** `staff_memberships.site_id` limita la operación a una sede.
-   `site_id = NULL` significa toda la organización y solo se permite a `owner`.
-3. **Membresía activa:** `status = 'active'`; una membresía `revoked` no puede
+2. **Membresía activa:** `status = 'active'`; una membresía `revoked` no puede
    iniciar una sesión nueva. Una sesión ya abierta conserva sus permisos hasta
    expirar por inactividad o cerrarse.
+3. **Rol actual:** para editar personal, el comando valida tanto el rol solicitado
+   como el rol actual del empleado; un `manager` no puede administrar a otro
+   `manager` ni al `owner`.
 4. **Recurso:** además del permiso, el comando valida que el recurso pertenezca a
-   la organización/sede del actor antes de escribir.
+   la organización del actor antes de escribir.
 5. **UI no confiable:** ocultar un botón no es un control. Los comandos Tauri
    reciben el actor desde la sesión en Rust, nunca desde un `userId` del webview.
 
@@ -54,13 +55,13 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 | Crear/editar personal | `ManageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
 | Crear/restaurar backup | `ManageBackups` | Confirmación explícita; registrar archivo y resultado |
 | Ver auditoría | `ViewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
-| Cambiar configuración y sedes | `ManageSettings` | Incluye moneda, zona horaria, política de sesión y ciclo de vida de sedes |
+| Cambiar configuración | `ManageSettings` | Incluye moneda, zona horaria y política de sesión |
 
 ## Auditoría mínima
 
 Cada comando sensible debe registrar en `audit_events`:
 
-- `actor_id`, `organization_id`, `site_id` cuando aplique.
+- `actor_id`, `organization_id`.
 - `action` estable (por ejemplo `backup.restore`), `resource` y resultado
   (`allowed`, `denied`, `failed`).
 - `correlation_id` para agrupar una operación.
@@ -70,14 +71,13 @@ Cada comando sensible debe registrar en `audit_events`:
 
 - Matriz completa por rol (unitarias en `gym-core`).
 - Denegación de comando sensible con membresía revocada.
-- Denegación de acceso a recurso de otra organización o sede.
+- Denegación de acceso a recurso de otra organización.
 - Registro de denegaciones con actor y correlación.
 
 ## Estado de implementación
 
-- Aplicado en auth, sedes, personal, acceso, backups y catálogo: permisos,
-  alcance por sede, membresía activa, validación de recurso y auditoría
-  append-only.
+- Aplicado en auth, personal, acceso, backups y catálogo: permisos, membresía
+  activa, validación de recurso y auditoría append-only.
 - `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
   edición o borrado.
 - Pendiente al construir cada módulo: recepción, finanzas, inventario y

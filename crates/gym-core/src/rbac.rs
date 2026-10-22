@@ -64,7 +64,7 @@ pub const V1_PERMISSIONS: [Permission; 8] = [
     Permission::ViewAudit,
 ];
 
-/// Authorization is role + organization + site aware. Resource-level checks are
+/// Authorization is role and organization aware. Resource-level checks are
 /// applied by the caller before writing.
 pub fn permissions_for(role: Role) -> &'static [Permission] {
     match role {

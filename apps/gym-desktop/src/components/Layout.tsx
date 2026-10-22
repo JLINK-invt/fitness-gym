@@ -19,7 +19,6 @@ const navigation: NavigationItem[] = [
   { to: "/access", label: "Acceso", permission: "operatePos" },
   { to: "/catalog", label: "Catálogo", permission: "manageCatalog" },
   { to: "/staff", label: "Equipo", permission: "manageStaff" },
-  { to: "/sites", label: "Sedes", permission: "manageSettings" },
   { to: "/backups", label: "Backups", permission: "manageBackups" },
   { to: "/audit", label: "Auditoría", permission: "viewAudit" },
 ];

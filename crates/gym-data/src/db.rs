@@ -24,7 +24,6 @@ pub struct UserRecord {
     pub organization_id: String,
     pub name: String,
     pub role: String,
-    pub site_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,16 +33,6 @@ pub struct UserCredentialRecord {
     pub name: String,
     pub password_hash: String,
     pub role: String,
-    pub site_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SiteRecord {
-    pub id: String,
-    pub organization_id: String,
-    pub name: String,
-    pub status: String,
-    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +40,6 @@ pub struct StaffRecord {
     pub user_id: String,
     pub name: String,
     pub role: String,
-    pub site_id: Option<String>,
-    pub site_name: Option<String>,
     pub status: String,
     pub last_login_at: Option<String>,
     pub created_at: String,
@@ -155,7 +142,6 @@ pub struct AuditEventRecord {
     pub sequence: i64,
     pub actor_id: Option<String>,
     pub actor_name: Option<String>,
-    pub site_id: Option<String>,
     pub action: String,
     pub resource: String,
     pub result: String,
@@ -396,141 +382,13 @@ impl Db {
         })
     }
 
-    pub fn list_sites(&self, organization_id: &str) -> Result<Vec<SiteRecord>, DataError> {
-        self.with_connection(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT id, organization_id, name, status, created_at
-                 FROM sites
-                 WHERE organization_id = ?1
-                 ORDER BY (status = 'active') DESC, name COLLATE NOCASE",
-            )?;
-            let rows = statement.query_map(params![organization_id], |row| {
-                Ok(SiteRecord {
-                    id: row.get(0)?,
-                    organization_id: row.get(1)?,
-                    name: row.get(2)?,
-                    status: row.get(3)?,
-                    created_at: row.get(4)?,
-                })
-            })?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
-        })
-    }
-
-    pub fn create_site(&self, organization_id: &str, name: &str) -> Result<SiteRecord, DataError> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(DataError::InvalidValue("site name cannot be empty".into()));
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let created_at = chrono::Utc::now().to_rfc3339();
-
-        self.with_connection(|conn| {
-            let exists: bool = conn.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM sites
-                     WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE
-                 )",
-                params![organization_id, name],
-                |row| row.get(0),
-            )?;
-            if exists {
-                return Err(DataError::SiteAlreadyExists);
-            }
-            conn.execute(
-                "INSERT INTO sites (id, organization_id, name, status, created_at)
-                 VALUES (?1, ?2, ?3, 'active', ?4)",
-                params![id, organization_id, name, created_at],
-            )?;
-            Ok(SiteRecord {
-                id,
-                organization_id: organization_id.to_string(),
-                name: name.to_string(),
-                status: "active".into(),
-                created_at,
-            })
-        })
-    }
-
-    pub fn update_site(
-        &self,
-        organization_id: &str,
-        site_id: &str,
-        name: &str,
-        status: &str,
-    ) -> Result<SiteRecord, DataError> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(DataError::InvalidValue("site name cannot be empty".into()));
-        }
-        if !matches!(status, "active" | "closed") {
-            return Err(DataError::InvalidValue("invalid site status".into()));
-        }
-
-        let mut guard = self.lock()?;
-        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
-        let transaction = conn.transaction()?;
-        let created_at: Option<String> = transaction
-            .query_row(
-                "SELECT created_at FROM sites WHERE id = ?1 AND organization_id = ?2",
-                params![site_id, organization_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let created_at = created_at.ok_or(DataError::SiteNotFound)?;
-
-        let duplicate: bool = transaction.query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM sites
-                 WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE AND id <> ?3
-             )",
-            params![organization_id, name, site_id],
-            |row| row.get(0),
-        )?;
-        if duplicate {
-            return Err(DataError::SiteAlreadyExists);
-        }
-
-        if status == "closed" {
-            let active_staff: bool = transaction.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM staff_memberships
-                     WHERE organization_id = ?1 AND site_id = ?2 AND status = 'active'
-                 )",
-                params![organization_id, site_id],
-                |row| row.get(0),
-            )?;
-            if active_staff {
-                return Err(DataError::SiteHasActiveStaff);
-            }
-        }
-
-        transaction.execute(
-            "UPDATE sites SET name = ?3, status = ?4
-             WHERE id = ?1 AND organization_id = ?2",
-            params![site_id, organization_id, name, status],
-        )?;
-        transaction.commit()?;
-
-        Ok(SiteRecord {
-            id: site_id.to_string(),
-            organization_id: organization_id.to_string(),
-            name: name.to_string(),
-            status: status.to_string(),
-            created_at,
-        })
-    }
-
     pub fn list_staff(&self, organization_id: &str) -> Result<Vec<StaffRecord>, DataError> {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
-                "SELECT u.id, u.name, s.role, s.site_id, sites.name, s.status,
-                        u.last_login_at, u.created_at
+                "SELECT u.id, u.name, s.role, s.status, u.last_login_at, u.created_at
                  FROM users u
                  JOIN staff_memberships s
                    ON s.organization_id = u.organization_id AND s.user_id = u.id
-                 LEFT JOIN sites
-                   ON sites.id = s.site_id AND sites.organization_id = s.organization_id
                  WHERE u.organization_id = ?1
                  ORDER BY CASE s.role
                      WHEN 'owner' THEN 0
@@ -544,11 +402,9 @@ impl Db {
                     user_id: row.get(0)?,
                     name: row.get(1)?,
                     role: row.get(2)?,
-                    site_id: row.get(3)?,
-                    site_name: row.get(4)?,
-                    status: row.get(5)?,
-                    last_login_at: row.get(6)?,
-                    created_at: row.get(7)?,
+                    status: row.get(3)?,
+                    last_login_at: row.get(4)?,
+                    created_at: row.get(5)?,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
@@ -561,7 +417,6 @@ impl Db {
         name: &str,
         password_hash: &str,
         role: &str,
-        site_id: &str,
     ) -> Result<StaffRecord, DataError> {
         let name = name.trim();
         if name.is_empty() || password_hash.trim().is_empty() {
@@ -580,22 +435,6 @@ impl Db {
         let mut guard = self.lock()?;
         let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
         let transaction = conn.transaction()?;
-
-        let site_name: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT name, status FROM sites WHERE id = ?1 AND organization_id = ?2",
-                params![site_id, organization_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let Some((site_name, site_status)) = site_name else {
-            return Err(DataError::SiteNotFound);
-        };
-        if site_status != "active" {
-            return Err(DataError::InvalidValue(
-                "cannot assign staff to a closed site".into(),
-            ));
-        }
 
         let user_exists: bool = transaction.query_row(
             "SELECT EXISTS(
@@ -617,16 +456,9 @@ impl Db {
         )?;
         transaction.execute(
             "INSERT INTO staff_memberships
-                 (id, organization_id, site_id, user_id, role, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6)",
-            params![
-                membership_id,
-                organization_id,
-                site_id,
-                user_id,
-                role,
-                created_at
-            ],
+                 (id, organization_id, user_id, role, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5)",
+            params![membership_id, organization_id, user_id, role, created_at],
         )?;
         transaction.commit()?;
 
@@ -634,21 +466,17 @@ impl Db {
             user_id,
             name: name.to_string(),
             role: role.to_string(),
-            site_id: Some(site_id.to_string()),
-            site_name: Some(site_name),
             status: "active".into(),
             last_login_at: None,
             created_at,
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn update_staff(
         &self,
         organization_id: &str,
         user_id: &str,
         role: &str,
-        site_id: &str,
         status: &str,
     ) -> Result<StaffRecord, DataError> {
         if !matches!(role, "manager" | "cashier" | "accounting") {
@@ -662,18 +490,18 @@ impl Db {
         let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
         let transaction = conn.transaction()?;
 
-        let existing: Option<(String, String, String, String)> = transaction
+        let existing: Option<(String, String, String)> = transaction
             .query_row(
-                "SELECT s.role, COALESCE(s.site_id, ''), u.name, u.created_at
+                "SELECT s.role, u.name, u.created_at
                  FROM users u
                  JOIN staff_memberships s
                    ON s.organization_id = u.organization_id AND s.user_id = u.id
                  WHERE u.organization_id = ?1 AND u.id = ?2",
                 params![organization_id, user_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        let Some((current_role, _, name, created_at)) = existing else {
+        let Some((current_role, name, created_at)) = existing else {
             return Err(DataError::StaffNotFound);
         };
         if current_role == "owner" {
@@ -682,28 +510,12 @@ impl Db {
             ));
         }
 
-        let site: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT name, status FROM sites WHERE id = ?1 AND organization_id = ?2",
-                params![site_id, organization_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let Some((site_name, site_status)) = site else {
-            return Err(DataError::SiteNotFound);
-        };
-        if status == "active" && site_status != "active" {
-            return Err(DataError::InvalidValue(
-                "cannot activate staff in a closed site".into(),
-            ));
-        }
-
         let now = chrono::Utc::now().to_rfc3339();
         transaction.execute(
             "UPDATE staff_memberships
-             SET role = ?3, site_id = ?4, status = ?5
+             SET role = ?3, status = ?4
              WHERE organization_id = ?1 AND user_id = ?2",
-            params![organization_id, user_id, role, site_id, status],
+            params![organization_id, user_id, role, status],
         )?;
         transaction.execute(
             "UPDATE users SET status = ?3, updated_at = ?4
@@ -730,8 +542,6 @@ impl Db {
             user_id: user_id.to_string(),
             name,
             role: role.to_string(),
-            site_id: Some(site_id.to_string()),
-            site_name: Some(site_name),
             status: status.to_string(),
             last_login_at,
             created_at,
@@ -1240,8 +1050,8 @@ impl Db {
         )?;
         transaction.execute(
             "INSERT INTO staff_memberships
-                 (id, organization_id, site_id, user_id, role, status, created_at)
-             VALUES (?1, ?2, NULL, ?3, 'owner', 'active', ?4)",
+                 (id, organization_id, user_id, role, status, created_at)
+             VALUES (?1, ?2, ?3, 'owner', 'active', ?4)",
             params![membership_id, organization_id, user_id, created_at],
         )?;
         transaction.commit()?;
@@ -1251,7 +1061,6 @@ impl Db {
             organization_id: organization_id.to_string(),
             name: name.to_string(),
             role: "owner".into(),
-            site_id: None,
         })
     }
 
@@ -1264,7 +1073,7 @@ impl Db {
     ) -> Result<Option<UserCredentialRecord>, DataError> {
         self.with_connection(|conn| {
             conn.query_row(
-                "SELECT u.id, u.organization_id, u.name, u.password_hash, s.role, s.site_id
+                "SELECT u.id, u.organization_id, u.name, u.password_hash, s.role
                  FROM users u
                  JOIN staff_memberships s
                    ON s.organization_id = u.organization_id AND s.user_id = u.id
@@ -1272,7 +1081,6 @@ impl Db {
                    AND u.name = ?2 COLLATE NOCASE
                    AND u.status = 'active'
                    AND s.status = 'active'
-                 ORDER BY (s.site_id IS NULL) DESC
                  LIMIT 1",
                 params![organization_id, name.trim()],
                 |row| {
@@ -1282,7 +1090,6 @@ impl Db {
                         name: row.get(2)?,
                         password_hash: row.get(3)?,
                         role: row.get(4)?,
-                        site_id: row.get(5)?,
                     })
                 },
             )
@@ -1309,7 +1116,6 @@ impl Db {
         &self,
         organization_id: &str,
         actor_id: Option<&str>,
-        site_id: Option<&str>,
         action: &str,
         resource: &str,
         result: &str,
@@ -1348,7 +1154,6 @@ impl Db {
             organization_id,
             &id,
             actor_id,
-            site_id,
             action,
             resource,
             result,
@@ -1359,14 +1164,13 @@ impl Db {
         );
         transaction.execute(
             "INSERT INTO audit_events
-                 (id, organization_id, actor_id, site_id, action, resource, result,
+                 (id, organization_id, actor_id, action, resource, result,
                   origin, correlation_id, sequence, prev_hash, event_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id,
                 organization_id,
                 actor_id,
-                site_id,
                 action,
                 resource,
                 result,
@@ -1382,38 +1186,34 @@ impl Db {
         Ok(())
     }
 
-    /// Returns newest audit rows first. A `site_id` filter is mandatory for
-    /// non-owner roles so a manager cannot read another site's history.
+    /// Returns newest audit rows first for the whole installation.
     pub fn list_audit_events(
         &self,
         organization_id: &str,
-        site_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AuditEventRecord>, DataError> {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
-                "SELECT a.id, a.sequence, a.actor_id, u.name, a.site_id, a.action,
+                "SELECT a.id, a.sequence, a.actor_id, u.name, a.action,
                         a.resource, a.result, a.origin, a.correlation_id, a.created_at
                  FROM audit_events a
                  LEFT JOIN users u ON u.id = a.actor_id
                  WHERE a.organization_id = ?1
-                   AND (?2 IS NULL OR a.site_id = ?2)
                  ORDER BY a.sequence DESC
-                 LIMIT ?3",
+                 LIMIT ?2",
             )?;
-            let rows = statement.query_map(params![organization_id, site_id, limit], |row| {
+            let rows = statement.query_map(params![organization_id, limit], |row| {
                 Ok(AuditEventRecord {
                     id: row.get(0)?,
                     sequence: row.get(1)?,
                     actor_id: row.get(2)?,
                     actor_name: row.get(3)?,
-                    site_id: row.get(4)?,
-                    action: row.get(5)?,
-                    resource: row.get(6)?,
-                    result: row.get(7)?,
-                    origin: row.get(8)?,
-                    correlation_id: row.get(9)?,
-                    created_at: row.get(10)?,
+                    action: row.get(4)?,
+                    resource: row.get(5)?,
+                    result: row.get(6)?,
+                    origin: row.get(7)?,
+                    correlation_id: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
@@ -1429,7 +1229,7 @@ impl Db {
     ) -> Result<AuditIntegrityRecord, DataError> {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
-                "SELECT sequence, id, actor_id, site_id, action, resource, result,
+                "SELECT sequence, id, actor_id, action, resource, result,
                         origin, correlation_id, created_at, prev_hash, event_hash
                  FROM audit_events
                  WHERE organization_id = ?1 AND event_hash IS NOT NULL
@@ -1444,21 +1244,19 @@ impl Db {
                 let sequence: i64 = row.get(0)?;
                 let id: String = row.get(1)?;
                 let actor_id: Option<String> = row.get(2)?;
-                let site_id: Option<String> = row.get(3)?;
-                let action: String = row.get(4)?;
-                let resource: String = row.get(5)?;
-                let result: String = row.get(6)?;
-                let origin: String = row.get(7)?;
-                let correlation_id: Option<String> = row.get(8)?;
-                let created_at: String = row.get(9)?;
-                let prev_hash: Option<String> = row.get(10)?;
-                let event_hash: String = row.get(11)?;
+                let action: String = row.get(3)?;
+                let resource: String = row.get(4)?;
+                let result: String = row.get(5)?;
+                let origin: String = row.get(6)?;
+                let correlation_id: Option<String> = row.get(7)?;
+                let created_at: String = row.get(8)?;
+                let prev_hash: Option<String> = row.get(9)?;
+                let event_hash: String = row.get(10)?;
                 let expected = audit_event_hash(
                     sequence,
                     organization_id,
                     &id,
                     actor_id.as_deref(),
-                    site_id.as_deref(),
                     &action,
                     &resource,
                     &result,
@@ -1811,7 +1609,6 @@ fn audit_event_hash(
     organization_id: &str,
     id: &str,
     actor_id: Option<&str>,
-    site_id: Option<&str>,
     action: &str,
     resource: &str,
     result: &str,
@@ -1835,12 +1632,11 @@ fn audit_event_hash(
     }
 
     let mut buffer = String::with_capacity(512);
-    buffer.push_str("fitness-gym-audit-v1\n");
+    buffer.push_str("fitness-gym-audit-v2\n");
     push_field(&mut buffer, "sequence", Some(&sequence.to_string()));
     push_field(&mut buffer, "organization", Some(organization_id));
     push_field(&mut buffer, "id", Some(id));
     push_field(&mut buffer, "actor", actor_id);
-    push_field(&mut buffer, "site", site_id);
     push_field(&mut buffer, "action", Some(action));
     push_field(&mut buffer, "resource", Some(resource));
     push_field(&mut buffer, "result", Some(result));
@@ -1902,7 +1698,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 5);
+        assert_eq!(second_status.schema_version, 6);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -1938,7 +1734,6 @@ mod tests {
             .expect("creates owner");
         assert_eq!(owner.name, "Ana Pérez");
         assert_eq!(owner.role, "owner");
-        assert_eq!(owner.site_id, None);
         assert!(db.has_owner().expect("owner query"));
 
         let duplicate = db
@@ -1956,7 +1751,7 @@ mod tests {
     }
 
     #[test]
-    fn sites_and_staff_are_scoped_and_updatable() {
+    fn staff_memberships_are_updatable() {
         let dir = tempfile::tempdir().expect("temp dir");
         let key = DbKey::generate();
         let db = open_temp(&dir, &key);
@@ -1966,44 +1761,31 @@ mod tests {
         db.create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
             .expect("creates owner");
 
-        let site = db
-            .create_site(&organization_id, "Centro")
-            .expect("creates site");
-        assert_eq!(site.status, "active");
-        assert!(matches!(
-            db.create_site(&organization_id, "centro")
-                .expect_err("duplicate site"),
-            DataError::SiteAlreadyExists
-        ));
-
         let staff = db
             .create_staff(
                 &organization_id,
                 "Carlos Caja",
                 "$argon2id$staff",
                 "cashier",
-                &site.id,
             )
             .expect("creates staff");
-        assert_eq!(staff.site_id.as_deref(), Some(site.id.as_str()));
-        assert_eq!(staff.site_name.as_deref(), Some("Centro"));
+        assert_eq!(staff.role, "cashier");
+        assert_eq!(staff.status, "active");
         assert_eq!(db.list_staff(&organization_id).expect("lists").len(), 2);
+        assert!(matches!(
+            db.create_staff(&organization_id, "carlos caja", "$argon2id$x", "cashier")
+                .expect_err("duplicate user"),
+            DataError::UserAlreadyExists
+        ));
 
         let credentials = db
             .find_user_credentials(&organization_id, "carlos caja")
             .expect("looks up staff")
             .expect("staff exists");
         assert_eq!(credentials.role, "cashier");
-        assert_eq!(credentials.site_id.as_deref(), Some(site.id.as_str()));
 
         let updated = db
-            .update_staff(
-                &organization_id,
-                &staff.user_id,
-                "accounting",
-                &site.id,
-                "revoked",
-            )
+            .update_staff(&organization_id, &staff.user_id, "accounting", "revoked")
             .expect("revokes staff");
         assert_eq!(updated.role, "accounting");
         assert_eq!(updated.status, "revoked");
@@ -2012,42 +1794,19 @@ mod tests {
             .expect("looks up revoked staff")
             .is_none());
 
-        db.update_staff(
-            &organization_id,
-            &staff.user_id,
-            "accounting",
-            &site.id,
-            "active",
-        )
-        .expect("reactivates staff");
+        db.update_staff(&organization_id, &staff.user_id, "manager", "active")
+            .expect("reactivates staff");
+        assert_eq!(
+            db.find_user_credentials(&organization_id, "Carlos Caja")
+                .expect("looks up staff")
+                .expect("staff exists")
+                .role,
+            "manager"
+        );
         assert!(matches!(
-            db.update_site(&organization_id, &site.id, "Centro", "closed")
-                .expect_err("site still has active staff"),
-            DataError::SiteHasActiveStaff
-        ));
-
-        db.update_staff(
-            &organization_id,
-            &staff.user_id,
-            "accounting",
-            &site.id,
-            "revoked",
-        )
-        .expect("revokes staff again");
-        let closed = db
-            .update_site(&organization_id, &site.id, "Centro", "closed")
-            .expect("closes empty site");
-        assert_eq!(closed.status, "closed");
-        assert!(matches!(
-            db.update_staff(
-                &organization_id,
-                &staff.user_id,
-                "manager",
-                &site.id,
-                "active"
-            )
-            .expect_err("closed site rejects active staff"),
-            DataError::InvalidValue(_)
+            db.update_staff(&organization_id, "missing", "cashier", "active")
+                .expect_err("missing staff"),
+            DataError::StaffNotFound
         ));
     }
 
@@ -2308,14 +2067,10 @@ mod tests {
         let organization_id = db
             .create_organization("Gimnasio Centro")
             .expect("creates organization");
-        let site = db
-            .create_site(&organization_id, "Centro")
-            .expect("creates site");
 
         db.record_audit_event(
             &organization_id,
             Some("user-1"),
-            Some(&site.id),
             "auth.login",
             "session",
             "allowed",
@@ -2326,7 +2081,6 @@ mod tests {
         db.record_audit_event(
             &organization_id,
             Some("user-1"),
-            Some(&site.id),
             "staff.updated",
             "staff_membership",
             "allowed",
@@ -2337,7 +2091,6 @@ mod tests {
         db.record_audit_event(
             &organization_id,
             None,
-            None,
             "auth.login",
             "session",
             "failed",
@@ -2347,24 +2100,12 @@ mod tests {
         .expect("records failure");
 
         let events = db
-            .list_audit_events(&organization_id, None, 10)
+            .list_audit_events(&organization_id, 10)
             .expect("lists audit");
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].sequence, 3);
         assert_eq!(events[2].sequence, 1);
         assert_eq!(events[1].correlation_id.as_deref(), Some("corr-1"));
-
-        let site_events = db
-            .list_audit_events(&organization_id, Some(&site.id), 10)
-            .expect("lists site audit");
-        assert_eq!(site_events.len(), 2);
-        assert!(site_events
-            .iter()
-            .all(|event| event.site_id.as_deref() == Some(&site.id)));
-        let unassigned_events = db
-            .list_audit_events(&organization_id, Some("__unassigned__"), 10)
-            .expect("lists unassigned audit");
-        assert!(unassigned_events.is_empty());
 
         let integrity = db
             .verify_audit_chain(&organization_id)

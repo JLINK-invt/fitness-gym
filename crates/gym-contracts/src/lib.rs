@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "1.5.0";
+pub const CONTRACT_VERSION: &str = "2.0.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,7 +130,6 @@ pub struct SetupState {
 pub struct SessionSummary {
     pub user_id: String,
     pub organization_id: String,
-    pub site_id: Option<String>,
     pub name: String,
     pub role: StaffRole,
     pub permissions: Vec<String>,
@@ -138,26 +137,9 @@ pub struct SessionSummary {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum SiteStatus {
-    Active,
-    Closed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum StaffStatus {
     Active,
     Revoked,
-}
-
-/// Physical location where staff and future member operations are scoped.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SiteSummary {
-    pub id: String,
-    pub name: String,
-    pub status: SiteStatus,
-    pub created_at: String,
 }
 
 /// Staff member visible to owner and manager screens. Password hashes are
@@ -168,8 +150,6 @@ pub struct StaffSummary {
     pub user_id: String,
     pub name: String,
     pub role: StaffRole,
-    pub site_id: Option<String>,
-    pub site_name: Option<String>,
     pub status: StaffStatus,
     pub last_login_at: Option<String>,
     pub created_at: String,
@@ -316,7 +296,6 @@ pub struct AuditEventSummary {
     pub sequence: i64,
     pub actor_id: Option<String>,
     pub actor_name: Option<String>,
-    pub site_id: Option<String>,
     pub action: String,
     pub resource: String,
     pub result: AuditResult,
@@ -453,7 +432,6 @@ mod tests {
         let session = SessionSummary {
             user_id: "user-1".into(),
             organization_id: "org-1".into(),
-            site_id: None,
             name: "Ana".into(),
             role: StaffRole::Owner,
             permissions: vec!["manageSettings".into()],

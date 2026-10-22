@@ -11,7 +11,6 @@ import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
 import { CatalogPage } from "./pages/CatalogPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
-import { SitesPage } from "./pages/SitesPage";
 import { StaffPage } from "./pages/StaffPage";
 import { api, isTauriRuntime } from "./lib/tauri";
 
@@ -90,14 +89,6 @@ export function App() {
           element={
             <Guarded permission="manageStaff">
               <StaffPage />
-            </Guarded>
-          }
-        />
-        <Route
-          path="sites"
-          element={
-            <Guarded permission="manageSettings">
-              <SitesPage />
             </Guarded>
           }
         />

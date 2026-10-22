@@ -1,7 +1,7 @@
-import type { SiteSummary, StaffRole, StaffStatus, StaffSummary } from "@gym/contracts";
+import type { StaffRole, StaffStatus, StaffSummary } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "../components/Layout";
@@ -19,21 +19,12 @@ export function StaffPage() {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [role, setRole] = useState<StaffRole>("cashier");
-  const [siteId, setSiteId] = useState(session.siteId ?? "");
   const [password, setPassword] = useState("");
 
-  const sites = useQuery({ queryKey: ["sites"], queryFn: api.listSites });
   const staff = useQuery({ queryKey: ["staff"], queryFn: api.listStaff });
-  const activeSites = (sites.data ?? []).filter((site) => site.status === "active");
-
-  useEffect(() => {
-    if (!siteId && activeSites[0]) {
-      setSiteId(activeSites[0].id);
-    }
-  }, [activeSites, siteId]);
 
   const createStaff = useMutation({
-    mutationFn: () => api.createStaff(name.trim(), role, siteId, password),
+    mutationFn: () => api.createStaff(name.trim(), role, password),
     onSuccess: () => {
       setName("");
       setPassword("");
@@ -45,27 +36,25 @@ export function StaffPage() {
     mutationFn: ({
       userId,
       nextRole,
-      nextSiteId,
       status,
     }: {
       userId: string;
       nextRole: StaffRole;
-      nextSiteId: string;
       status: StaffStatus;
-    }) => api.updateStaff(userId, nextRole, nextSiteId, status),
+    }) => api.updateStaff(userId, nextRole, status),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["staff"] });
     },
   });
 
-  const canCreate = name.trim().length >= 2 && Boolean(siteId) && password.length >= 8;
+  const canCreate = name.trim().length >= 2 && password.length >= 8;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Equipo</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Crea accesos individuales, asigna rol y sede, y desactiva a quien deja el gimnasio.
+          Crea accesos individuales, asigna un rol y desactiva a quien deja el gimnasio.
         </p>
       </div>
 
@@ -77,7 +66,7 @@ export function StaffPage() {
         }}
       >
         <h2 className="text-base font-semibold">Agregar empleado</h2>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm">
             <span className="font-medium text-slate-700">Nombre del empleado</span>
             <input
@@ -103,23 +92,6 @@ export function StaffPage() {
             </select>
           </label>
           <label className="text-sm">
-            <span className="font-medium text-slate-700">Sede</span>
-            <select
-              aria-label="Sede de la nueva cuenta"
-              value={siteId}
-              onChange={(event) => setSiteId(event.target.value)}
-              disabled={session.role === "manager"}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100"
-            >
-              <option value="">Selecciona una sede</option>
-              {activeSites.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
             <span className="font-medium text-slate-700">Contraseña inicial</span>
             <input
               type="password"
@@ -138,11 +110,6 @@ export function StaffPage() {
           >
             {createStaff.isPending ? "Creando…" : "Crear acceso"}
           </button>
-          {activeSites.length === 0 && (
-            <p className="text-sm text-amber-700">
-              Primero crea una sede activa para asignar personal.
-            </p>
-          )}
           {createStaff.isError && (
             <p className="text-sm text-rose-700">{errorMessage(createStaff.error)}</p>
           )}
@@ -173,7 +140,6 @@ export function StaffPage() {
                 <tr>
                   <th className="px-6 py-3">Persona</th>
                   <th className="px-6 py-3">Rol</th>
-                  <th className="px-6 py-3">Sede</th>
                   <th className="px-6 py-3">Último ingreso</th>
                   <th className="px-6 py-3">Estado</th>
                   <th className="px-6 py-3 text-right">Acciones</th>
@@ -182,17 +148,15 @@ export function StaffPage() {
               <tbody className="divide-y divide-slate-100">
                 {staff.data.map((member) => (
                   <StaffRow
-                    key={`${member.userId}-${member.role}-${member.siteId ?? "none"}-${member.status}`}
+                    key={`${member.userId}-${member.role}-${member.status}`}
                     member={member}
                     sessionRole={session.role}
                     self={member.userId === session.userId}
-                    sites={sites.data ?? []}
                     saving={updateStaff.isPending}
-                    onSave={(nextRole, nextSiteId, status) =>
+                    onSave={(nextRole, status) =>
                       updateStaff.mutate({
                         userId: member.userId,
                         nextRole,
-                        nextSiteId,
                         status,
                       })
                     }
@@ -219,36 +183,30 @@ function StaffRow({
   member,
   sessionRole,
   self,
-  sites,
   saving,
   onSave,
 }: {
   member: StaffSummary;
   sessionRole: StaffRole;
   self: boolean;
-  sites: SiteSummary[];
   saving: boolean;
-  onSave: (role: StaffRole, siteId: string, status: StaffStatus) => void;
+  onSave: (role: StaffRole, status: StaffStatus) => void;
 }) {
   const [role, setRole] = useState<StaffRole>(member.role);
-  const [siteId, setSiteId] = useState(member.siteId ?? "");
   const owner = member.role === "owner";
-  const locked = owner || self;
+  const locked =
+    owner || self || (sessionRole === "manager" && member.role === "manager");
   const options = roleOptions(sessionRole);
   if (!options.includes(member.role)) {
     options.unshift(member.role);
   }
-  const availableSites = sites.filter(
-    (site) => site.status === "active" || site.id === member.siteId,
-  );
-  const dirty = role !== member.role || siteId !== (member.siteId ?? "");
+  const dirty = role !== member.role;
 
   if (owner) {
     return (
       <tr>
         <td className="px-6 py-4 font-medium">{member.name}</td>
         <td className="px-6 py-4">Dueño</td>
-        <td className="px-6 py-4 text-slate-500">Todas las sedes</td>
         <td className="px-6 py-4 text-slate-500">{formatDate(member.lastLoginAt)}</td>
         <td className="px-6 py-4">
           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
@@ -278,22 +236,6 @@ function StaffRow({
           ))}
         </select>
       </td>
-      <td className="px-6 py-4">
-        <select
-          aria-label={`Sede de ${member.name}`}
-          value={siteId}
-          disabled={locked || sessionRole === "manager"}
-          onChange={(event) => setSiteId(event.target.value)}
-          className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100"
-        >
-          {availableSites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.name}
-              {site.status === "closed" ? " (cerrada)" : ""}
-            </option>
-          ))}
-        </select>
-      </td>
       <td className="px-6 py-4 text-slate-500">{formatDate(member.lastLoginAt)}</td>
       <td className="px-6 py-4">
         <span
@@ -311,8 +253,8 @@ function StaffRow({
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            disabled={locked || saving || !dirty || !siteId}
-            onClick={() => onSave(role, siteId, member.status)}
+            disabled={locked || saving || !dirty}
+            onClick={() => onSave(role, member.status)}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             Guardar
@@ -321,11 +263,7 @@ function StaffRow({
             type="button"
             disabled={locked || saving}
             onClick={() =>
-              onSave(
-                role,
-                siteId,
-                member.status === "active" ? "revoked" : "active",
-              )
+              onSave(role, member.status === "active" ? "revoked" : "active")
             }
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >

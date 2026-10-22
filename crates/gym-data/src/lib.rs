@@ -13,7 +13,7 @@ pub use db::{
     verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CatalogPriceRecord,
     CatalogProductRecord, CatalogVariantRecord, Db, LocalDatabaseStatus, ModuleEventRecord,
     NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
-    NewCatalogVariantUpdate, OrganizationRecord, RecordedModuleEvent, SiteRecord, StaffRecord,
+    NewCatalogVariantUpdate, OrganizationRecord, RecordedModuleEvent, StaffRecord,
     UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;

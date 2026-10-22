@@ -114,13 +114,6 @@ async (page) => {
   }
   pass("login posterior al restore conserva el backup");
 
-  await page.getByRole("link", { name: "Sedes" }).click();
-  await page.getByRole("heading", { name: "Sedes", exact: true }).waitFor();
-  await page.getByLabel("Nombre de la sede").fill("Sucursal Norte");
-  await page.getByRole("button", { name: "Crear sede" }).click();
-  await page.getByLabel("Nombre de Sucursal Norte").waitFor();
-  pass("crear sede y listarla");
-
   await page.getByRole("link", { name: "Catálogo" }).click();
   await page.getByRole("heading", { name: "Catálogo" }).waitFor();
   await page.getByLabel("Nombre del producto").fill("Membresía mensual");
@@ -158,7 +151,6 @@ async (page) => {
   await page.getByRole("link", { name: "Equipo" }).click();
   await page.getByRole("heading", { name: "Equipo" }).waitFor();
   await page.getByLabel("Nombre del empleado").fill("Carlos Caja");
-  await page.getByLabel("Sede de la nueva cuenta").selectOption({ label: "Sucursal Norte" });
   await page.getByLabel("Contraseña inicial").fill("clave-carlos-123");
   await page.getByRole("button", { name: "Crear acceso" }).click();
   await page.getByText("Acceso creado. Ya puede iniciar sesión.").waitFor();
@@ -177,9 +169,6 @@ async (page) => {
   }
   if ((await page.getByRole("link", { name: "Equipo" }).count()) > 0) {
     throw new Error("El cajero no debería ver Equipo.");
-  }
-  if ((await page.getByRole("link", { name: "Sedes" }).count()) > 0) {
-    throw new Error("El cajero no debería ver Sedes.");
   }
   if ((await page.getByRole("link", { name: "Catálogo" }).count()) > 0) {
     throw new Error("El cajero no debería ver Catálogo.");

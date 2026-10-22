@@ -4,6 +4,7 @@
 - **Fecha:** 2026-10-20
 - **Decide:** Identidad, sesión y permisos
 - **Relacionado:** Phase 1, Phase 2
+- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin alcance por sede)
 
 ## Contexto
 
@@ -15,19 +16,19 @@ alterar historial o un ex empleado con acceso al equipo.
 ## Decisión
 
 1. **Identidad local por organización.** Cada usuario tiene `user_id` UUID,
-   nombre, rol y alcance de sede. No se requiere correo ni nube.
+   nombre y rol. No se requiere correo ni nube.
 2. **Contraseña local** con Argon2id y salt único. Valores iniciales: mínimo 8
    caracteres (12 para el owner) y bloqueo de 5 minutos tras 5 intentos
    fallidos, con auditoría del evento.
 3. **Sesión en memoria** dentro del proceso Tauri. Sin tokens en el webview,
    `localStorage` ni cookies. Bloqueo automático por inactividad a los 15
    minutos (configurable por organización).
-4. **Roles V1:** `owner`, `manager`, `cashier`, `accounting`. Un usuario puede
-   tener una membresía por organización/sede; `site_id = NULL` significa
-   alcance de toda la organización y solo se permite a `owner`.
+4. **Roles V1:** `owner`, `manager`, `cashier`, `accounting`. Un usuario tiene
+   una membresía por organización. Un `manager` administra solo cajeros y
+   contabilidad; el `owner` administra a todos.
 5. **Autorización en Rust, no en la UI.** Cada comando valida permiso, estado de
-   membresía, organización y sede antes de tocar datos. La UI solo oculta
-   acciones; el backend siempre vuelve a decidir.
+   membresía y organización antes de tocar datos. La UI solo oculta acciones; el
+   backend siempre vuelve a decidir.
 6. **Denegado por defecto.** Un permiso no listado se rechaza. Toda denegación
    sensible se registra en `audit_events` con actor, recurso y correlación.
 7. **PIN rápido:** aplazado. Si se implementa, será un desbloqueo local sobre

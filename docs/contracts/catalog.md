@@ -95,6 +95,6 @@ No se guardan secretos ni datos personales en estos eventos.
 
 ## Fuera de alcance
 
-Inventario, combos, descuentos, listas de precios por sede, impuestos por
+Inventario, combos, descuentos, múltiples listas de precios, impuestos por
 producto con múltiples tasas y compras. Las ventas y devoluciones consumirán este
 contrato en los siguientes slices de Phase 3.

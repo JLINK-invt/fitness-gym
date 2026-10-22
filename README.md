@@ -13,25 +13,25 @@ y clases forman parte de la misma versión desktop. Mobile queda para próximame
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v5 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v6 |
 | Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
-| RBAC por rol en comandos Tauri | Operativo para auth, sedes, personal y catálogo, con alcance por sede |
-| Sedes y personal | Operativo: crear, renombrar, cerrar/reabrir sedes y administrar accesos con auditoría |
-| Auditoría inmutable | Operativo: append-only, hash chain, consulta por sede y verificación de integridad |
+| RBAC por rol en comandos Tauri | Operativo para auth, personal y catálogo |
+| Personal | Operativo: crear accesos, cambiar rol y desactivar/reactivar con auditoría |
+| Auditoría inmutable | Operativo: append-only, hash chain y verificación de integridad |
 | Catálogo, precios e impuestos | Operativo: productos, variantes, precios versionados y archivo lógico |
 | Suscripciones | Siguiente en Fase 3: planes, altas, renovaciones y vencimientos |
 | CRM, socios y membresías | Misma versión desktop, Fase 4 |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 18 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 17 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
-exige login, administra sedes y accesos del equipo con permisos revalidados en
-Rust, registra auditoría append-only con hash chain, administra el catálogo con
-precios versionados, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo se
-admite un gimnasio por instalación; la pantalla no expone conceptos de
-multi-organización.
+exige login, administra accesos del equipo con permisos revalidados en Rust,
+registra auditoría append-only con hash chain, administra el catálogo con precios
+versionados, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo
+se admite un gimnasio por instalación; la pantalla no expone conceptos de
+multi-organización ni multi-sede.
 
 ## Requisitos
 
@@ -111,11 +111,10 @@ npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 
 El script cubre primer arranque con dueño, health, acceso permitido/denegado con
 idempotencia, validación de frase, creación de backup, rechazo de frase
-incorrecta, restauración y cierre de sesión. También crea una sede, un producto
-con precio inicial, una nueva versión de precio y una segunda variante, además
-de un cajero. Comprueba
-que el cajero no ve módulos administrativos, verifica la cadena de auditoría y
-confirma que una cuenta desactivada ya no puede iniciar sesión.
+incorrecta, restauración y cierre de sesión. También crea un producto con precio
+inicial, una nueva versión de precio y una segunda variante, además de un cajero.
+Comprueba que el cajero no ve módulos administrativos, verifica la cadena de
+auditoría y confirma que una cuenta desactivada ya no puede iniciar sesión.
 
 ## Estructura
 
@@ -139,8 +138,8 @@ docs/
 
 - [ADRs](docs/adr/README.md): arquitectura local-first, identidad, cifrado y backups.
 - [Threat model](docs/threat-model.md): STRIDE, activos, fronteras y riesgos residuales.
-- [Matriz de permisos](docs/security/permission-matrix.md): roles, sedes y acciones.
-- [Contrato de sedes y personal](docs/contracts/sites-staff.md): comandos y reglas.
+- [Matriz de permisos](docs/security/permission-matrix.md): roles y acciones.
+- [Contrato de personal](docs/contracts/staff.md): comandos y reglas.
 - [Contrato de auditoría](docs/contracts/audit.md): append-only, hash chain y consulta.
 - [Runbook de migraciones](docs/runbooks/migrations.md).
 
@@ -174,5 +173,5 @@ docs/
 
 Contratos: [acceso simulado](docs/contracts/access-simulated.md),
 [auth local](docs/contracts/auth-local.md),
-[sedes y personal](docs/contracts/sites-staff.md) y
+[personal](docs/contracts/staff.md) y
 [auditoría](docs/contracts/audit.md).

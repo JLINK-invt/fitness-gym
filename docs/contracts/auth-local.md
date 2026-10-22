@@ -1,6 +1,6 @@
 # Contrato local · autenticación y sesión (Phase 2)
 
-- **Versión:** 1.2.0 (aditiva sobre 1.1.0)
+- **Versión:** 2.0.0
 - **Estado:** implementado para V1; MFA y recuperación del dueño diferidos a Phase 5
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 
@@ -38,8 +38,6 @@ salts ni la clave de la base.
 - Cinco fallos por nombre bloquean nuevos intentos durante cinco minutos.
 - La sesión expira tras 15 minutos sin actividad.
 - Roles: `owner`, `manager`, `cashier`, `accounting`.
-- `siteId` solo puede ser `null` para el dueño; el personal operativo requiere
-  sede.
 
 ## Errores
 

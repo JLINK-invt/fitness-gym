@@ -65,4 +65,10 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_catalog_products_organization_name; \
                DROP TABLE IF EXISTS catalog_products;",
     },
+    Migration {
+        version: 6,
+        name: "single_site",
+        up: include_str!("../migrations/0006_single_site.sql"),
+        down: "-- irreversible: restore a snapshot created before schema v6",
+    },
 ];
