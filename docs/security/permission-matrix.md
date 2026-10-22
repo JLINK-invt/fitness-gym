@@ -34,8 +34,9 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
    usuario no puede cruzar organizaciones aunque conozca un UUID.
 2. **Sede:** `staff_memberships.site_id` limita la operación a una sede.
    `site_id = NULL` significa toda la organización y solo se permite a `owner`.
-3. **Membresía activa:** `status = 'active'`; una membresía `revoked` no autoriza
-   nada, ni siquiera lectura.
+3. **Membresía activa:** `status = 'active'`; una membresía `revoked` no puede
+   iniciar una sesión nueva. Una sesión ya abierta conserva sus permisos hasta
+   expirar por inactividad o cerrarse.
 4. **Recurso:** además del permiso, el comando valida que el recurso pertenezca a
    la organización/sede del actor antes de escribir.
 5. **UI no confiable:** ocultar un botón no es un control. Los comandos Tauri
@@ -48,10 +49,10 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 | Ver reportes financieros | `ViewFinance` | Solo lectura; exportaciones auditadas |
 | Cobrar, cancelar o reembolsar | `OperatePos` | Reembolso/cancelación con motivo y auditoría |
 | Ajustar inventario | `ManageInventory` | Motivo obligatorio; auditar diferencia y actor |
-| Crear/editar personal | `ManageStaff` | No puede elevar a `owner`; solo el owner lo hace |
+| Crear/editar personal | `ManageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
 | Crear/restaurar backup | `ManageBackups` | Confirmación explícita; registrar archivo y resultado |
 | Ver auditoría | `ViewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
-| Cambiar configuración | `ManageSettings` | Incluye moneda, zona horaria y política de sesión |
+| Cambiar configuración y sedes | `ManageSettings` | Incluye moneda, zona horaria, política de sesión y ciclo de vida de sedes |
 
 ## Auditoría mínima
 
@@ -69,6 +70,13 @@ Cada comando sensible debe registrar en `audit_events`:
 - Denegación de comando sensible con membresía revocada.
 - Denegación de acceso a recurso de otra organización o sede.
 - Registro de denegaciones con actor y correlación.
+
+## Estado de implementación
+
+- Aplicado en auth, sedes y personal: permisos, alcance por sede, membresía
+  activa, validación de recurso y auditoría de altas/cambios.
+- Pendiente al construir cada módulo: recepción, finanzas, inventario y
+  exportaciones.
 
 ## Pendientes antes de Phase 2
 

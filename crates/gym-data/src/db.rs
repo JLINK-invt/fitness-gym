@@ -38,6 +38,27 @@ pub struct UserCredentialRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteRecord {
+    pub id: String,
+    pub organization_id: String,
+    pub name: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaffRecord {
+    pub user_id: String,
+    pub name: String,
+    pub role: String,
+    pub site_id: Option<String>,
+    pub site_name: Option<String>,
+    pub status: String,
+    pub last_login_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleEventRecord {
     pub id: String,
     pub event_type: String,
@@ -259,6 +280,348 @@ impl Db {
                 |row| row.get(0),
             )
             .map_err(DataError::from)
+        })
+    }
+
+    pub fn list_sites(&self, organization_id: &str) -> Result<Vec<SiteRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, organization_id, name, status, created_at
+                 FROM sites
+                 WHERE organization_id = ?1
+                 ORDER BY (status = 'active') DESC, name COLLATE NOCASE",
+            )?;
+            let rows = statement.query_map(params![organization_id], |row| {
+                Ok(SiteRecord {
+                    id: row.get(0)?,
+                    organization_id: row.get(1)?,
+                    name: row.get(2)?,
+                    status: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    pub fn create_site(&self, organization_id: &str, name: &str) -> Result<SiteRecord, DataError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DataError::InvalidValue("site name cannot be empty".into()));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        self.with_connection(|conn| {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sites
+                     WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE
+                 )",
+                params![organization_id, name],
+                |row| row.get(0),
+            )?;
+            if exists {
+                return Err(DataError::SiteAlreadyExists);
+            }
+            conn.execute(
+                "INSERT INTO sites (id, organization_id, name, status, created_at)
+                 VALUES (?1, ?2, ?3, 'active', ?4)",
+                params![id, organization_id, name, created_at],
+            )?;
+            Ok(SiteRecord {
+                id,
+                organization_id: organization_id.to_string(),
+                name: name.to_string(),
+                status: "active".into(),
+                created_at,
+            })
+        })
+    }
+
+    pub fn update_site(
+        &self,
+        organization_id: &str,
+        site_id: &str,
+        name: &str,
+        status: &str,
+    ) -> Result<SiteRecord, DataError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DataError::InvalidValue("site name cannot be empty".into()));
+        }
+        if !matches!(status, "active" | "closed") {
+            return Err(DataError::InvalidValue("invalid site status".into()));
+        }
+
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+        let created_at: Option<String> = transaction
+            .query_row(
+                "SELECT created_at FROM sites WHERE id = ?1 AND organization_id = ?2",
+                params![site_id, organization_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let created_at = created_at.ok_or(DataError::SiteNotFound)?;
+
+        let duplicate: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sites
+                 WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE AND id <> ?3
+             )",
+            params![organization_id, name, site_id],
+            |row| row.get(0),
+        )?;
+        if duplicate {
+            return Err(DataError::SiteAlreadyExists);
+        }
+
+        if status == "closed" {
+            let active_staff: bool = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM staff_memberships
+                     WHERE organization_id = ?1 AND site_id = ?2 AND status = 'active'
+                 )",
+                params![organization_id, site_id],
+                |row| row.get(0),
+            )?;
+            if active_staff {
+                return Err(DataError::SiteHasActiveStaff);
+            }
+        }
+
+        transaction.execute(
+            "UPDATE sites SET name = ?3, status = ?4
+             WHERE id = ?1 AND organization_id = ?2",
+            params![site_id, organization_id, name, status],
+        )?;
+        transaction.commit()?;
+
+        Ok(SiteRecord {
+            id: site_id.to_string(),
+            organization_id: organization_id.to_string(),
+            name: name.to_string(),
+            status: status.to_string(),
+            created_at,
+        })
+    }
+
+    pub fn list_staff(&self, organization_id: &str) -> Result<Vec<StaffRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT u.id, u.name, s.role, s.site_id, sites.name, s.status,
+                        u.last_login_at, u.created_at
+                 FROM users u
+                 JOIN staff_memberships s
+                   ON s.organization_id = u.organization_id AND s.user_id = u.id
+                 LEFT JOIN sites
+                   ON sites.id = s.site_id AND sites.organization_id = s.organization_id
+                 WHERE u.organization_id = ?1
+                 ORDER BY CASE s.role
+                     WHEN 'owner' THEN 0
+                     WHEN 'manager' THEN 1
+                     WHEN 'cashier' THEN 2
+                     ELSE 3
+                 END, u.name COLLATE NOCASE",
+            )?;
+            let rows = statement.query_map(params![organization_id], |row| {
+                Ok(StaffRecord {
+                    user_id: row.get(0)?,
+                    name: row.get(1)?,
+                    role: row.get(2)?,
+                    site_id: row.get(3)?,
+                    site_name: row.get(4)?,
+                    status: row.get(5)?,
+                    last_login_at: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    pub fn create_staff(
+        &self,
+        organization_id: &str,
+        name: &str,
+        password_hash: &str,
+        role: &str,
+        site_id: &str,
+    ) -> Result<StaffRecord, DataError> {
+        let name = name.trim();
+        if name.is_empty() || password_hash.trim().is_empty() {
+            return Err(DataError::InvalidValue(
+                "staff name and password hash are required".into(),
+            ));
+        }
+        if !matches!(role, "manager" | "cashier" | "accounting") {
+            return Err(DataError::InvalidValue("invalid staff role".into()));
+        }
+
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let membership_id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+
+        let site_name: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT name, status FROM sites WHERE id = ?1 AND organization_id = ?2",
+                params![site_id, organization_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((site_name, site_status)) = site_name else {
+            return Err(DataError::SiteNotFound);
+        };
+        if site_status != "active" {
+            return Err(DataError::InvalidValue(
+                "cannot assign staff to a closed site".into(),
+            ));
+        }
+
+        let user_exists: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM users
+                 WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE
+             )",
+            params![organization_id, name],
+            |row| row.get(0),
+        )?;
+        if user_exists {
+            return Err(DataError::UserAlreadyExists);
+        }
+
+        transaction.execute(
+            "INSERT INTO users
+                 (id, organization_id, name, password_hash, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+            params![user_id, organization_id, name, password_hash, created_at],
+        )?;
+        transaction.execute(
+            "INSERT INTO staff_memberships
+                 (id, organization_id, site_id, user_id, role, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6)",
+            params![
+                membership_id,
+                organization_id,
+                site_id,
+                user_id,
+                role,
+                created_at
+            ],
+        )?;
+        transaction.commit()?;
+
+        Ok(StaffRecord {
+            user_id,
+            name: name.to_string(),
+            role: role.to_string(),
+            site_id: Some(site_id.to_string()),
+            site_name: Some(site_name),
+            status: "active".into(),
+            last_login_at: None,
+            created_at,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_staff(
+        &self,
+        organization_id: &str,
+        user_id: &str,
+        role: &str,
+        site_id: &str,
+        status: &str,
+    ) -> Result<StaffRecord, DataError> {
+        if !matches!(role, "manager" | "cashier" | "accounting") {
+            return Err(DataError::InvalidValue("invalid staff role".into()));
+        }
+        if !matches!(status, "active" | "revoked") {
+            return Err(DataError::InvalidValue("invalid staff status".into()));
+        }
+
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+
+        let existing: Option<(String, String, String, String)> = transaction
+            .query_row(
+                "SELECT s.role, COALESCE(s.site_id, ''), u.name, u.created_at
+                 FROM users u
+                 JOIN staff_memberships s
+                   ON s.organization_id = u.organization_id AND s.user_id = u.id
+                 WHERE u.organization_id = ?1 AND u.id = ?2",
+                params![organization_id, user_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let Some((current_role, _, name, created_at)) = existing else {
+            return Err(DataError::StaffNotFound);
+        };
+        if current_role == "owner" {
+            return Err(DataError::InvalidValue(
+                "the owner membership cannot be modified".into(),
+            ));
+        }
+
+        let site: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT name, status FROM sites WHERE id = ?1 AND organization_id = ?2",
+                params![site_id, organization_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((site_name, site_status)) = site else {
+            return Err(DataError::SiteNotFound);
+        };
+        if status == "active" && site_status != "active" {
+            return Err(DataError::InvalidValue(
+                "cannot activate staff in a closed site".into(),
+            ));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        transaction.execute(
+            "UPDATE staff_memberships
+             SET role = ?3, site_id = ?4, status = ?5
+             WHERE organization_id = ?1 AND user_id = ?2",
+            params![organization_id, user_id, role, site_id, status],
+        )?;
+        transaction.execute(
+            "UPDATE users SET status = ?3, updated_at = ?4
+             WHERE organization_id = ?1 AND id = ?2",
+            params![
+                organization_id,
+                user_id,
+                if status == "active" {
+                    "active"
+                } else {
+                    "disabled"
+                },
+                now
+            ],
+        )?;
+        let last_login_at: Option<String> = transaction.query_row(
+            "SELECT last_login_at FROM users WHERE id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )?;
+        transaction.commit()?;
+
+        Ok(StaffRecord {
+            user_id: user_id.to_string(),
+            name,
+            role: role.to_string(),
+            site_id: Some(site_id.to_string()),
+            site_name: Some(site_name),
+            status: status.to_string(),
+            last_login_at,
+            created_at,
         })
     }
 
@@ -614,7 +977,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 2);
+        assert_eq!(second_status.schema_version, 3);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -665,6 +1028,102 @@ mod tests {
         assert_eq!(credentials.user_id, owner.id);
         assert_eq!(credentials.role, "owner");
         assert_eq!(credentials.password_hash, "$argon2id$dummy");
+    }
+
+    #[test]
+    fn sites_and_staff_are_scoped_and_updatable() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        db.create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+            .expect("creates owner");
+
+        let site = db
+            .create_site(&organization_id, "Centro")
+            .expect("creates site");
+        assert_eq!(site.status, "active");
+        assert!(matches!(
+            db.create_site(&organization_id, "centro")
+                .expect_err("duplicate site"),
+            DataError::SiteAlreadyExists
+        ));
+
+        let staff = db
+            .create_staff(
+                &organization_id,
+                "Carlos Caja",
+                "$argon2id$staff",
+                "cashier",
+                &site.id,
+            )
+            .expect("creates staff");
+        assert_eq!(staff.site_id.as_deref(), Some(site.id.as_str()));
+        assert_eq!(staff.site_name.as_deref(), Some("Centro"));
+        assert_eq!(db.list_staff(&organization_id).expect("lists").len(), 2);
+
+        let credentials = db
+            .find_user_credentials(&organization_id, "carlos caja")
+            .expect("looks up staff")
+            .expect("staff exists");
+        assert_eq!(credentials.role, "cashier");
+        assert_eq!(credentials.site_id.as_deref(), Some(site.id.as_str()));
+
+        let updated = db
+            .update_staff(
+                &organization_id,
+                &staff.user_id,
+                "accounting",
+                &site.id,
+                "revoked",
+            )
+            .expect("revokes staff");
+        assert_eq!(updated.role, "accounting");
+        assert_eq!(updated.status, "revoked");
+        assert!(db
+            .find_user_credentials(&organization_id, "Carlos Caja")
+            .expect("looks up revoked staff")
+            .is_none());
+
+        db.update_staff(
+            &organization_id,
+            &staff.user_id,
+            "accounting",
+            &site.id,
+            "active",
+        )
+        .expect("reactivates staff");
+        assert!(matches!(
+            db.update_site(&organization_id, &site.id, "Centro", "closed")
+                .expect_err("site still has active staff"),
+            DataError::SiteHasActiveStaff
+        ));
+
+        db.update_staff(
+            &organization_id,
+            &staff.user_id,
+            "accounting",
+            &site.id,
+            "revoked",
+        )
+        .expect("revokes staff again");
+        let closed = db
+            .update_site(&organization_id, &site.id, "Centro", "closed")
+            .expect("closes empty site");
+        assert_eq!(closed.status, "closed");
+        assert!(matches!(
+            db.update_staff(
+                &organization_id,
+                &staff.user_id,
+                "manager",
+                &site.id,
+                "active"
+            )
+            .expect_err("closed site rejects active staff"),
+            DataError::InvalidValue(_)
+        ));
     }
 
     #[test]

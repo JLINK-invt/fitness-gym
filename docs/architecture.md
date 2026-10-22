@@ -32,6 +32,10 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - `schema_migrations` guarda versión, nombre, checksum y fecha.
 - Las tablas operativas llevan `organization_id NOT NULL`; las de sede llevan
   además `site_id`.
+- `sites` tiene nombre único por gimnasio sin distinguir mayúsculas. No se borra
+  una sede: se cierra, y conserva su historial.
+- `staff_memberships` impone una membresía por usuario e índice único por
+  gimnasio y usuario.
 - `module_events` impone `UNIQUE (organization_id, idempotency_key)`.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
@@ -48,8 +52,34 @@ La nube no participa en la operación. Todo el flujo anterior es local.
   inactividad cierran la sesión.
 - Los comandos operativos reciben el actor desde la sesión Rust, nunca desde un
   `userId` enviado por la UI.
-- Restaurar un backup cierra la sesión porque la base restaurada puede tener otro
-  dueño o personal revocado.
+- El dueño opera sobre todo el gimnasio (`site_id = NULL`). Un encargado solo ve
+  y administra cajeros y contabilidad de su propia sede; no puede crear otro
+  encargado ni mover personal a otra sede.
+- El dueño no se edita desde la UI: se crea solo en la configuración inicial. Un
+  usuario tampoco puede modificar su propia membresía.
+- Revocar una cuenta impide el siguiente login; la sesión en memoria se invalida
+  al expirar o al hacer logout. Restaurar un backup cierra la sesión porque la
+  base restaurada puede tener otro dueño o personal revocado.
+- `site.created`, `site.updated`, `staff.created` y `staff.updated` se registran
+  en `audit_events` con el actor de la sesión.
+
+## Sedes y personal
+
+La pantalla **Sedes** requiere `ManageSettings` y permite crear, renombrar,
+cerrar y reabrir sedes. Cerrar exige que no queden miembros activos asignados.
+La pantalla **Equipo** requiere `ManageStaff` y permite crear accesos, cambiar
+rol o sede, y desactivar o reactivar cuentas.
+
+Reglas de autorización aplicadas en Rust:
+
+- No se puede crear ni elevar una cuenta a `owner`.
+- Un `manager` solo administra `cashier` y `accounting` de su sede.
+- No se asigna personal a una sede cerrada.
+- Solo puede existir una membresía por usuario.
+- Los comandos filtran por `organization_id` y, para `manager`, por `site_id`.
+
+El contrato completo está en
+[`contracts/sites-staff.md`](contracts/sites-staff.md).
 
 ## Acceso simulado
 

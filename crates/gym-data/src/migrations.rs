@@ -29,4 +29,11 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_users_organization_name; \
                DROP TABLE IF EXISTS users;",
     },
+    Migration {
+        version: 3,
+        name: "sites_staff",
+        up: include_str!("../migrations/0003_sites_staff.sql"),
+        down: "DROP INDEX IF EXISTS idx_staff_one_membership_per_user; \
+               DROP INDEX IF EXISTS idx_sites_organization_name;",
+    },
 ];

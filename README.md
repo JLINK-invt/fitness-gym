@@ -11,19 +11,21 @@ Recepción, miembros y cobros.
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v2 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v3 |
 | Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
-| RBAC por rol en comandos Tauri | Operativo para dueño; personal y sedes llegan en la siguiente tarea |
+| RBAC por rol en comandos Tauri | Operativo para auth, sedes y personal, con alcance por sede |
+| Sedes y personal | Operativo: crear, renombrar, cerrar/reabrir sedes y administrar accesos con auditoría |
 | Recepción, miembros, planes y cobros | Siguiente vertical slice de Fase 2 |
 | Validación Windows/macOS | Diferida a Fase 6 por falta de hardware macOS |
-| Smoke E2E de interfaz | 9 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 14 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
-exige login, simula accesos con permisos revalidados en Rust y crea snapshots
-cifrados. Funciona sin Internet. Solo se admite un gimnasio por instalación; la
-pantalla no expone conceptos de multi-organización.
+exige login, administra sedes y accesos del equipo con permisos revalidados en
+Rust, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo se
+admite un gimnasio por instalación; la pantalla no expone conceptos de
+multi-organización.
 
 ## Requisitos
 
@@ -103,7 +105,9 @@ npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 
 El script cubre primer arranque con dueño, health, acceso permitido/denegado con
 idempotencia, validación de frase, creación de backup, rechazo de frase
-incorrecta, restauración y cierre de sesión.
+incorrecta, restauración y cierre de sesión. También crea una sede y un cajero,
+comprueba que el cajero no ve módulos administrativos y que una cuenta
+desactivada ya no puede iniciar sesión.
 
 ## Estructura
 
@@ -128,6 +132,7 @@ docs/
 - [ADRs](docs/adr/README.md): arquitectura local-first, identidad, cifrado y backups.
 - [Threat model](docs/threat-model.md): STRIDE, activos, fronteras y riesgos residuales.
 - [Matriz de permisos](docs/security/permission-matrix.md): roles, sedes y acciones.
+- [Contrato de sedes y personal](docs/contracts/sites-staff.md): comandos, reglas y auditoría.
 - [Runbook de migraciones](docs/runbooks/migrations.md).
 
 ## Seguridad implementada
@@ -151,11 +156,12 @@ docs/
 
 ## Siguientes pasos de Phase 2
 
-1. CRUD de sedes y personal con roles y alcance por sede.
-2. Recepción real: búsqueda de miembros, membresías, cobros y check-in.
-3. Auditoría completa de acciones sensibles y política de recuperación del dueño.
+1. Recepción real: búsqueda de miembros, membresías, cobros y check-in.
+2. Extender auditoría y RBAC a recepción, finanzas e inventario.
+3. Política de recuperación del dueño y revisión de MFA/OIDC.
 4. Validar el binario Tauri en Windows y macOS durante Phase 6; Playwright solo
    cubre la UI con IPC simulado.
 
-Contratos: [acceso simulado](docs/contracts/access-simulated.md) y
-[auth local](docs/contracts/auth-local.md).
+Contratos: [acceso simulado](docs/contracts/access-simulated.md),
+[auth local](docs/contracts/auth-local.md) y
+[sedes y personal](docs/contracts/sites-staff.md).

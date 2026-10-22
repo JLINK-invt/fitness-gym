@@ -20,4 +20,4 @@ skills-lock.json
 
 # Artefactos de pruebas de interfaz
 .playwright-cli/
-/backups-e2e.png
+/e2e-smoke.png

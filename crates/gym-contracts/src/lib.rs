@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "1.2.0";
+pub const CONTRACT_VERSION: &str = "1.3.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -134,6 +134,45 @@ pub struct SessionSummary {
     pub name: String,
     pub role: StaffRole,
     pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SiteStatus {
+    Active,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StaffStatus {
+    Active,
+    Revoked,
+}
+
+/// Physical location where staff and future member operations are scoped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteSummary {
+    pub id: String,
+    pub name: String,
+    pub status: SiteStatus,
+    pub created_at: String,
+}
+
+/// Staff member visible to owner and manager screens. Password hashes are
+/// never part of this contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaffSummary {
+    pub user_id: String,
+    pub name: String,
+    pub role: StaffRole,
+    pub site_id: Option<String>,
+    pub site_name: Option<String>,
+    pub status: StaffStatus,
+    pub last_login_at: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

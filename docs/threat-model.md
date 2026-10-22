@@ -127,7 +127,7 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Esquema listo; falta instrumentar |
+| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, sedes y personal; ventas pendientes |
 | Cuenta compartida | Identidad por persona y bloqueo de sesión | Decidido |
 | Restore sin responsable | Registrar actor, backup y resultado | Pendiente |
 
@@ -155,10 +155,11 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Cajero invoca comandos de finanzas/backups | Autorización obligatoria en Rust, denegado por defecto | Decidido; comandos actuales sin auth |
+| Cajero invoca comandos de finanzas/backups | Autorización obligatoria en Rust, denegado por defecto | Implementado en los comandos actuales |
 | XSS en el webview invoca IPC arbitrario | CSP estricta, sin contenido remoto, allowlist de comandos | Parcial |
 | Acceso a shell/filesystem desde la UI | Sin plugins shell/fs; solo comandos propios | Implementado |
-| Cruce de organización o sede | Filtro por `organization_id`/`site_id` en cada consulta | Esquema listo; falta enforcement |
+| Cruce de organización o sede | Filtro por `organization_id`/`site_id` en cada consulta | Implementado en sedes/personal; extender a módulos operativos |
+| Encargado edita personal de otra sede o crea otro encargado | Alcance por sede y roles permitidos validados en Rust | Implementado |
 | Path traversal en restore | Se exige nombre de archivo simple dentro de `backups/` | Implementado |
 
 ### Supply chain y actualizaciones
@@ -253,7 +254,8 @@ su propio ADR antes de implementarse.
 - [x] Restore verifica checksum e integridad y funciona con la base cerrada.
 - [x] CSP y capability mínima configuradas; pruebas estáticas validan la allowlist y la ausencia de web storage.
 - [x] Clave migrada al keychain del SO (2026-10-21).
-- [ ] Login local, RBAC y auditoría conectados a los comandos.
+- [x] Login local, sesión y RBAC conectados a auth, sedes y personal.
+- [ ] Extender RBAC y auditoría a recepción, finanzas e inventario.
 - [x] Vertical slice de acceso simulado con deduplicación por `idempotency_key`.
 - [x] Backup/restore desde la UI con IPC simulado; el binario nativo se valida
       manualmente en Linux.
