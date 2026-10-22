@@ -28,8 +28,11 @@ export function BackupsPage() {
   const restoreBackup = useMutation({
     mutationFn: ({ fileName, secret }: { fileName: string; secret: string }) =>
       api.restoreBackup(fileName, secret),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
+    onSuccess: () => {
+      queryClient.setQueryData(["session"], null);
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== "session",
+      });
     },
   });
 

@@ -63,7 +63,7 @@ export function AccessPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold">Nueva lectura</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Demostración sin autenticación real. No uses credenciales de personas.
+          Requiere una sesión con permiso de operación. No uses credenciales de personas.
         </p>
         <form onSubmit={handleSubmit} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <label className="text-sm">

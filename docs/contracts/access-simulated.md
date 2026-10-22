@@ -1,6 +1,6 @@
 # Contrato local · acceso simulado (Phase 1)
 
-- **Versión:** 1.1.0 (aditivo sobre 1.0.0)
+- **Versión:** 1.2.0 (payload de acceso sin cambios desde 1.1.0)
 - **Estado:** implementado para el vertical slice de Phase 1
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 
@@ -14,7 +14,8 @@ Demostrar el flujo de acceso de punta a punta sin integrar el lector real:
 4. Tauri devuelve la decisión y la UI muestra el evento persistido.
 
 El evento sobrevive reinicios y restauraciones porque vive en `module_events`.
-No hay autenticación real, firmas, biometría, membresías ni torniquete.
+El comando exige una sesión local con permiso `operate_pos`; no hay firmas,
+biometría, membresías ni torniquete.
 
 ## Componentes
 

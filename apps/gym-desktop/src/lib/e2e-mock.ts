@@ -1,4 +1,13 @@
 type Organization = { id: string; name: string };
+type Owner = { id: string; name: string; password: string };
+type Session = {
+  userId: string;
+  organizationId: string;
+  siteId?: string;
+  name: string;
+  role: "owner" | "manager" | "cashier" | "accounting";
+  permissions: string[];
+};
 type AccessEvent = {
   eventId: string;
   allowed: boolean;
@@ -18,12 +27,16 @@ type Backup = {
 (() => {
   const state: {
     organizations: Organization[];
+    owner: Owner | null;
+    session: Session | null;
     accessEvents: AccessEvent[];
     accessEntries: Map<string, AccessEntry>;
     backups: Backup[];
     secrets: Map<string, string>;
   } = {
     organizations: [],
+    owner: null,
+    session: null,
     accessEvents: [],
     accessEntries: new Map(),
     backups: [],
@@ -37,7 +50,7 @@ type Backup = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "1.1.0",
+    contractVersion: "1.2.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -48,7 +61,7 @@ type Backup = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 1,
+      schemaVersion: 2,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -61,23 +74,91 @@ type Backup = {
         case "health":
           return health();
 
-        case "create_organization": {
+        case "get_setup_state":
+          return {
+            configured: state.organizations.length > 0,
+            gymName: state.organizations[0]?.name,
+            ownerReady: state.owner !== null,
+          };
+
+        case "bootstrap_owner": {
           const name = String(args.name ?? "").trim();
-          if (!name) {
-            throw apiError("invalidRequest", "El nombre es obligatorio.");
+          const password = String(args.password ?? "");
+          const gymName = String(args.gymName ?? "").trim();
+          if (state.organizations.length === 0) {
+            if (!gymName) {
+              throw apiError("invalidRequest", "Escribe el nombre del gimnasio.");
+            }
+            state.organizations.push({ id: uuid(), name: gymName });
           }
-          if (state.organizations.length > 0) {
-            throw apiError(
-              "invalidRequest",
-              "Este equipo ya está configurado para un gimnasio.",
-            );
+          if (state.owner) {
+            throw apiError("invalidRequest", "Este gimnasio ya tiene una cuenta de dueño.");
           }
-          const id = uuid();
-          state.organizations.push({ id, name });
-          return id;
+          if (name.length < 2) {
+            throw apiError("invalidRequest", "El nombre del dueño es demasiado corto.");
+          }
+          if (password.length < 12) {
+            throw apiError("invalidRequest", "La contraseña debe tener al menos 12 caracteres.");
+          }
+          const owner: Owner = { id: uuid(), name, password };
+          state.owner = owner;
+          state.session = {
+            userId: owner.id,
+            organizationId: state.organizations[0]!.id,
+            name: owner.name,
+            role: "owner",
+            permissions: [
+              "manageSettings",
+              "manageStaff",
+              "viewFinance",
+              "operatePos",
+              "manageInventory",
+              "manageBackups",
+              "viewAudit",
+            ],
+          };
+          return { ...state.session };
         }
 
+        case "login": {
+          const name = String(args.name ?? "").trim();
+          const password = String(args.password ?? "");
+          if (
+            !state.owner ||
+            state.owner.name.toLowerCase() !== name.toLowerCase() ||
+            state.owner.password !== password
+          ) {
+            throw apiError("unauthorized", "Nombre o contraseña incorrectos.");
+          }
+          state.session = {
+            userId: state.owner.id,
+            organizationId: state.organizations[0]!.id,
+            name: state.owner.name,
+            role: "owner",
+            permissions: [
+              "manageSettings",
+              "manageStaff",
+              "viewFinance",
+              "operatePos",
+              "manageInventory",
+              "manageBackups",
+              "viewAudit",
+            ],
+          };
+          return { ...state.session };
+        }
+
+        case "logout":
+          state.session = null;
+          return null;
+
+        case "current_session":
+          return state.session ? { ...state.session } : null;
+
         case "simulate_access": {
+          if (!state.session) {
+            throw apiError("unauthorized", "Inicia sesión para continuar.");
+          }
           if (state.organizations.length === 0) {
             throw apiError(
               "invalidRequest",
@@ -138,14 +219,23 @@ type Backup = {
         }
 
         case "list_access_events": {
+          if (!state.session) {
+            throw apiError("unauthorized", "Inicia sesión para continuar.");
+          }
           const limit = Math.max(1, Math.min(100, Number(args.limit ?? 20)));
           return state.accessEvents.slice(0, limit);
         }
 
         case "list_backups":
+          if (!state.session) {
+            throw apiError("unauthorized", "Inicia sesión para continuar.");
+          }
           return state.backups.map((backup) => ({ ...backup }));
 
         case "create_backup": {
+          if (!state.session) {
+            throw apiError("unauthorized", "Inicia sesión para continuar.");
+          }
           const passphrase = String(args.passphrase ?? "");
           if (passphrase.trim().length < 8) {
             throw apiError("backup", "La frase debe tener al menos 8 caracteres.");
@@ -158,7 +248,7 @@ type Backup = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 1,
+            schemaVersion: 2,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
@@ -166,6 +256,9 @@ type Backup = {
         }
 
         case "restore_backup": {
+          if (!state.session) {
+            throw apiError("unauthorized", "Inicia sesión para continuar.");
+          }
           const fileName = String(args.fileName ?? "");
           const backup = state.backups.find((item) => item.fileName === fileName);
           if (!backup) {
@@ -177,6 +270,7 @@ type Backup = {
               "No se pudo descifrar el backup: frase incorrecta o archivo dañado.",
             );
           }
+          state.session = null;
           return {
             backupId: backup.id,
             restoredAt: now(),

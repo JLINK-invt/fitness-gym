@@ -4,17 +4,27 @@ use gym_backup::{
 };
 use gym_contracts::{
     AccessDecision, AccessEventSummary, AccessRequest, ApiError, BackupSummary, ErrorCode,
-    HealthReport, HealthStatus, ModuleHealth, RestoreOutcome, CONTRACT_VERSION,
+    HealthReport, HealthStatus, ModuleHealth, RestoreOutcome, SessionSummary, SetupState,
+    StaffRole, CONTRACT_VERSION,
 };
-use gym_core::{access::decide_simulated_access, CORE_VERSION, SERVICE_NAME};
+use gym_core::{
+    access::decide_simulated_access,
+    auth::{
+        hash_password, normalize_person_name, verify_password, IDLE_TIMEOUT_MINUTES,
+        LOGIN_LOCK_MINUTES, MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS,
+    },
+    rbac::{self, Permission, Role},
+    CORE_VERSION, SERVICE_NAME,
+};
 use gym_data::{
     sha256_hex, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider,
     KeyringKeyProvider,
 };
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{Manager, State};
 use tracing_subscriber::EnvFilter;
 
@@ -97,10 +107,102 @@ fn remove_legacy_key(path: &Path) {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ActiveSession {
+    session: gym_core::auth::Session,
+    last_seen: Instant,
+}
+
+#[derive(Debug, Default)]
+struct LoginFailures {
+    attempts: Vec<Instant>,
+    blocked_until: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+struct AuthState {
+    session: Option<ActiveSession>,
+    failures: HashMap<String, LoginFailures>,
+}
+
+impl AuthState {
+    fn current_session(&mut self) -> Option<SessionSummary> {
+        if self.session_expired() {
+            self.session = None;
+            return None;
+        }
+        self.session.as_ref().map(session_summary)
+    }
+
+    fn authorize(&mut self, permission: Permission) -> Result<gym_core::auth::Session, ApiError> {
+        if self.session_expired() {
+            self.session = None;
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "la sesión expiró por inactividad; vuelve a entrar",
+            ));
+        }
+
+        let active = self.session.as_mut().ok_or_else(|| {
+            ApiError::new(ErrorCode::Unauthorized, "inicia sesión para continuar")
+        })?;
+        active.last_seen = Instant::now();
+        let session = active.session.clone();
+        rbac::authorize(session.role, permission).map_err(|_| {
+            ApiError::new(
+                ErrorCode::Unauthorized,
+                "tu rol no permite realizar esta acción",
+            )
+        })?;
+        Ok(session)
+    }
+
+    fn session_expired(&self) -> bool {
+        self.session.as_ref().is_some_and(|active| {
+            active.last_seen.elapsed() >= Duration::from_secs(60 * IDLE_TIMEOUT_MINUTES as u64)
+        })
+    }
+
+    fn is_blocked(&self, key: &str, now: Instant) -> bool {
+        self.failures
+            .get(key)
+            .and_then(|failures| failures.blocked_until)
+            .is_some_and(|blocked_until| blocked_until > now)
+    }
+
+    /// Records a failed attempt and returns `true` when the account is locked.
+    fn record_failure(&mut self, key: &str, now: Instant) -> bool {
+        let failures = self.failures.entry(key.to_string()).or_default();
+        if failures
+            .blocked_until
+            .is_some_and(|blocked_until| blocked_until > now)
+        {
+            return true;
+        }
+
+        let window = Duration::from_secs(60 * LOGIN_LOCK_MINUTES as u64);
+        failures
+            .attempts
+            .retain(|attempt| now.duration_since(*attempt) < window);
+        failures.attempts.push(now);
+        if failures.attempts.len() >= MAX_LOGIN_ATTEMPTS as usize {
+            failures.attempts.clear();
+            failures.blocked_until = Some(now + window);
+            return true;
+        }
+        false
+    }
+
+    fn clear_failures(&mut self, key: &str) {
+        self.failures.remove(key);
+    }
+}
+
 struct AppState {
     db: Result<Arc<Db>, String>,
     key: DbKey,
     paths: AppPaths,
+    auth: Mutex<AuthState>,
 }
 
 impl AppState {
@@ -114,6 +216,325 @@ impl AppState {
             .with_details(error.clone())),
         }
     }
+
+    fn authorize(&self, permission: Permission) -> Result<gym_core::auth::Session, ApiError> {
+        let mut auth = self.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        auth.authorize(permission)
+    }
+
+    fn clear_session(&self) {
+        if let Ok(mut auth) = self.auth.lock() {
+            auth.session = None;
+        }
+    }
+}
+
+fn staff_role(role: Role) -> StaffRole {
+    match role {
+        Role::Owner => StaffRole::Owner,
+        Role::Manager => StaffRole::Manager,
+        Role::Cashier => StaffRole::Cashier,
+        Role::Accounting => StaffRole::Accounting,
+    }
+}
+
+fn role_from_str(value: &str) -> Option<Role> {
+    match value {
+        "owner" => Some(Role::Owner),
+        "manager" => Some(Role::Manager),
+        "cashier" => Some(Role::Cashier),
+        "accounting" => Some(Role::Accounting),
+        _ => None,
+    }
+}
+
+fn session_summary(active: &ActiveSession) -> SessionSummary {
+    let session = &active.session;
+    SessionSummary {
+        user_id: session.user_id.clone(),
+        organization_id: session.organization_id.clone(),
+        site_id: session.site_id.clone(),
+        name: session.name.clone(),
+        role: staff_role(session.role),
+        permissions: rbac::permissions_for(session.role)
+            .iter()
+            .map(|permission| permission.as_str().to_string())
+            .collect(),
+    }
+}
+
+fn build_session(
+    credentials: gym_data::UserCredentialRecord,
+) -> Result<gym_core::auth::Session, ApiError> {
+    let role = role_from_str(&credentials.role).ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::Internal,
+            "la membresía tiene un rol desconocido; revisa la base local",
+        )
+    })?;
+    Ok(gym_core::auth::Session {
+        user_id: credentials.user_id,
+        organization_id: credentials.organization_id,
+        site_id: credentials.site_id,
+        name: credentials.name,
+        role,
+    })
+}
+
+/// Fixed Argon2id hash used to keep unknown-user logins as slow as known ones.
+fn dummy_password_hash() -> &'static str {
+    static DUMMY: OnceLock<String> = OnceLock::new();
+    DUMMY.get_or_init(|| {
+        hash_password("not-a-real-user-password", OWNER_MIN_PASSWORD_CHARS)
+            .unwrap_or_else(|_| String::new())
+    })
+}
+
+fn setup_state(db: &Db) -> Result<SetupState, ApiError> {
+    let organization = db.organization().map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
+            .with_details(error.to_string())
+    })?;
+    let owner_ready = if organization.is_some() {
+        db.has_owner().map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo leer el personal local")
+                .with_details(error.to_string())
+        })?
+    } else {
+        false
+    };
+    Ok(SetupState {
+        configured: organization.is_some(),
+        gym_name: organization.map(|organization| organization.name),
+        owner_ready,
+    })
+}
+
+#[tauri::command]
+fn get_setup_state(state: State<'_, AppState>) -> Result<SetupState, ApiError> {
+    setup_state(state.db()?)
+}
+
+#[tauri::command]
+fn bootstrap_owner(
+    name: String,
+    password: String,
+    gym_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SessionSummary, ApiError> {
+    let db = state.db()?;
+    let name = normalize_person_name(&name)
+        .map_err(|error| ApiError::invalid(format!("nombre del dueño inválido: {error}")))?;
+    let password_hash = hash_password(&password, OWNER_MIN_PASSWORD_CHARS)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+
+    let organization = match db.organization().map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
+            .with_details(error.to_string())
+    })? {
+        Some(organization) => organization,
+        None => {
+            let gym_name = gym_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::invalid("escribe el nombre del gimnasio"))?;
+            db.create_organization(gym_name)
+                .map_err(|error| match error {
+                    DataError::OrganizationAlreadyExists => {
+                        ApiError::invalid("este equipo ya está configurado para un gimnasio")
+                    }
+                    other => ApiError::new(ErrorCode::Storage, "no se pudo configurar el gimnasio")
+                        .with_details(other.to_string()),
+                })?;
+            db.organization()
+                .map_err(|error| {
+                    ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
+                        .with_details(error.to_string())
+                })?
+                .ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::Internal,
+                        "no se encontró el gimnasio recién creado",
+                    )
+                })?
+        }
+    };
+
+    let owner = db
+        .create_owner(&organization.id, &name, &password_hash)
+        .map_err(|error| match error {
+            DataError::OwnerAlreadyExists => {
+                ApiError::invalid("este gimnasio ya tiene una cuenta de dueño")
+            }
+            DataError::UserAlreadyExists => {
+                ApiError::invalid("ya existe una persona con ese nombre")
+            }
+            other => ApiError::new(ErrorCode::Storage, "no se pudo crear la cuenta del dueño")
+                .with_details(other.to_string()),
+        })?;
+
+    let _ = db.record_audit_event(
+        &organization.id,
+        Some(&owner.id),
+        "auth.owner_created",
+        "staff_membership",
+        "allowed",
+        None,
+    );
+
+    let session = gym_core::auth::Session {
+        user_id: owner.id,
+        organization_id: owner.organization_id,
+        site_id: owner.site_id,
+        name: owner.name,
+        role: Role::Owner,
+    };
+    let active = ActiveSession {
+        session,
+        last_seen: Instant::now(),
+    };
+    let summary = session_summary(&active);
+    {
+        let mut auth = state.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        auth.session = Some(active);
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+fn login(
+    name: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<SessionSummary, ApiError> {
+    let db = state.db()?;
+    let organization = db
+        .organization()
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
+                .with_details(error.to_string())
+        })?
+        .ok_or_else(|| ApiError::invalid("configura el gimnasio antes de entrar"))?;
+
+    let name = name.trim();
+    if name.is_empty() || password.is_empty() {
+        return Err(ApiError::new(
+            ErrorCode::Unauthorized,
+            "nombre o contraseña incorrectos",
+        ));
+    }
+    let key = name.to_lowercase();
+    let now = Instant::now();
+    {
+        let auth = state.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        if auth.is_blocked(&key, now) {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "demasiados intentos fallidos; espera 5 minutos",
+            ));
+        }
+    }
+
+    let credentials = db
+        .find_user_credentials(&organization.id, name)
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo consultar el personal local")
+                .with_details(error.to_string())
+        })?;
+
+    let valid = credentials
+        .as_ref()
+        .is_some_and(|credentials| verify_password(&credentials.password_hash, &password))
+        || (credentials.is_none() && verify_password(dummy_password_hash(), &password));
+
+    let Some(credentials) = credentials.filter(|_| valid) else {
+        let blocked = {
+            let mut auth = state.auth.lock().map_err(|_| {
+                ApiError::new(
+                    ErrorCode::Internal,
+                    "el estado de autenticación no está disponible",
+                )
+            })?;
+            auth.record_failure(&key, now)
+        };
+        let _ = db.record_audit_event(
+            &organization.id,
+            None,
+            "auth.login",
+            "session",
+            "failed",
+            None,
+        );
+        return Err(ApiError::new(
+            ErrorCode::Unauthorized,
+            if blocked {
+                "demasiados intentos fallidos; espera 5 minutos"
+            } else {
+                "nombre o contraseña incorrectos"
+            },
+        ));
+    };
+
+    let session = build_session(credentials)?;
+    {
+        let mut auth = state.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        auth.clear_failures(&key);
+        auth.session = Some(ActiveSession {
+            session: session.clone(),
+            last_seen: Instant::now(),
+        });
+    }
+    let _ = db.mark_login(&session.user_id);
+    let _ = db.record_audit_event(
+        &organization.id,
+        Some(&session.user_id),
+        "auth.login",
+        "session",
+        "allowed",
+        None,
+    );
+
+    Ok(session_summary(&ActiveSession {
+        session,
+        last_seen: Instant::now(),
+    }))
+}
+
+#[tauri::command]
+fn logout(state: State<'_, AppState>) {
+    state.clear_session();
+}
+
+#[tauri::command]
+fn current_session(state: State<'_, AppState>) -> Result<Option<SessionSummary>, ApiError> {
+    let mut auth = state.auth.lock().map_err(|_| {
+        ApiError::new(
+            ErrorCode::Internal,
+            "el estado de autenticación no está disponible",
+        )
+    })?;
+    Ok(auth.current_session())
 }
 
 #[tauri::command]
@@ -150,18 +571,6 @@ fn health(state: State<'_, AppState>) -> HealthReport {
     }
 }
 
-#[tauri::command]
-fn create_organization(name: String, state: State<'_, AppState>) -> Result<String, ApiError> {
-    let db = state.db()?;
-    db.create_organization(&name).map_err(|error| match error {
-        DataError::OrganizationAlreadyExists => {
-            ApiError::invalid("este equipo ya está configurado para un gimnasio")
-        }
-        other => ApiError::new(ErrorCode::Storage, "no se pudo configurar el gimnasio")
-            .with_details(other.to_string()),
-    })
-}
-
 const ACCESS_AGGREGATE: &str = "access_decision";
 
 fn storage_error(error: DataError) -> ApiError {
@@ -175,11 +584,9 @@ fn simulate_access(
     state: State<'_, AppState>,
 ) -> Result<AccessDecision, ApiError> {
     let started = Instant::now();
+    let session = state.authorize(Permission::OperatePos)?;
     let db = state.db()?;
-    let organization = db
-        .organization()
-        .map_err(storage_error)?
-        .ok_or_else(|| ApiError::invalid("configura el gimnasio antes de simular un acceso"))?;
+    let organization_id = session.organization_id;
 
     let credential_id = request.credential_id.trim();
     let device_id = request.device_id.trim();
@@ -195,7 +602,7 @@ fn simulate_access(
     let payload_hash = sha256_hex(format!("{credential_id}\n{device_id}"));
     let recorded = db
         .record_module_event(
-            &organization.id,
+            &organization_id,
             "outbound",
             event_type,
             ACCESS_AGGREGATE,
@@ -231,6 +638,7 @@ fn list_access_events(
     limit: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AccessEventSummary>, ApiError> {
+    state.authorize(Permission::OperatePos)?;
     let db = state.db()?;
     let events = db
         .list_module_events(ACCESS_AGGREGATE, limit.unwrap_or(20) as usize)
@@ -251,12 +659,14 @@ fn create_backup(
     passphrase: String,
     state: State<'_, AppState>,
 ) -> Result<BackupSummary, ApiError> {
+    state.authorize(Permission::ManageBackups)?;
     let db = state.db()?;
     write_backup(db, &state.paths.backups_dir, &passphrase).map_err(backup_api_error)
 }
 
 #[tauri::command]
 fn list_backups(state: State<'_, AppState>) -> Result<Vec<BackupSummary>, ApiError> {
+    state.authorize(Permission::ManageBackups)?;
     read_backups(&state.paths.backups_dir).map_err(backup_api_error)
 }
 
@@ -266,6 +676,7 @@ fn restore_backup(
     passphrase: String,
     state: State<'_, AppState>,
 ) -> Result<RestoreOutcome, ApiError> {
+    state.authorize(Permission::ManageBackups)?;
     let candidate = Path::new(&file_name);
     if candidate.file_name().and_then(|value| value.to_str()) != Some(file_name.as_str()) {
         return Err(ApiError::invalid("nombre de backup inválido"));
@@ -299,6 +710,8 @@ fn restore_backup(
         ApiError::new(ErrorCode::Storage, "falló la reapertura tras restaurar")
             .with_details(error.to_string())
     })?;
+    // The restored database may contain a different owner or revoked staff.
+    state.clear_session();
 
     Ok(outcome)
 }
@@ -342,12 +755,21 @@ pub fn run() {
                 db_path,
             };
 
-            app.manage(AppState { db, key, paths });
+            app.manage(AppState {
+                db,
+                key,
+                paths,
+                auth: Mutex::new(AuthState::default()),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             health,
-            create_organization,
+            get_setup_state,
+            bootstrap_owner,
+            login,
+            logout,
+            current_session,
             simulate_access,
             list_access_events,
             create_backup,
@@ -411,5 +833,60 @@ mod security_tests {
                 file.display()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    fn active_session(role: Role) -> ActiveSession {
+        ActiveSession {
+            session: gym_core::auth::Session {
+                user_id: "user-1".into(),
+                organization_id: "org-1".into(),
+                site_id: None,
+                name: "Ana".into(),
+                role,
+            },
+            last_seen: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn five_failed_attempts_lock_the_name_for_five_minutes() {
+        let mut auth = AuthState::default();
+        let now = Instant::now();
+        for _ in 0..MAX_LOGIN_ATTEMPTS - 1 {
+            assert!(!auth.record_failure("ana", now));
+        }
+        assert!(auth.record_failure("ana", now));
+        assert!(auth.is_blocked("ana", now));
+        assert!(!auth.is_blocked("ana", now + Duration::from_secs(301)));
+    }
+
+    #[test]
+    fn expired_session_is_rejected_and_cleared() {
+        let mut auth = AuthState::default();
+        let mut active = active_session(Role::Owner);
+        active.last_seen = Instant::now() - Duration::from_secs(16 * 60);
+        auth.session = Some(active);
+
+        let error = auth
+            .authorize(Permission::ManageSettings)
+            .expect_err("expired session must fail");
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert!(auth.session.is_none());
+    }
+
+    #[test]
+    fn cashier_session_cannot_manage_backups() {
+        let mut auth = AuthState {
+            session: Some(active_session(Role::Cashier)),
+            ..AuthState::default()
+        };
+
+        assert!(auth.authorize(Permission::OperatePos).is_ok());
+        assert!(auth.authorize(Permission::ManageBackups).is_err());
     }
 }

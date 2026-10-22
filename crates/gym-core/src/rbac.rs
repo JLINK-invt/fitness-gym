@@ -24,6 +24,31 @@ pub enum Permission {
     ViewAudit,
 }
 
+impl Role {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Role::Owner => "owner",
+            Role::Manager => "manager",
+            Role::Cashier => "cashier",
+            Role::Accounting => "accounting",
+        }
+    }
+}
+
+impl Permission {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Permission::ManageSettings => "manageSettings",
+            Permission::ManageStaff => "manageStaff",
+            Permission::ViewFinance => "viewFinance",
+            Permission::OperatePos => "operatePos",
+            Permission::ManageInventory => "manageInventory",
+            Permission::ManageBackups => "manageBackups",
+            Permission::ViewAudit => "viewAudit",
+        }
+    }
+}
+
 pub const V1_ROLES: [Role; 4] = [Role::Owner, Role::Manager, Role::Cashier, Role::Accounting];
 
 pub const V1_PERMISSIONS: [Permission; 7] = [

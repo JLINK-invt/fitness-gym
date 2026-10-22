@@ -106,8 +106,8 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría | Decidido, implementación pendiente |
-| Sesión abierta en mostrador | Bloqueo por inactividad (15 min) y bloqueo manual | Decidido |
+| Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría | Implementado; auditoría de login básica |
+| Sesión abierta en mostrador | Bloqueo por inactividad (15 min) y cierre de sesión manual | Implementado |
 | Backup restaurado para hacerse pasar por otro usuario | Restore requiere `ManageBackups`; auditoría; aviso de reemplazo total | Parcial |
 | PIN compartido | PIN no será factor único | Decidido |
 

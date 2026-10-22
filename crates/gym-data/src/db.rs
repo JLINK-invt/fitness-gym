@@ -19,6 +19,25 @@ pub struct OrganizationRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserRecord {
+    pub id: String,
+    pub organization_id: String,
+    pub name: String,
+    pub role: String,
+    pub site_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserCredentialRecord {
+    pub user_id: String,
+    pub organization_id: String,
+    pub name: String,
+    pub password_hash: String,
+    pub role: String,
+    pub site_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleEventRecord {
     pub id: String,
     pub event_type: String,
@@ -229,6 +248,170 @@ impl Db {
         })
     }
 
+    pub fn has_owner(&self) -> Result<bool, DataError> {
+        self.with_connection(|conn| {
+            conn.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM staff_memberships
+                     WHERE role = 'owner' AND status = 'active'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(DataError::from)
+        })
+    }
+
+    /// Creates the first owner and its organization-wide membership atomically.
+    /// There is no default user or universal password.
+    pub fn create_owner(
+        &self,
+        organization_id: &str,
+        name: &str,
+        password_hash: &str,
+    ) -> Result<UserRecord, DataError> {
+        let name = name.trim();
+        if name.is_empty() || password_hash.trim().is_empty() {
+            return Err(DataError::InvalidValue(
+                "owner name and password hash are required".into(),
+            ));
+        }
+
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let membership_id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+
+        let owner_exists: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM staff_memberships
+                 WHERE organization_id = ?1 AND role = 'owner' AND status = 'active'
+             )",
+            params![organization_id],
+            |row| row.get(0),
+        )?;
+        if owner_exists {
+            return Err(DataError::OwnerAlreadyExists);
+        }
+
+        let user_exists: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM users
+                 WHERE organization_id = ?1 AND name = ?2 COLLATE NOCASE
+             )",
+            params![organization_id, name],
+            |row| row.get(0),
+        )?;
+        if user_exists {
+            return Err(DataError::UserAlreadyExists);
+        }
+
+        transaction.execute(
+            "INSERT INTO users
+                 (id, organization_id, name, password_hash, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+            params![user_id, organization_id, name, password_hash, created_at],
+        )?;
+        transaction.execute(
+            "INSERT INTO staff_memberships
+                 (id, organization_id, site_id, user_id, role, status, created_at)
+             VALUES (?1, ?2, NULL, ?3, 'owner', 'active', ?4)",
+            params![membership_id, organization_id, user_id, created_at],
+        )?;
+        transaction.commit()?;
+
+        Ok(UserRecord {
+            id: user_id,
+            organization_id: organization_id.to_string(),
+            name: name.to_string(),
+            role: "owner".into(),
+            site_id: None,
+        })
+    }
+
+    /// Returns the active membership used for login. Lookup is scoped to the
+    /// installation's organization and is case-insensitive for the name.
+    pub fn find_user_credentials(
+        &self,
+        organization_id: &str,
+        name: &str,
+    ) -> Result<Option<UserCredentialRecord>, DataError> {
+        self.with_connection(|conn| {
+            conn.query_row(
+                "SELECT u.id, u.organization_id, u.name, u.password_hash, s.role, s.site_id
+                 FROM users u
+                 JOIN staff_memberships s
+                   ON s.organization_id = u.organization_id AND s.user_id = u.id
+                 WHERE u.organization_id = ?1
+                   AND u.name = ?2 COLLATE NOCASE
+                   AND u.status = 'active'
+                   AND s.status = 'active'
+                 ORDER BY (s.site_id IS NULL) DESC
+                 LIMIT 1",
+                params![organization_id, name.trim()],
+                |row| {
+                    Ok(UserCredentialRecord {
+                        user_id: row.get(0)?,
+                        organization_id: row.get(1)?,
+                        name: row.get(2)?,
+                        password_hash: row.get(3)?,
+                        role: row.get(4)?,
+                        site_id: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DataError::from)
+        })
+    }
+
+    pub fn mark_login(&self, user_id: &str) -> Result<(), DataError> {
+        self.with_connection(|conn| {
+            conn.execute(
+                "UPDATE users SET last_login_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![user_id, chrono::Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_audit_event(
+        &self,
+        organization_id: &str,
+        actor_id: Option<&str>,
+        action: &str,
+        resource: &str,
+        result: &str,
+        correlation_id: Option<&str>,
+    ) -> Result<(), DataError> {
+        if !matches!(result, "allowed" | "denied" | "failed") {
+            return Err(DataError::InvalidValue("invalid audit result".into()));
+        }
+        self.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO audit_events
+                     (id, organization_id, actor_id, action, resource, result,
+                      correlation_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    organization_id,
+                    actor_id,
+                    action,
+                    resource,
+                    result,
+                    correlation_id,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Inserts an outbox event once per `(organization, idempotency_key)` and
     /// returns the durable row, including when it already existed.
     #[allow(clippy::too_many_arguments)]
@@ -431,7 +614,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 1);
+        assert_eq!(second_status.schema_version, 2);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -450,6 +633,38 @@ mod tests {
             .expect_err("must reject a second organization");
         assert!(matches!(error, DataError::OrganizationAlreadyExists));
         assert_eq!(db.status().expect("status").organizations, 1);
+    }
+
+    #[test]
+    fn owner_bootstrap_is_atomic_and_unique() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+
+        assert!(!db.has_owner().expect("owner query"));
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$dummy")
+            .expect("creates owner");
+        assert_eq!(owner.name, "Ana Pérez");
+        assert_eq!(owner.role, "owner");
+        assert_eq!(owner.site_id, None);
+        assert!(db.has_owner().expect("owner query"));
+
+        let duplicate = db
+            .create_owner(&organization_id, "Luis", "$argon2id$dummy")
+            .expect_err("must reject a second owner");
+        assert!(matches!(duplicate, DataError::OwnerAlreadyExists));
+
+        let credentials = db
+            .find_user_credentials(&organization_id, "ana pérez")
+            .expect("looks up user")
+            .expect("user exists");
+        assert_eq!(credentials.user_id, owner.id);
+        assert_eq!(credentials.role, "owner");
+        assert_eq!(credentials.password_hash, "$argon2id$dummy");
     }
 
     #[test]

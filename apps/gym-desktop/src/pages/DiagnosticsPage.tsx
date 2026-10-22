@@ -1,15 +1,12 @@
 import type { HealthReport } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { StatusBadge } from "../components/StatusBadge";
 import { api, isTauriRuntime } from "../lib/tauri";
 
 export function DiagnosticsPage() {
-  const queryClient = useQueryClient();
   const inTauri = isTauriRuntime();
-  const [organizationName, setOrganizationName] = useState("");
 
   const health = useQuery<HealthReport>({
     queryKey: ["health"],
@@ -17,22 +14,6 @@ export function DiagnosticsPage() {
     enabled: inTauri,
     refetchInterval: 5_000,
   });
-
-  const createOrganization = useMutation({
-    mutationFn: api.createOrganization,
-    onSuccess: async () => {
-      setOrganizationName("");
-      await queryClient.invalidateQueries({ queryKey: ["health"] });
-    },
-  });
-
-  function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const name = organizationName.trim();
-    if (name) {
-      createOrganization.mutate(name);
-    }
-  }
 
   if (!inTauri) {
     return (
@@ -160,42 +141,6 @@ pnpm tauri dev`}
         </>
       )}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold">Configuración inicial del gimnasio</h2>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Este equipo pertenece a un solo gimnasio. La configuración se guarda
-          cifrada y solo puede hacerse una vez.
-        </p>
-        {(health.data?.database?.organizations ?? 0) > 0 ? (
-          <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-            Este equipo ya está configurado para su gimnasio.
-          </p>
-        ) : (
-          <form onSubmit={handleCreate} className="mt-4 flex flex-wrap gap-3">
-            <input
-              value={organizationName}
-              onChange={(event) => setOrganizationName(event.target.value)}
-              placeholder="Nombre del gimnasio"
-              className="min-w-64 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-            />
-            <button
-              type="submit"
-              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-              disabled={createOrganization.isPending || organizationName.trim().length === 0}
-            >
-              {createOrganization.isPending ? "Guardando…" : "Configurar gimnasio"}
-            </button>
-          </form>
-        )}
-        {createOrganization.isError && (
-          <p className="mt-3 text-sm text-rose-700">{errorMessage(createOrganization.error)}</p>
-        )}
-        {createOrganization.isSuccess && (
-          <p className="mt-3 text-sm text-emerald-700">
-            Gimnasio configurado. Identificador interno: {createOrganization.data}.
-          </p>
-        )}
-      </section>
     </div>
   );
 }
