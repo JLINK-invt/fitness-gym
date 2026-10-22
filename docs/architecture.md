@@ -36,6 +36,21 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
 
+## Identidad y sesión
+
+- `users` guarda nombre, hash Argon2id y estado; `staff_memberships` guarda rol y
+  alcance de sede. Solo puede existir un `owner` activo por instalación.
+- El primer arranque crea gimnasio y dueño en una sola operación; no hay usuario
+  ni contraseña por defecto.
+- La contraseña nunca cruza al webview después del formulario; el hash queda en
+  SQLCipher y la sesión vive en memoria del proceso Tauri.
+- Cinco fallos bloquean el nombre durante cinco minutos; 15 minutos de
+  inactividad cierran la sesión.
+- Los comandos operativos reciben el actor desde la sesión Rust, nunca desde un
+  `userId` enviado por la UI.
+- Restaurar un backup cierra la sesión porque la base restaurada puede tener otro
+  dueño o personal revocado.
+
 ## Acceso simulado
 
 La UI de Acceso llama a `simulate_access`; `gym-core` decide sin I/O y

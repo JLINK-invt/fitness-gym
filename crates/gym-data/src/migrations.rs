@@ -7,14 +7,26 @@ pub struct Migration {
     pub down: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial_core_schema",
-    up: include_str!("../migrations/0001_initial_core_schema.sql"),
-    down: "DROP TABLE IF EXISTS module_events; \
-           DROP TABLE IF EXISTS audit_events; \
-           DROP TABLE IF EXISTS backup_snapshots; \
-           DROP TABLE IF EXISTS staff_memberships; \
-           DROP TABLE IF EXISTS sites; \
-           DROP TABLE IF EXISTS organizations;",
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial_core_schema",
+        up: include_str!("../migrations/0001_initial_core_schema.sql"),
+        down: "DROP TABLE IF EXISTS module_events; \
+               DROP TABLE IF EXISTS audit_events; \
+               DROP TABLE IF EXISTS backup_snapshots; \
+               DROP TABLE IF EXISTS staff_memberships; \
+               DROP TABLE IF EXISTS sites; \
+               DROP TABLE IF EXISTS organizations;",
+    },
+    Migration {
+        version: 2,
+        name: "local_users",
+        up: include_str!("../migrations/0002_local_users.sql"),
+        down: "DROP INDEX IF EXISTS idx_staff_user; \
+               DROP INDEX IF EXISTS idx_staff_one_active_owner; \
+               DROP INDEX IF EXISTS idx_users_organization; \
+               DROP INDEX IF EXISTS idx_users_organization_name; \
+               DROP TABLE IF EXISTS users;",
+    },
+];

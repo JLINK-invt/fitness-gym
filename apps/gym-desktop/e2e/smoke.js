@@ -13,26 +13,25 @@ async (page) => {
 
   await page.goto("http://localhost:1420/?e2e=1#/");
   await page.reload();
-  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  await page.getByRole("heading", { name: "Configura tu gimnasio" }).waitFor();
   if ((await page.getByText("Vista web sin runtime Tauri").count()) > 0) {
     throw new Error("La app no entró en modo Tauri simulado.");
   }
+  await page.getByLabel("Nombre del gimnasio").fill("Gimnasio E2E");
+  await page.getByLabel("Tu nombre").fill("Ana E2E");
+  await page.getByLabel(/^Contraseña/).fill("clave-segura-123");
+  await page.getByLabel("Repetir contraseña").fill("clave-segura-123");
+  await page.getByRole("button", { name: "Crear cuenta y entrar" }).click();
+  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  await page.getByText("Ana E2E").waitFor();
+  await page.getByText("Dueño", { exact: true }).waitFor();
+  pass("primer arranque crea al dueño y abre sesión");
+
   if ((await page.getByText("SQLCipher 4.6.1 community").count()) === 0) {
     throw new Error("No se mostró el estado de SQLCipher.");
   }
   if ((await page.getByText(/organizaci[oó]n/i).count()) > 0) {
     throw new Error("La UI sigue mostrando el concepto de organización.");
-  }
-  pass("diagnóstico carga health y estado cifrado");
-
-  await page
-    .getByRole("textbox", { name: "Nombre del gimnasio" })
-    .fill("Gimnasio E2E");
-  await page.getByRole("button", { name: "Configurar gimnasio" }).click();
-  await page.getByText(/Gimnasio configurado\. Identificador interno:/).waitFor();
-  await page.getByText(/Este equipo ya está configurado para su gimnasio/).waitFor();
-  if ((await page.getByRole("button", { name: "Configurar gimnasio" }).count()) > 0) {
-    throw new Error("La app todavía permite configurar el gimnasio dos veces.");
   }
   const configuration = page
     .locator("dt", { hasText: "Configuración" })
@@ -43,7 +42,7 @@ async (page) => {
       `El estado de configuración no se actualizó: ${await configuration.textContent()}`,
     );
   }
-  pass("configurar el gimnasio actualiza health");
+  pass("diagnóstico carga health y estado cifrado");
 
   await page.getByRole("link", { name: "Acceso" }).click();
   await page.getByRole("heading", { name: "Acceso simulado" }).waitFor();
@@ -102,11 +101,18 @@ async (page) => {
     window.__e2eAnswers = [];
   });
   await restore.click();
-  await page.getByText(/Restauración completada desde/).waitFor();
-  if ((await rows.count()) !== 1) {
+  await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
+  pass("restore correcto cierra la sesión");
+
+  await page.getByLabel("Nombre").fill("Ana E2E");
+  await page.getByLabel("Contraseña").fill("clave-segura-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("heading", { name: "Backups cifrados" }).waitFor();
+  await page.locator("tbody tr").first().waitFor();
+  if ((await page.locator("tbody tr").count()) !== 1) {
     throw new Error("El restore duplicó el snapshot en la tabla.");
   }
-  pass("restore correcto e integridad ok");
+  pass("login posterior al restore conserva el backup");
 
   await page.screenshot({ path: "backups-e2e.png", fullPage: true });
   return { checks: passed.length, passed };

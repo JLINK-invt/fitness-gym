@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "1.1.0";
+pub const CONTRACT_VERSION: &str = "1.2.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +101,39 @@ pub struct AccessEventSummary {
     pub allowed: bool,
     pub idempotency_key: String,
     pub occurred_at: String,
+}
+
+/// Roles enabled for local staff in V1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StaffRole {
+    Owner,
+    Manager,
+    Cashier,
+    Accounting,
+}
+
+/// Public bootstrap state used by the login/setup screen. It never exposes
+/// password hashes or internal membership identifiers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupState {
+    pub configured: bool,
+    pub gym_name: Option<String>,
+    pub owner_ready: bool,
+}
+
+/// Authenticated actor derived from Rust-side session state. The webview may
+/// render it but cannot submit it as an authorization claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub user_id: String,
+    pub organization_id: String,
+    pub site_id: Option<String>,
+    pub name: String,
+    pub role: StaffRole,
+    pub permissions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +240,30 @@ mod tests {
         assert_eq!(json["credentialId"], "CRED-ALLOW");
         assert_eq!(json["deviceId"], "recepcion-1");
         assert_eq!(json["idempotencyKey"], "req-1");
+    }
+
+    #[test]
+    fn setup_and_session_contracts_serialize_in_camel_case() {
+        let setup = SetupState {
+            configured: true,
+            gym_name: Some("Gimnasio Centro".into()),
+            owner_ready: false,
+        };
+        let json = serde_json::to_value(setup).expect("serializes");
+        assert_eq!(json["gymName"], "Gimnasio Centro");
+        assert_eq!(json["ownerReady"], false);
+
+        let session = SessionSummary {
+            user_id: "user-1".into(),
+            organization_id: "org-1".into(),
+            site_id: None,
+            name: "Ana".into(),
+            role: StaffRole::Owner,
+            permissions: vec!["manageSettings".into()],
+        };
+        let json = serde_json::to_value(session).expect("serializes");
+        assert_eq!(json["role"], "owner");
+        assert_eq!(json["permissions"][0], "manageSettings");
     }
 
     #[test]

@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "1.1.0";
+export const CONTRACT_VERSION = "1.2.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -53,6 +53,32 @@ export interface AccessEventSummary {
   allowed: boolean;
   idempotencyKey: string;
   occurredAt: string;
+}
+
+export type StaffRole = "owner" | "manager" | "cashier" | "accounting";
+
+export type Permission =
+  | "manageSettings"
+  | "manageStaff"
+  | "viewFinance"
+  | "operatePos"
+  | "manageInventory"
+  | "manageBackups"
+  | "viewAudit";
+
+export interface SetupState {
+  configured: boolean;
+  gymName?: string;
+  ownerReady: boolean;
+}
+
+export interface SessionSummary {
+  userId: string;
+  organizationId: string;
+  siteId?: string;
+  name: string;
+  role: StaffRole;
+  permissions: Permission[];
 }
 
 export interface BackupSummary {

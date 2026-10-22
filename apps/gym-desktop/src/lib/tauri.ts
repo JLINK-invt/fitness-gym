@@ -5,6 +5,8 @@ import type {
   BackupSummary,
   HealthReport,
   RestoreOutcome,
+  SessionSummary,
+  SetupState,
 } from "@gym/contracts";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -14,8 +16,13 @@ export function isTauriRuntime(): boolean {
 
 export const api = {
   health: () => invoke<HealthReport>("health"),
-  createOrganization: (name: string) =>
-    invoke<string>("create_organization", { name }),
+  setupState: () => invoke<SetupState>("get_setup_state"),
+  bootstrapOwner: (name: string, password: string, gymName?: string) =>
+    invoke<SessionSummary>("bootstrap_owner", { name, password, gymName }),
+  login: (name: string, password: string) =>
+    invoke<SessionSummary>("login", { name, password }),
+  logout: () => invoke<void>("logout"),
+  currentSession: () => invoke<SessionSummary | null>("current_session"),
   simulateAccess: (request: AccessRequest) =>
     invoke<AccessDecision>("simulate_access", { request }),
   listAccessEvents: (limit = 20) =>

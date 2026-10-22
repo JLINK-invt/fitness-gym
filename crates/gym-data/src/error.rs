@@ -35,4 +35,10 @@ pub enum DataError {
 
     #[error("this installation already has an organization")]
     OrganizationAlreadyExists,
+
+    #[error("this installation already has an active owner")]
+    OwnerAlreadyExists,
+
+    #[error("a user with that name already exists")]
+    UserAlreadyExists,
 }

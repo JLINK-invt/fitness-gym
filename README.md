@@ -1,30 +1,29 @@
-# Fitness Gym · Fundación desktop Rust/SQLite
+# Fitness Gym · Operación local
 
 Core de escritorio para gimnasios independientes: Tauri v2 + React + TypeScript,
 backend Rust modular y SQLite cifrada con SQLCipher.
 
-Este repositorio implementa la **Fase 1 — Fundación desktop Rust/SQLite** del
-[plan de Fitness Gym](docs/architecture.md).
+La **Fase 1 — Fundación desktop Rust/SQLite** está cerrada. La **Fase 2** inicia
+con identidad local, sesiones y autorización real en Rust antes de construir
+Recepción, miembros y cobros.
 
 ## Estado actual
 
-| Tarea de Phase 1 | Estado |
+| Capacidad | Estado |
 | --- | --- |
-| Inicializar monorepo Cargo y contratos compartidos | Base creada (pnpm + Turborepo + Cargo workspace + `packages/contracts`) |
-| Crear aplicación Tauri con React y Vite | Shell creado con pantalla de diagnóstico |
-| Estructurar backend Rust modular y contratos | `gym-core`, `gym-data`, `gym-backup`, `gym-contracts` |
-| Configurar SQLite cifrada, migraciones y backups | SQLCipher, migraciones versionadas y snapshots cifrados |
-| Endurecer capacidades IPC y secretos | CSP, `core:default`, clave en keychain del SO, fallback 0600 solo dev/CI |
-| Backups cifrados y restauración local | Argon2id + XChaCha20-Poly1305 + verificación de integridad |
-| ADRs de arquitectura, identidad, cifrado y backups | Aprobados (2026-10-20) |
-| Threat model y matriz de permisos | Redactados; faltan login local y auditoría en comandos |
-| Vertical slice | Implementado con acceso simulado, decisión local y evento idempotente |
-| Smoke E2E de interfaz | 8 comprobaciones en verde con IPC simulado |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v2 |
+| Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
+| Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
+| Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
+| RBAC por rol en comandos Tauri | Operativo para dueño; personal y sedes llegan en la siguiente tarea |
+| Recepción, miembros, planes y cobros | Siguiente vertical slice de Fase 2 |
+| Validación Windows/macOS | Diferida a Fase 6 por falta de hardware macOS |
+| Smoke E2E de interfaz | 9 comprobaciones en verde con IPC simulado |
 
-La app abre la base local, aplica migraciones, muestra health real del core,
-configura el gimnasio del equipo, simula accesos con eventos idempotentes y crea
-snapshots cifrados. Funciona sin Internet. Solo se admite un gimnasio por
-instalación; la pantalla no expone conceptos de multi-organización.
+La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
+exige login, simula accesos con permisos revalidados en Rust y crea snapshots
+cifrados. Funciona sin Internet. Solo se admite un gimnasio por instalación; la
+pantalla no expone conceptos de multi-organización.
 
 ## Requisitos
 
@@ -102,9 +101,9 @@ npx -y @playwright/cli@latest open "http://localhost:1420/?e2e=1#/" --headed
 npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 ```
 
-El script cubre health, configuración del gimnasio, acceso permitido/denegado con
+El script cubre primer arranque con dueño, health, acceso permitido/denegado con
 idempotencia, validación de frase, creación de backup, rechazo de frase
-incorrecta y restauración correcta.
+incorrecta, restauración y cierre de sesión.
 
 ## Estructura
 
@@ -133,6 +132,9 @@ docs/
 
 ## Seguridad implementada
 
+- Contraseñas con Argon2id y salt único; el dueño exige 12 caracteres.
+- Sesión solo en memoria del proceso Tauri, con expiración por inactividad.
+- Cada comando operativo revalida rol y permiso en Rust; la UI solo oculta acciones.
 - SQLCipher con clave de 256 bits fuera de la base.
 - Clave en el keychain del SO (`keyring`: Secret Service, Keychain o Credential
   Manager). Las instalaciones anteriores migran `keys/db.key` al keychain y
@@ -143,18 +145,17 @@ docs/
 - CSP estricta en producción y `core:default` como única capability; sin shell
   genérico ni filesystem amplio.
 - Migraciones con checksum y `user_version`; drift detectado al abrir.
-- Acceso simulado sin autenticación real, sin guardar la credencial y con
-  deduplicación durable por `idempotency_key`.
+- Acceso simulado protegido por sesión y permiso de operación, sin guardar la
+  credencial y con deduplicación durable por `idempotency_key`.
 - Logs sin claves ni passphrases.
 
-## Siguientes pasos de Phase 1
+## Siguientes pasos de Phase 2
 
-1. Validar acceso, backups y restore sobre el binario Tauri en Linux, Windows y
-   macOS; Playwright solo cubre la UI con IPC simulado.
-2. Preparar repo y CI para reproducir build, lint, tipos y pruebas en limpio.
+1. CRUD de sedes y personal con roles y alcance por sede.
+2. Recepción real: búsqueda de miembros, membresías, cobros y check-in.
+3. Auditoría completa de acciones sensibles y política de recuperación del dueño.
+4. Validar el binario Tauri en Windows y macOS durante Phase 6; Playwright solo
+   cubre la UI con IPC simulado.
 
-El contrato del acceso simulado está en
-[`docs/contracts/access-simulated.md`](docs/contracts/access-simulated.md).
-
-El login local, RBAC en comandos y auditoría pertenecen a Phase 2; no se
-implementan todavía.
+Contratos: [acceso simulado](docs/contracts/access-simulated.md) y
+[auth local](docs/contracts/auth-local.md).

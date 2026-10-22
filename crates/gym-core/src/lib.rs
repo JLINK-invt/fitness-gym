@@ -4,6 +4,7 @@
 //! so the business rules can be tested in isolation.
 
 pub mod access;
+pub mod auth;
 pub mod error;
 pub mod events;
 pub mod ids;
