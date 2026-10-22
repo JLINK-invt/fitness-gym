@@ -5,29 +5,31 @@ backend Rust modular y SQLite cifrada con SQLCipher.
 
 Las **Fases 1 y 2** están cerradas: fundación desktop Rust/SQLite, identidad
 local, sesiones, tenancy, RBAC y auditoría inmutable. La **Fase 3** añade POS,
-caja, inventario y suscripciones para usuarios comunes. CRM, socios, membresías
+caja, inventario y suscripciones para usuarios comunes. El primer slice de
+catálogo, precios e impuestos ya está operativo. CRM, socios, membresías
 y clases forman parte de la misma versión desktop. Mobile queda para próximamente.
 
 ## Estado actual
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v4 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v5 |
 | Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
-| RBAC por rol en comandos Tauri | Operativo para auth, sedes y personal, con alcance por sede |
+| RBAC por rol en comandos Tauri | Operativo para auth, sedes, personal y catálogo, con alcance por sede |
 | Sedes y personal | Operativo: crear, renombrar, cerrar/reabrir sedes y administrar accesos con auditoría |
 | Auditoría inmutable | Operativo: append-only, hash chain, consulta por sede y verificación de integridad |
+| Catálogo, precios e impuestos | Operativo: productos, variantes, precios versionados y archivo lógico |
 | Suscripciones | Siguiente en Fase 3: planes, altas, renovaciones y vencimientos |
 | CRM, socios y membresías | Misma versión desktop, Fase 4 |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 15 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 18 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 exige login, administra sedes y accesos del equipo con permisos revalidados en
-Rust, registra auditoría append-only con hash chain, simula accesos y crea
-snapshots cifrados. Funciona sin Internet. Solo se
+Rust, registra auditoría append-only con hash chain, administra el catálogo con
+precios versionados, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo se
 admite un gimnasio por instalación; la pantalla no expone conceptos de
 multi-organización.
 
@@ -109,9 +111,11 @@ npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 
 El script cubre primer arranque con dueño, health, acceso permitido/denegado con
 idempotencia, validación de frase, creación de backup, rechazo de frase
-incorrecta, restauración y cierre de sesión. También crea una sede y un cajero,
-comprueba que el cajero no ve módulos administrativos, verifica la cadena de
-auditoría y confirma que una cuenta desactivada ya no puede iniciar sesión.
+incorrecta, restauración y cierre de sesión. También crea una sede, un producto
+con precio inicial, una nueva versión de precio y una segunda variante, además
+de un cajero. Comprueba
+que el cajero no ve módulos administrativos, verifica la cadena de auditoría y
+confirma que una cuenta desactivada ya no puede iniciar sesión.
 
 ## Estructura
 

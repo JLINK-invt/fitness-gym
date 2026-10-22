@@ -9,6 +9,7 @@ import { AccessPage } from "./pages/AccessPage";
 import { AuditPage } from "./pages/AuditPage";
 import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
+import { CatalogPage } from "./pages/CatalogPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { SitesPage } from "./pages/SitesPage";
 import { StaffPage } from "./pages/StaffPage";
@@ -73,6 +74,14 @@ export function App() {
           element={
             <Guarded permission="operatePos">
               <AccessPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="catalog"
+          element={
+            <Guarded permission="manageCatalog">
+              <CatalogPage />
             </Guarded>
           }
         />

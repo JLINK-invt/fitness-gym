@@ -50,4 +50,19 @@ pub const MIGRATIONS: &[Migration] = &[
                ALTER TABLE audit_events DROP COLUMN site_id; \
                ALTER TABLE audit_events DROP COLUMN sequence;",
     },
+    Migration {
+        version: 5,
+        name: "catalog_pricing",
+        up: include_str!("../migrations/0005_catalog_pricing.sql"),
+        down: "DROP TRIGGER IF EXISTS catalog_price_versions_no_delete; \
+               DROP TRIGGER IF EXISTS catalog_price_versions_no_update; \
+               DROP INDEX IF EXISTS idx_catalog_price_versions_variant_effective; \
+               DROP TABLE IF EXISTS catalog_price_versions; \
+               DROP INDEX IF EXISTS idx_catalog_variants_product; \
+               DROP INDEX IF EXISTS idx_catalog_variants_organization_barcode; \
+               DROP INDEX IF EXISTS idx_catalog_variants_organization_sku; \
+               DROP TABLE IF EXISTS catalog_variants; \
+               DROP INDEX IF EXISTS idx_catalog_products_organization_name; \
+               DROP TABLE IF EXISTS catalog_products;",
+    },
 ];

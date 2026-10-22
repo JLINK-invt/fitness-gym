@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "1.4.0";
+pub const CONTRACT_VERSION: &str = "1.5.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +173,131 @@ pub struct StaffSummary {
     pub status: StaffStatus,
     pub last_login_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CatalogStatus {
+    Active,
+    Archived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CatalogUnit {
+    Piece,
+    Service,
+    Session,
+    Package,
+}
+
+/// Immutable price snapshot. Sales must reference the version id so later
+/// catalog edits never rewrite historical totals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogPrice {
+    pub id: String,
+    pub currency: String,
+    pub amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    pub effective_from: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogVariant {
+    pub id: String,
+    pub name: String,
+    pub sku: String,
+    pub barcode: Option<String>,
+    pub unit: CatalogUnit,
+    pub cost_minor: i64,
+    pub status: CatalogStatus,
+    pub current_price: Option<CatalogPrice>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogProduct {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub status: CatalogStatus,
+    pub variants: Vec<CatalogVariant>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogPriceInput {
+    pub amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    #[serde(default)]
+    pub effective_from: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogVariantInput {
+    pub name: String,
+    pub sku: String,
+    #[serde(default)]
+    pub barcode: Option<String>,
+    pub unit: CatalogUnit,
+    pub cost_minor: i64,
+    pub price: CatalogPriceInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCatalogItemInput {
+    pub name: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    pub variant: CatalogVariantInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddCatalogVariantInput {
+    pub product_id: String,
+    pub variant: CatalogVariantInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCatalogProductInput {
+    pub product_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    pub status: CatalogStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCatalogVariantInput {
+    pub variant_id: String,
+    pub name: String,
+    pub sku: String,
+    #[serde(default)]
+    pub barcode: Option<String>,
+    pub unit: CatalogUnit,
+    pub cost_minor: i64,
+    pub status: CatalogStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddCatalogPriceInput {
+    pub variant_id: String,
+    pub price: CatalogPriceInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -121,6 +121,40 @@ async (page) => {
   await page.getByLabel("Nombre de Sucursal Norte").waitFor();
   pass("crear sede y listarla");
 
+  await page.getByRole("link", { name: "Catálogo" }).click();
+  await page.getByRole("heading", { name: "Catálogo" }).waitFor();
+  await page.getByLabel("Nombre del producto").fill("Membresía mensual");
+  await page.getByLabel("Categoría").fill("Membresías");
+  await page.getByLabel("Nombre de la variante").fill("Mensual");
+  await page.getByLabel("SKU").fill("MEM-MEN");
+  if (!(await page.getByRole("button", { name: "Crear producto" }).isDisabled())) {
+    throw new Error("El botón permitió crear un producto sin precio.");
+  }
+  await page.getByLabel("Precio", { exact: true }).fill("350");
+  await page.getByRole("button", { name: "Crear producto" }).click();
+  await page.getByText("Producto agregado al catálogo.").waitFor();
+  await page.getByLabel("Nombre de Membresía mensual").waitFor();
+  await page.getByText("$350.00").waitFor();
+  pass("crear producto con precio inicial");
+
+  await page.getByRole("button", { name: "Nuevo precio" }).click();
+  await page.getByLabel("Nuevo precio").fill("400");
+  await page.getByRole("button", { name: "Guardar precio" }).click();
+  await page.getByText("$400.00").waitFor();
+  if ((await page.getByText("$350.00").count()) > 0) {
+    throw new Error("El precio anterior no debería seguir como precio vigente.");
+  }
+  pass("cambiar precio crea una versión vigente");
+
+  await page.getByRole("button", { name: "Agregar variante" }).click();
+  await page.getByLabel("Nombre de la nueva variante").fill("Mensual premium");
+  await page.getByLabel("SKU de la nueva variante").fill("MEM-PRE");
+  await page.getByLabel("Precio de la nueva variante").fill("550");
+  await page.getByRole("button", { name: "Crear variante" }).click();
+  await page.getByText("Mensual premium").waitFor();
+  await page.getByText("$550.00").waitFor();
+  pass("agregar una segunda variante");
+
   await page.getByRole("link", { name: "Equipo" }).click();
   await page.getByRole("heading", { name: "Equipo" }).waitFor();
   await page.getByLabel("Nombre del empleado").fill("Carlos Caja");
@@ -146,6 +180,9 @@ async (page) => {
   }
   if ((await page.getByRole("link", { name: "Sedes" }).count()) > 0) {
     throw new Error("El cajero no debería ver Sedes.");
+  }
+  if ((await page.getByRole("link", { name: "Catálogo" }).count()) > 0) {
+    throw new Error("El cajero no debería ver Catálogo.");
   }
   if ((await page.getByRole("link", { name: "Auditoría" }).count()) > 0) {
     throw new Error("El cajero no debería ver Auditoría.");

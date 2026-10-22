@@ -3,10 +3,12 @@ use gym_backup::{
     create_backup as write_backup, list_backups as read_backups, restore_backup as apply_restore,
 };
 use gym_contracts::{
-    AccessDecision, AccessEventSummary, AccessRequest, ApiError, AuditEventSummary, AuditIntegrity,
-    AuditResult, BackupSummary, ErrorCode, HealthReport, HealthStatus, ModuleHealth,
+    AccessDecision, AccessEventSummary, AccessRequest, AddCatalogPriceInput,
+    AddCatalogVariantInput, ApiError, AuditEventSummary, AuditIntegrity, AuditResult,
+    BackupSummary, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
+    CatalogVariant, CreateCatalogItemInput, ErrorCode, HealthReport, HealthStatus, ModuleHealth,
     RestoreOutcome, SessionSummary, SetupState, SiteStatus, SiteSummary, StaffRole, StaffStatus,
-    StaffSummary, CONTRACT_VERSION,
+    StaffSummary, UpdateCatalogProductInput, UpdateCatalogVariantInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
@@ -18,8 +20,9 @@ use gym_core::{
     CORE_VERSION, SERVICE_NAME,
 };
 use gym_data::{
-    sha256_hex, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider,
-    KeyringKeyProvider,
+    sha256_hex, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, DataError, Db,
+    DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider, NewCatalogItem,
+    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -413,6 +416,109 @@ fn staff_summary(record: gym_data::StaffRecord) -> StaffSummary {
         status: staff_status(&record.status),
         last_login_at: record.last_login_at,
         created_at: record.created_at,
+    }
+}
+
+fn catalog_status(value: &str) -> CatalogStatus {
+    match value {
+        "archived" => CatalogStatus::Archived,
+        _ => CatalogStatus::Active,
+    }
+}
+
+fn catalog_status_str(value: CatalogStatus) -> &'static str {
+    match value {
+        CatalogStatus::Active => "active",
+        CatalogStatus::Archived => "archived",
+    }
+}
+
+fn catalog_unit(value: &str) -> CatalogUnit {
+    match value {
+        "piece" => CatalogUnit::Piece,
+        "session" => CatalogUnit::Session,
+        "package" => CatalogUnit::Package,
+        _ => CatalogUnit::Service,
+    }
+}
+
+fn catalog_unit_str(value: CatalogUnit) -> &'static str {
+    match value {
+        CatalogUnit::Piece => "piece",
+        CatalogUnit::Service => "service",
+        CatalogUnit::Session => "session",
+        CatalogUnit::Package => "package",
+    }
+}
+
+fn catalog_price(record: CatalogPriceRecord) -> CatalogPrice {
+    CatalogPrice {
+        id: record.id,
+        currency: record.currency,
+        amount_minor: record.amount_minor,
+        tax_rate_bps: record.tax_rate_bps,
+        price_includes_tax: record.price_includes_tax,
+        effective_from: record.effective_from,
+        created_at: record.created_at,
+    }
+}
+
+fn catalog_variant(record: CatalogVariantRecord) -> CatalogVariant {
+    CatalogVariant {
+        id: record.id,
+        name: record.name,
+        sku: record.sku,
+        barcode: record.barcode,
+        unit: catalog_unit(&record.unit),
+        cost_minor: record.cost_minor,
+        status: catalog_status(&record.status),
+        current_price: record.current_price.map(catalog_price),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn catalog_product(record: CatalogProductRecord) -> CatalogProduct {
+    CatalogProduct {
+        id: record.id,
+        name: record.name,
+        category: record.category,
+        status: catalog_status(&record.status),
+        variants: record.variants.into_iter().map(catalog_variant).collect(),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn new_catalog_price(input: CatalogPriceInput) -> NewCatalogPrice {
+    NewCatalogPrice {
+        amount_minor: input.amount_minor,
+        tax_rate_bps: input.tax_rate_bps,
+        price_includes_tax: input.price_includes_tax,
+        effective_from: input.effective_from,
+    }
+}
+
+fn catalog_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::CatalogProductAlreadyExists => {
+            ApiError::invalid("ya existe un producto con ese nombre")
+        }
+        DataError::CatalogSkuAlreadyExists => {
+            ApiError::invalid("ya existe una variante con ese SKU")
+        }
+        DataError::CatalogBarcodeAlreadyExists => {
+            ApiError::invalid("ya existe una variante con ese código de barras")
+        }
+        DataError::CatalogProductNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el producto no existe")
+        }
+        DataError::CatalogVariantNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la variante no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo guardar el catálogo")
+            .with_details(other.to_string()),
     }
 }
 
@@ -1041,6 +1147,177 @@ fn update_staff(
 }
 
 #[tauri::command]
+fn list_catalog(state: State<'_, AppState>) -> Result<Vec<CatalogProduct>, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    db.list_catalog(&session.organization_id)
+        .map_err(catalog_api_error)
+        .map(|products| products.into_iter().map(catalog_product).collect())
+}
+
+#[tauri::command]
+fn create_catalog_item(
+    input: CreateCatalogItemInput,
+    state: State<'_, AppState>,
+) -> Result<CatalogProduct, ApiError> {
+    let session = state.authorize(Permission::ManageCatalog)?;
+    let db = state.db()?;
+    let item = NewCatalogItem {
+        name: input.name,
+        category: input.category,
+        variant_name: input.variant.name,
+        sku: input.variant.sku,
+        barcode: input.variant.barcode,
+        unit: catalog_unit_str(input.variant.unit).to_string(),
+        cost_minor: input.variant.cost_minor,
+        price: new_catalog_price(input.variant.price),
+    };
+    let product = db
+        .create_catalog_item(&session.organization_id, &session.user_id, item)
+        .map_err(catalog_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "catalog.product_created",
+        "catalog_product",
+        "allowed",
+        "tauri",
+        Some(&product.id),
+    );
+    Ok(catalog_product(product))
+}
+
+#[tauri::command]
+fn add_catalog_variant(
+    input: AddCatalogVariantInput,
+    state: State<'_, AppState>,
+) -> Result<CatalogProduct, ApiError> {
+    let session = state.authorize(Permission::ManageCatalog)?;
+    let db = state.db()?;
+    let sku = input.variant.sku.clone();
+    let variant = NewCatalogVariant {
+        name: input.variant.name,
+        sku: input.variant.sku,
+        barcode: input.variant.barcode,
+        unit: catalog_unit_str(input.variant.unit).to_string(),
+        cost_minor: input.variant.cost_minor,
+        price: new_catalog_price(input.variant.price),
+    };
+    let product = db
+        .add_catalog_variant(
+            &session.organization_id,
+            &session.user_id,
+            &input.product_id,
+            variant,
+        )
+        .map_err(catalog_api_error)?;
+    let variant_id = product
+        .variants
+        .iter()
+        .find(|variant| variant.sku == sku)
+        .map(|variant| variant.id.clone());
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "catalog.variant_created",
+        "catalog_variant",
+        "allowed",
+        "tauri",
+        variant_id.as_deref(),
+    );
+    Ok(catalog_product(product))
+}
+
+#[tauri::command]
+fn update_catalog_product(
+    input: UpdateCatalogProductInput,
+    state: State<'_, AppState>,
+) -> Result<CatalogProduct, ApiError> {
+    let session = state.authorize(Permission::ManageCatalog)?;
+    let db = state.db()?;
+    let update = NewCatalogProductUpdate {
+        name: input.name,
+        category: input.category,
+        status: catalog_status_str(input.status).to_string(),
+    };
+    let product = db
+        .update_catalog_product(&session.organization_id, &input.product_id, update)
+        .map_err(catalog_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "catalog.product_updated",
+        "catalog_product",
+        "allowed",
+        "tauri",
+        Some(&product.id),
+    );
+    Ok(catalog_product(product))
+}
+
+#[tauri::command]
+fn update_catalog_variant(
+    input: UpdateCatalogVariantInput,
+    state: State<'_, AppState>,
+) -> Result<CatalogProduct, ApiError> {
+    let session = state.authorize(Permission::ManageCatalog)?;
+    let db = state.db()?;
+    let update = NewCatalogVariantUpdate {
+        name: input.name,
+        sku: input.sku,
+        barcode: input.barcode,
+        unit: catalog_unit_str(input.unit).to_string(),
+        cost_minor: input.cost_minor,
+        status: catalog_status_str(input.status).to_string(),
+    };
+    let product = db
+        .update_catalog_variant(&session.organization_id, &input.variant_id, update)
+        .map_err(catalog_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "catalog.variant_updated",
+        "catalog_variant",
+        "allowed",
+        "tauri",
+        Some(&input.variant_id),
+    );
+    Ok(catalog_product(product))
+}
+
+#[tauri::command]
+fn add_catalog_price(
+    input: AddCatalogPriceInput,
+    state: State<'_, AppState>,
+) -> Result<CatalogProduct, ApiError> {
+    let session = state.authorize(Permission::ManageCatalog)?;
+    let db = state.db()?;
+    let product = db
+        .add_catalog_price(
+            &session.organization_id,
+            &session.user_id,
+            &input.variant_id,
+            new_catalog_price(input.price),
+        )
+        .map_err(catalog_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        session.site_id.as_deref(),
+        "catalog.price_added",
+        "catalog_variant",
+        "allowed",
+        "tauri",
+        Some(&input.variant_id),
+    );
+    Ok(catalog_product(product))
+}
+
+#[tauri::command]
 fn create_backup(
     passphrase: String,
     state: State<'_, AppState>,
@@ -1215,6 +1492,12 @@ pub fn run() {
             list_staff,
             create_staff,
             update_staff,
+            list_catalog,
+            create_catalog_item,
+            add_catalog_variant,
+            update_catalog_product,
+            update_catalog_variant,
+            add_catalog_price,
             list_audit_events,
             verify_audit_chain
         ])

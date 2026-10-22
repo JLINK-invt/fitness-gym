@@ -9,7 +9,7 @@ acciones. **El backend siempre revalida.**
 | Rol | Uso previsto |
 | --- | --- |
 | `owner` | Dueño del gimnasio; configuración, personal, finanzas y backups |
-| `manager` | Encargado de sede; operación, personal, inventario y backups |
+| `manager` | Encargado de sede; operación, personal, inventario, catálogo y backups |
 | `cashier` | Mostrador; cobros y ajustes operativos de inventario |
 | `accounting` | Contabilidad; consulta de finanzas y auditoría, sin operar caja |
 
@@ -22,6 +22,7 @@ acciones. **El backend siempre revalida.**
 | `ViewFinance` | ✅ | ✅ | — | ✅ |
 | `OperatePos` | ✅ | ✅ | ✅ | — |
 | `ManageInventory` | ✅ | ✅ | ✅ | — |
+| `ManageCatalog` | ✅ | ✅ | — | — |
 | `ManageBackups` | ✅ | ✅ | — | — |
 | `ViewAudit` | ✅ | ✅ | — | ✅ |
 
@@ -49,6 +50,7 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 | Ver reportes financieros | `ViewFinance` | Solo lectura; exportaciones auditadas |
 | Cobrar, cancelar o reembolsar | `OperatePos` | Reembolso/cancelación con motivo y auditoría |
 | Ajustar inventario | `ManageInventory` | Motivo obligatorio; auditar diferencia y actor |
+| Crear o modificar catálogo | `ManageCatalog` | Precios append-only; editar un precio crea una versión nueva |
 | Crear/editar personal | `ManageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
 | Crear/restaurar backup | `ManageBackups` | Confirmación explícita; registrar archivo y resultado |
 | Ver auditoría | `ViewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
@@ -73,8 +75,9 @@ Cada comando sensible debe registrar en `audit_events`:
 
 ## Estado de implementación
 
-- Aplicado en auth, sedes, personal, acceso y backups: permisos, alcance por
-  sede, membresía activa, validación de recurso y auditoría append-only.
+- Aplicado en auth, sedes, personal, acceso, backups y catálogo: permisos,
+  alcance por sede, membresía activa, validación de recurso y auditoría
+  append-only.
 - `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
   edición o borrado.
 - Pendiente al construir cada módulo: recepción, finanzas, inventario y

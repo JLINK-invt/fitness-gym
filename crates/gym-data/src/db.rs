@@ -59,6 +59,97 @@ pub struct StaffRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogPriceRecord {
+    pub id: String,
+    pub currency: String,
+    pub amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    pub effective_from: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogVariantRecord {
+    pub id: String,
+    pub product_id: String,
+    pub name: String,
+    pub sku: String,
+    pub barcode: Option<String>,
+    pub unit: String,
+    pub cost_minor: i64,
+    pub status: String,
+    pub current_price: Option<CatalogPriceRecord>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogProductRecord {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub status: String,
+    pub variants: Vec<CatalogVariantRecord>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCatalogPrice {
+    pub amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    pub effective_from: Option<String>,
+}
+
+struct ValidatedCatalogPrice {
+    amount_minor: i64,
+    tax_rate_bps: i64,
+    price_includes_tax: bool,
+    effective_from: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCatalogItem {
+    pub name: String,
+    pub category: Option<String>,
+    pub variant_name: String,
+    pub sku: String,
+    pub barcode: Option<String>,
+    pub unit: String,
+    pub cost_minor: i64,
+    pub price: NewCatalogPrice,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCatalogVariant {
+    pub name: String,
+    pub sku: String,
+    pub barcode: Option<String>,
+    pub unit: String,
+    pub cost_minor: i64,
+    pub price: NewCatalogPrice,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCatalogProductUpdate {
+    pub name: String,
+    pub category: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCatalogVariantUpdate {
+    pub name: String,
+    pub sku: String,
+    pub barcode: Option<String>,
+    pub unit: String,
+    pub cost_minor: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditEventRecord {
     pub id: String,
     pub sequence: i64,
@@ -647,6 +738,453 @@ impl Db {
         })
     }
 
+    pub fn list_catalog(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<CatalogProductRecord>, DataError> {
+        self.load_catalog(organization_id, None)
+    }
+
+    pub fn catalog_product(
+        &self,
+        organization_id: &str,
+        product_id: &str,
+    ) -> Result<CatalogProductRecord, DataError> {
+        self.load_catalog(organization_id, Some(product_id))?
+            .into_iter()
+            .next()
+            .ok_or(DataError::CatalogProductNotFound)
+    }
+
+    fn load_catalog(
+        &self,
+        organization_id: &str,
+        product_id: Option<&str>,
+    ) -> Result<Vec<CatalogProductRecord>, DataError> {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        self.with_connection(|conn| {
+            let mut product_statement = conn.prepare(
+                "SELECT id, name, category, status, created_at, updated_at
+                 FROM catalog_products
+                 WHERE organization_id = ?1
+                   AND (?2 IS NULL OR id = ?2)
+                 ORDER BY (status = 'active') DESC, name COLLATE NOCASE",
+            )?;
+            let products = product_statement
+                .query_map(params![organization_id, product_id], |row| {
+                    Ok(CatalogProductRecord {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        category: row.get(2)?,
+                        status: row.get(3)?,
+                        variants: Vec::new(),
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut variant_statement = conn.prepare(
+                "SELECT v.id, v.product_id, v.name, v.sku, v.barcode, v.unit,
+                        v.cost_minor, v.status, v.created_at, v.updated_at,
+                        p.id, p.currency, p.amount_minor, p.tax_rate_bps,
+                        p.price_includes_tax, p.effective_from, p.created_at
+                 FROM catalog_variants v
+                 LEFT JOIN catalog_price_versions p
+                   ON p.id = (
+                       SELECT id
+                       FROM catalog_price_versions
+                       WHERE variant_id = v.id AND effective_from <= ?2
+                       ORDER BY effective_from DESC, created_at DESC
+                       LIMIT 1
+                   )
+                 WHERE v.organization_id = ?1
+                   AND (?3 IS NULL OR v.product_id = ?3)
+                 ORDER BY v.name COLLATE NOCASE, v.created_at",
+            )?;
+            let variants = variant_statement
+                .query_map(params![organization_id, now, product_id], |row| {
+                    let price_id: Option<String> = row.get(10)?;
+                    Ok(CatalogVariantRecord {
+                        id: row.get(0)?,
+                        product_id: row.get(1)?,
+                        name: row.get(2)?,
+                        sku: row.get(3)?,
+                        barcode: row.get(4)?,
+                        unit: row.get(5)?,
+                        cost_minor: row.get(6)?,
+                        status: row.get(7)?,
+                        current_price: price_id
+                            .map(|id| {
+                                Ok::<CatalogPriceRecord, rusqlite::Error>(CatalogPriceRecord {
+                                    id,
+                                    currency: row.get(11)?,
+                                    amount_minor: row.get(12)?,
+                                    tax_rate_bps: row.get(13)?,
+                                    price_includes_tax: row.get::<_, i64>(14)? != 0,
+                                    effective_from: row.get(15)?,
+                                    created_at: row.get(16)?,
+                                })
+                            })
+                            .transpose()?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut products: Vec<CatalogProductRecord> = products;
+            let positions: HashMap<String, usize> = products
+                .iter()
+                .enumerate()
+                .map(|(index, product)| (product.id.clone(), index))
+                .collect();
+            for variant in variants {
+                if let Some(index) = positions.get(&variant.product_id) {
+                    products[*index].variants.push(variant);
+                }
+            }
+            Ok(products)
+        })
+    }
+
+    pub fn create_catalog_item(
+        &self,
+        organization_id: &str,
+        created_by: &str,
+        item: NewCatalogItem,
+    ) -> Result<CatalogProductRecord, DataError> {
+        let name = required_text(&item.name, "product name", 2, 80)?;
+        let category = optional_text(item.category.as_deref(), "category", 2, 60)?;
+        let variant_name = required_text(&item.variant_name, "variant name", 1, 80)?;
+        let sku = required_text(&item.sku, "SKU", 1, 40)?;
+        let barcode = optional_text(item.barcode.as_deref(), "barcode", 1, 64)?;
+        validate_catalog_unit(&item.unit)?;
+        if item.cost_minor < 0 {
+            return Err(DataError::InvalidValue(
+                "cost must be zero or greater".into(),
+            ));
+        }
+        let price = validate_new_price(item.price)?;
+
+        let product_id = uuid::Uuid::new_v4().to_string();
+        let variant_id = uuid::Uuid::new_v4().to_string();
+        let price_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let currency = organization_currency(&transaction, organization_id)?;
+
+            ensure_unique_product_name(&transaction, organization_id, &name, None)?;
+            ensure_unique_sku(&transaction, organization_id, &sku, None)?;
+            ensure_unique_barcode(&transaction, organization_id, barcode.as_deref(), None)?;
+
+            transaction.execute(
+                "INSERT INTO catalog_products
+                     (id, organization_id, name, category, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+                params![product_id, organization_id, name, category, now],
+            )?;
+            transaction.execute(
+                "INSERT INTO catalog_variants
+                     (id, organization_id, product_id, name, sku, barcode, unit,
+                      cost_minor, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?9)",
+                params![
+                    variant_id,
+                    organization_id,
+                    product_id,
+                    variant_name,
+                    sku,
+                    barcode,
+                    item.unit,
+                    item.cost_minor,
+                    now
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO catalog_price_versions
+                     (id, organization_id, variant_id, currency, amount_minor,
+                      tax_rate_bps, price_includes_tax, effective_from, created_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    price_id,
+                    organization_id,
+                    variant_id,
+                    currency,
+                    price.amount_minor,
+                    price.tax_rate_bps,
+                    i64::from(price.price_includes_tax),
+                    price.effective_from,
+                    now,
+                    created_by
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        self.catalog_product(organization_id, &product_id)
+    }
+
+    pub fn add_catalog_variant(
+        &self,
+        organization_id: &str,
+        created_by: &str,
+        product_id: &str,
+        variant: NewCatalogVariant,
+    ) -> Result<CatalogProductRecord, DataError> {
+        let name = required_text(&variant.name, "variant name", 1, 80)?;
+        let sku = required_text(&variant.sku, "SKU", 1, 40)?;
+        let barcode = optional_text(variant.barcode.as_deref(), "barcode", 1, 64)?;
+        validate_catalog_unit(&variant.unit)?;
+        if variant.cost_minor < 0 {
+            return Err(DataError::InvalidValue(
+                "cost must be zero or greater".into(),
+            ));
+        }
+        let price = validate_new_price(variant.price)?;
+        let variant_id = uuid::Uuid::new_v4().to_string();
+        let price_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let currency = organization_currency(&transaction, organization_id)?;
+            let product_status: Option<String> = transaction
+                .query_row(
+                    "SELECT status FROM catalog_products
+                     WHERE id = ?1 AND organization_id = ?2",
+                    params![product_id, organization_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match product_status.as_deref() {
+                Some("active") => {}
+                Some(_) => {
+                    return Err(DataError::InvalidValue(
+                        "cannot add variants to an archived product".into(),
+                    ))
+                }
+                None => return Err(DataError::CatalogProductNotFound),
+            }
+
+            ensure_unique_sku(&transaction, organization_id, &sku, None)?;
+            ensure_unique_barcode(&transaction, organization_id, barcode.as_deref(), None)?;
+
+            transaction.execute(
+                "INSERT INTO catalog_variants
+                     (id, organization_id, product_id, name, sku, barcode, unit,
+                      cost_minor, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?9)",
+                params![
+                    variant_id,
+                    organization_id,
+                    product_id,
+                    name,
+                    sku,
+                    barcode,
+                    variant.unit,
+                    variant.cost_minor,
+                    now
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO catalog_price_versions
+                     (id, organization_id, variant_id, currency, amount_minor,
+                      tax_rate_bps, price_includes_tax, effective_from, created_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    price_id,
+                    organization_id,
+                    variant_id,
+                    currency,
+                    price.amount_minor,
+                    price.tax_rate_bps,
+                    i64::from(price.price_includes_tax),
+                    price.effective_from,
+                    now,
+                    created_by
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        self.catalog_product(organization_id, product_id)
+    }
+
+    pub fn update_catalog_product(
+        &self,
+        organization_id: &str,
+        product_id: &str,
+        update: NewCatalogProductUpdate,
+    ) -> Result<CatalogProductRecord, DataError> {
+        let name = required_text(&update.name, "product name", 2, 80)?;
+        let category = optional_text(update.category.as_deref(), "category", 2, 60)?;
+        validate_catalog_status(&update.status)?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let exists: bool = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM catalog_products
+                     WHERE id = ?1 AND organization_id = ?2
+                 )",
+                params![product_id, organization_id],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(DataError::CatalogProductNotFound);
+            }
+            ensure_unique_product_name(&transaction, organization_id, &name, Some(product_id))?;
+            transaction.execute(
+                "UPDATE catalog_products
+                 SET name = ?3, category = ?4, status = ?5, updated_at = ?6
+                 WHERE id = ?1 AND organization_id = ?2",
+                params![
+                    product_id,
+                    organization_id,
+                    name,
+                    category,
+                    update.status,
+                    now
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        self.catalog_product(organization_id, product_id)
+    }
+
+    pub fn update_catalog_variant(
+        &self,
+        organization_id: &str,
+        variant_id: &str,
+        update: NewCatalogVariantUpdate,
+    ) -> Result<CatalogProductRecord, DataError> {
+        let name = required_text(&update.name, "variant name", 1, 80)?;
+        let sku = required_text(&update.sku, "SKU", 1, 40)?;
+        let barcode = optional_text(update.barcode.as_deref(), "barcode", 1, 64)?;
+        validate_catalog_unit(&update.unit)?;
+        validate_catalog_status(&update.status)?;
+        if update.cost_minor < 0 {
+            return Err(DataError::InvalidValue(
+                "cost must be zero or greater".into(),
+            ));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let product_id: String;
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            product_id = transaction
+                .query_row(
+                    "SELECT product_id FROM catalog_variants
+                     WHERE id = ?1 AND organization_id = ?2",
+                    params![variant_id, organization_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or(DataError::CatalogVariantNotFound)?;
+
+            ensure_unique_sku(&transaction, organization_id, &sku, Some(variant_id))?;
+            ensure_unique_barcode(
+                &transaction,
+                organization_id,
+                barcode.as_deref(),
+                Some(variant_id),
+            )?;
+            transaction.execute(
+                "UPDATE catalog_variants
+                 SET name = ?3, sku = ?4, barcode = ?5, unit = ?6,
+                     cost_minor = ?7, status = ?8, updated_at = ?9
+                 WHERE id = ?1 AND organization_id = ?2",
+                params![
+                    variant_id,
+                    organization_id,
+                    name,
+                    sku,
+                    barcode,
+                    update.unit,
+                    update.cost_minor,
+                    update.status,
+                    now
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        self.catalog_product(organization_id, &product_id)
+    }
+
+    pub fn add_catalog_price(
+        &self,
+        organization_id: &str,
+        created_by: &str,
+        variant_id: &str,
+        price: NewCatalogPrice,
+    ) -> Result<CatalogProductRecord, DataError> {
+        let price = validate_new_price(price)?;
+        let price_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let product_id: String;
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let (variant_product_id, variant_status, product_status): (String, String, String) =
+                transaction
+                    .query_row(
+                        "SELECT v.product_id, v.status, p.status
+                         FROM catalog_variants v
+                         JOIN catalog_products p ON p.id = v.product_id
+                         WHERE v.id = ?1 AND v.organization_id = ?2",
+                        params![variant_id, organization_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?
+                    .ok_or(DataError::CatalogVariantNotFound)?;
+            if variant_status != "active" || product_status != "active" {
+                return Err(DataError::InvalidValue(
+                    "cannot add prices to an archived product or variant".into(),
+                ));
+            }
+            product_id = variant_product_id;
+            let currency = organization_currency(&transaction, organization_id)?;
+            transaction.execute(
+                "INSERT INTO catalog_price_versions
+                     (id, organization_id, variant_id, currency, amount_minor,
+                      tax_rate_bps, price_includes_tax, effective_from, created_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    price_id,
+                    organization_id,
+                    variant_id,
+                    currency,
+                    price.amount_minor,
+                    price.tax_rate_bps,
+                    i64::from(price.price_includes_tax),
+                    price.effective_from,
+                    now,
+                    created_by
+                ],
+            )?;
+            transaction.commit()?;
+        }
+
+        self.catalog_product(organization_id, &product_id)
+    }
+
     /// Creates the first owner and its organization-wide membership atomically.
     /// There is no default user or universal password.
     pub fn create_owner(
@@ -1100,6 +1638,173 @@ impl Db {
     }
 }
 
+fn required_text(
+    value: &str,
+    field: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<String, DataError> {
+    let value = value.trim();
+    let length = value.chars().count();
+    if length < min_chars || length > max_chars {
+        return Err(DataError::InvalidValue(format!(
+            "{field} must be between {min_chars} and {max_chars} characters"
+        )));
+    }
+    Ok(value.to_string())
+}
+
+fn optional_text(
+    value: Option<&str>,
+    field: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<Option<String>, DataError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let length = value.chars().count();
+    if length < min_chars || length > max_chars {
+        return Err(DataError::InvalidValue(format!(
+            "{field} must be between {min_chars} and {max_chars} characters"
+        )));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn validate_catalog_unit(value: &str) -> Result<(), DataError> {
+    if matches!(value, "piece" | "service" | "session" | "package") {
+        Ok(())
+    } else {
+        Err(DataError::InvalidValue("invalid catalog unit".into()))
+    }
+}
+
+fn validate_catalog_status(value: &str) -> Result<(), DataError> {
+    if matches!(value, "active" | "archived") {
+        Ok(())
+    } else {
+        Err(DataError::InvalidValue("invalid catalog status".into()))
+    }
+}
+
+fn validate_new_price(price: NewCatalogPrice) -> Result<ValidatedCatalogPrice, DataError> {
+    if price.amount_minor < 0 {
+        return Err(DataError::InvalidValue(
+            "price must be zero or greater".into(),
+        ));
+    }
+    if !(0..=10_000).contains(&price.tax_rate_bps) {
+        return Err(DataError::InvalidValue(
+            "tax rate must be between 0 and 10000 basis points".into(),
+        ));
+    }
+    let effective_from = price
+        .effective_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .map(|date| {
+                    date.with_timezone(&chrono::Utc)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                })
+                .map_err(|_| {
+                    DataError::InvalidValue("price effective date must be RFC 3339".into())
+                })
+        })
+        .transpose()?
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    Ok(ValidatedCatalogPrice {
+        amount_minor: price.amount_minor,
+        tax_rate_bps: price.tax_rate_bps,
+        price_includes_tax: price.price_includes_tax,
+        effective_from,
+    })
+}
+
+fn organization_currency(
+    conn: &rusqlite::Transaction<'_>,
+    organization_id: &str,
+) -> Result<String, DataError> {
+    conn.query_row(
+        "SELECT currency FROM organizations WHERE id = ?1",
+        params![organization_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| DataError::InvalidValue("the gym does not exist".into()))
+}
+
+fn ensure_unique_product_name(
+    conn: &rusqlite::Transaction<'_>,
+    organization_id: &str,
+    name: &str,
+    exclude_id: Option<&str>,
+) -> Result<(), DataError> {
+    let duplicate: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM catalog_products
+             WHERE organization_id = ?1
+               AND name = ?2 COLLATE NOCASE
+               AND (?3 IS NULL OR id <> ?3)
+         )",
+        params![organization_id, name, exclude_id],
+        |row| row.get(0),
+    )?;
+    if duplicate {
+        return Err(DataError::CatalogProductAlreadyExists);
+    }
+    Ok(())
+}
+
+fn ensure_unique_sku(
+    conn: &rusqlite::Transaction<'_>,
+    organization_id: &str,
+    sku: &str,
+    exclude_id: Option<&str>,
+) -> Result<(), DataError> {
+    let duplicate: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM catalog_variants
+             WHERE organization_id = ?1
+               AND sku = ?2 COLLATE NOCASE
+               AND (?3 IS NULL OR id <> ?3)
+         )",
+        params![organization_id, sku, exclude_id],
+        |row| row.get(0),
+    )?;
+    if duplicate {
+        return Err(DataError::CatalogSkuAlreadyExists);
+    }
+    Ok(())
+}
+
+fn ensure_unique_barcode(
+    conn: &rusqlite::Transaction<'_>,
+    organization_id: &str,
+    barcode: Option<&str>,
+    exclude_id: Option<&str>,
+) -> Result<(), DataError> {
+    let Some(barcode) = barcode else {
+        return Ok(());
+    };
+    let duplicate: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM catalog_variants
+             WHERE organization_id = ?1
+               AND barcode = ?2
+               AND (?3 IS NULL OR id <> ?3)
+         )",
+        params![organization_id, barcode, exclude_id],
+        |row| row.get(0),
+    )?;
+    if duplicate {
+        return Err(DataError::CatalogBarcodeAlreadyExists);
+    }
+    Ok(())
+}
 #[allow(clippy::too_many_arguments)]
 fn audit_event_hash(
     sequence: i64,
@@ -1197,7 +1902,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 4);
+        assert_eq!(second_status.schema_version, 5);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -1342,6 +2047,255 @@ mod tests {
                 "active"
             )
             .expect_err("closed site rejects active staff"),
+            DataError::InvalidValue(_)
+        ));
+    }
+
+    #[test]
+    fn catalog_prices_are_versioned_and_append_only() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+            .expect("creates owner");
+
+        let product = db
+            .create_catalog_item(
+                &organization_id,
+                &owner.id,
+                NewCatalogItem {
+                    name: "Membresía mensual".into(),
+                    category: Some("Membresías".into()),
+                    variant_name: "Mensual".into(),
+                    sku: "MEM-MEN".into(),
+                    barcode: Some("750000000001".into()),
+                    unit: "service".into(),
+                    cost_minor: 0,
+                    price: NewCatalogPrice {
+                        amount_minor: 10_000,
+                        tax_rate_bps: 1_600,
+                        price_includes_tax: true,
+                        effective_from: Some("2020-01-01T00:00:00Z".into()),
+                    },
+                },
+            )
+            .expect("creates product");
+        assert_eq!(product.variants.len(), 1);
+        let variant = &product.variants[0];
+        assert_eq!(variant.sku, "MEM-MEN");
+        assert_eq!(
+            variant
+                .current_price
+                .as_ref()
+                .map(|price| price.amount_minor),
+            Some(10_000)
+        );
+        let original_price_id = variant
+            .current_price
+            .as_ref()
+            .expect("initial price")
+            .id
+            .clone();
+
+        db.update_catalog_product(
+            &organization_id,
+            &product.id,
+            NewCatalogProductUpdate {
+                name: "Membresía mensual premium".into(),
+                category: Some("Membresías".into()),
+                status: "active".into(),
+            },
+        )
+        .expect("renames product");
+        let after_rename = db
+            .catalog_product(&organization_id, &product.id)
+            .expect("reads product");
+        assert_eq!(after_rename.name, "Membresía mensual premium");
+        assert_eq!(
+            after_rename.variants[0]
+                .current_price
+                .as_ref()
+                .map(|price| price.amount_minor),
+            Some(10_000)
+        );
+
+        db.add_catalog_price(
+            &organization_id,
+            &owner.id,
+            &variant.id,
+            NewCatalogPrice {
+                amount_minor: 12_000,
+                tax_rate_bps: 1_600,
+                price_includes_tax: true,
+                effective_from: Some("2020-06-01T02:00:00+02:00".into()),
+            },
+        )
+        .expect("adds a new price version");
+        let current = db
+            .catalog_product(&organization_id, &product.id)
+            .expect("reads product");
+        let current_price = current.variants[0]
+            .current_price
+            .as_ref()
+            .expect("current price");
+        assert_eq!(current_price.amount_minor, 12_000);
+        assert_ne!(current_price.id, original_price_id);
+        let stored_effective: String = db
+            .with_connection(|conn| {
+                conn.query_row(
+                    "SELECT effective_from FROM catalog_price_versions
+                     WHERE amount_minor = 12000",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(DataError::from)
+            })
+            .expect("reads normalized effective date");
+        assert_eq!(stored_effective, "2020-06-01T00:00:00Z");
+
+        db.add_catalog_price(
+            &organization_id,
+            &owner.id,
+            &variant.id,
+            NewCatalogPrice {
+                amount_minor: 13_000,
+                tax_rate_bps: 1_600,
+                price_includes_tax: true,
+                effective_from: Some("2999-01-01T00:00:00Z".into()),
+            },
+        )
+        .expect("adds a future price version");
+        let future = db
+            .catalog_product(&organization_id, &product.id)
+            .expect("reads product");
+        assert_eq!(
+            future.variants[0]
+                .current_price
+                .as_ref()
+                .map(|price| price.amount_minor),
+            Some(12_000),
+            "a future price must not become current yet"
+        );
+
+        let version_count: i64 = db
+            .with_connection(|conn| {
+                conn.query_row("SELECT count(*) FROM catalog_price_versions", [], |row| {
+                    row.get(0)
+                })
+                .map_err(DataError::from)
+            })
+            .expect("counts versions");
+        assert_eq!(version_count, 3);
+
+        let update = db.with_connection(|conn| {
+            conn.execute("UPDATE catalog_price_versions SET amount_minor = 1", [])
+                .map_err(DataError::from)
+        });
+        assert!(update.is_err(), "price versions must be immutable");
+        let delete = db.with_connection(|conn| {
+            conn.execute("DELETE FROM catalog_price_versions", [])
+                .map_err(DataError::from)
+        });
+        assert!(delete.is_err(), "price versions must not be deleted");
+    }
+
+    #[test]
+    fn catalog_rejects_duplicate_identifiers_and_archived_products() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+            .expect("creates owner");
+        let item = || NewCatalogItem {
+            name: "Agua".into(),
+            category: Some("Bebidas".into()),
+            variant_name: "600 ml".into(),
+            sku: "AGUA-600".into(),
+            barcode: Some("750000000002".into()),
+            unit: "piece".into(),
+            cost_minor: 500,
+            price: NewCatalogPrice {
+                amount_minor: 1_500,
+                tax_rate_bps: 1_600,
+                price_includes_tax: true,
+                effective_from: Some("2020-01-01T00:00:00Z".into()),
+            },
+        };
+        let product = db
+            .create_catalog_item(&organization_id, &owner.id, item())
+            .expect("creates product");
+
+        let mut duplicate_sku = item();
+        duplicate_sku.name = "Agua mineral".into();
+        duplicate_sku.barcode = None;
+        assert!(matches!(
+            db.create_catalog_item(&organization_id, &owner.id, duplicate_sku)
+                .expect_err("rejects duplicate SKU"),
+            DataError::CatalogSkuAlreadyExists
+        ));
+
+        let mut duplicate_barcode = item();
+        duplicate_barcode.name = "Agua gasificada".into();
+        duplicate_barcode.sku = "AGUA-600-GAS".into();
+        assert!(matches!(
+            db.create_catalog_item(&organization_id, &owner.id, duplicate_barcode)
+                .expect_err("rejects duplicate barcode"),
+            DataError::CatalogBarcodeAlreadyExists
+        ));
+
+        db.update_catalog_product(
+            &organization_id,
+            &product.id,
+            NewCatalogProductUpdate {
+                name: product.name.clone(),
+                category: product.category.clone(),
+                status: "archived".into(),
+            },
+        )
+        .expect("archives product");
+        assert!(matches!(
+            db.add_catalog_variant(
+                &organization_id,
+                &owner.id,
+                &product.id,
+                NewCatalogVariant {
+                    name: "1 L".into(),
+                    sku: "AGUA-1L".into(),
+                    barcode: None,
+                    unit: "piece".into(),
+                    cost_minor: 800,
+                    price: NewCatalogPrice {
+                        amount_minor: 2_500,
+                        tax_rate_bps: 1_600,
+                        price_includes_tax: true,
+                        effective_from: None,
+                    },
+                }
+            )
+            .expect_err("archived product rejects variants"),
+            DataError::InvalidValue(_)
+        ));
+        assert!(matches!(
+            db.add_catalog_price(
+                &organization_id,
+                &owner.id,
+                &product.variants[0].id,
+                NewCatalogPrice {
+                    amount_minor: 1_800,
+                    tax_rate_bps: 1_600,
+                    price_includes_tax: true,
+                    effective_from: None,
+                },
+            )
+            .expect_err("archived product rejects prices"),
             DataError::InvalidValue(_)
         ));
     }
