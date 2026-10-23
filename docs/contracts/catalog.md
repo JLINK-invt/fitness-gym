@@ -1,9 +1,9 @@
 # Contrato local · catálogo, precios e impuestos (Phase 3)
 
-- **Versión de contrato:** 1.5.0
+- **Versión de contrato:** 2.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v5 (`0005_catalog_pricing.sql`)
+- **Esquema:** v6 (`0006_single_site.sql`)
 
 ## Comandos
 
@@ -71,7 +71,8 @@ interface CatalogProduct {
 - La versión vigente es la de mayor `effective_from <= now`; si no existe,
   `currentPrice` es `null`.
 - La moneda se toma de `organizations.currency`; la UI no la envía.
-- Las ventas futuras deben guardar `price_version_id` y los importes aplicados.
+- Las ventas guardan `price_version_id` y los importes aplicados; ver
+  [`sales.md`](sales.md).
 
 ## Errores
 
@@ -95,6 +96,6 @@ No se guardan secretos ni datos personales en estos eventos.
 
 ## Fuera de alcance
 
-Inventario, combos, descuentos, listas de precios por sede, impuestos por
-producto con múltiples tasas y compras. Las ventas y devoluciones consumirán este
-contrato en los siguientes slices de Phase 3.
+Inventario, combos, descuentos, múltiples listas de precios, impuestos por
+producto con múltiples tasas y compras. Las ventas consumen este contrato;
+las devoluciones quedan para un slice posterior.

@@ -4,6 +4,7 @@
 - **Fecha:** 2026-10-20
 - **Decide:** Arquitectura de la aplicación
 - **Relacionado:** Phase 1
+- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin sedes)
 
 ## Contexto
 
@@ -17,7 +18,7 @@ robado o el backup filtrado son riesgos reales.
 
 1. **Un solo binario de escritorio** con Tauri v2, React/TypeScript y backend
    Rust. La UI solo habla con comandos Tauri tipados.
-2. **Una organización por instalación** y soporte de múltiples sedes. La base
+2. **Una organización por instalación**, sin sedes múltiples (ADR-0006). La base
    SQLite cifrada es la fuente de verdad; no hay servidor obligatorio.
 3. **Backend modular** con dependencias en una sola dirección:
    `gym-core` (dominio puro) ← `gym-data` / `gym-backup` ← app Tauri.

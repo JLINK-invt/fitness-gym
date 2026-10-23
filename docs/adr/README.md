@@ -6,10 +6,11 @@ Decisiones de la fundación desktop. Estado `Proposed` = lista para revisión;
 | ADR | Decisión | Estado |
 | --- | --- | --- |
 | [0001](0001-local-first-architecture.md) | Arquitectura local-first con Tauri, Rust modular y SQLite | Accepted |
-| [0002](0002-identity-and-authorization.md) | Identidad local, roles y autorización por sede | Accepted |
+| [0002](0002-identity-and-authorization.md) | Identidad local, roles y autorización | Accepted |
 | [0003](0003-encryption-and-key-custody.md) | SQLCipher y custodia de clave en keychain del SO | Accepted |
 | [0004](0004-backups-and-restore.md) | Backups cifrados, verificación y restauración | Accepted |
 | [0005](0005-immutable-audit.md) | Auditoría append-only con hash chain local | Accepted |
+| [0006](0006-single-site-installation.md) | Una instalación, un gimnasio; sin sedes | Accepted |
 
 Aprobados el 2026-10-20. El ADR-0002 fija valores iniciales de contraseña y
 bloqueo, revisables con el primer piloto. El ADR-0004 difiere el destino cloud y

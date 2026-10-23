@@ -1,6 +1,6 @@
 import type { Permission, SessionSummary } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "./components/Layout";
@@ -11,13 +11,14 @@ import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
 import { CatalogPage } from "./pages/CatalogPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
-import { SitesPage } from "./pages/SitesPage";
+import { SalesPage } from "./pages/SalesPage";
 import { StaffPage } from "./pages/StaffPage";
 import { api, isTauriRuntime } from "./lib/tauri";
 
 export function App() {
   const inTauri = isTauriRuntime();
   const queryClient = useQueryClient();
+  const [recoveryPending, setRecoveryPending] = useState(false);
 
   const session = useQuery<SessionSummary | null>({
     queryKey: ["session"],
@@ -47,12 +48,13 @@ export function App() {
     );
   }
 
-  if (!session.data) {
+  if (!session.data || recoveryPending) {
     return (
       <AuthPage
         onAuthenticated={(authenticated) => {
           queryClient.setQueryData(["session"], authenticated);
         }}
+        onRecoveryPendingChange={setRecoveryPending}
       />
     );
   }
@@ -78,6 +80,14 @@ export function App() {
           }
         />
         <Route
+          path="sales"
+          element={
+            <Guarded permission="operatePos">
+              <SalesPage />
+            </Guarded>
+          }
+        />
+        <Route
           path="catalog"
           element={
             <Guarded permission="manageCatalog">
@@ -90,14 +100,6 @@ export function App() {
           element={
             <Guarded permission="manageStaff">
               <StaffPage />
-            </Guarded>
-          }
-        />
-        <Route
-          path="sites"
-          element={
-            <Guarded permission="manageSettings">
-              <SitesPage />
             </Guarded>
           }
         />

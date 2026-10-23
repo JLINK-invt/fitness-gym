@@ -42,17 +42,11 @@ pub enum DataError {
     #[error("a user with that name already exists")]
     UserAlreadyExists,
 
-    #[error("a site with that name already exists")]
-    SiteAlreadyExists,
-
-    #[error("the site does not exist in this gym")]
-    SiteNotFound,
-
     #[error("the staff member does not exist in this gym")]
     StaffNotFound,
 
-    #[error("the site still has active staff")]
-    SiteHasActiveStaff,
+    #[error("the recovery code was already used or replaced")]
+    RecoveryCodeConflict,
 
     #[error("a catalog product with that name already exists")]
     CatalogProductAlreadyExists,

@@ -1,13 +1,13 @@
 # Contrato local · auditoría inmutable (Phase 2)
 
-- **Versión de contrato:** 1.5.0 (sin cambios de DTO; compatible con 1.4.0)
+- **Versión de contrato:** 2.2.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v4 (`0004_immutable_audit.sql`)
+- **Esquema:** v8 (`0008_owner_recovery.sql`)
 
 ## Objetivo
 
-Registrar actor, acción, recurso, resultado, sede, origen y correlación para
+Registrar actor, acción, recurso, resultado, origen y correlación para
 operaciones sensibles. Cada evento se encadena con el hash del anterior y la
 tabla rechaza `UPDATE` y `DELETE` por trigger.
 
@@ -18,10 +18,8 @@ tabla rechaza `UPDATE` y `DELETE` por trigger.
 | `list_audit_events` | `limit?` (1–200, default 100) | `AuditEventSummary[]` | `ViewAudit` |
 | `verify_audit_chain` | — | `AuditIntegrity` | `ViewAudit` |
 
-`list_audit_events` devuelve los eventos más recientes primero. El dueño ve todo
-el gimnasio; encargado y contabilidad solo ven eventos de su sede. Los eventos
-sin sede (por ejemplo un login fallido) no se muestran a roles con alcance de
-sede.
+`list_audit_events` devuelve los eventos más recientes primero. Todos los roles
+con `ViewAudit` ven los eventos de la instalación.
 
 ## DTOs
 
@@ -33,7 +31,6 @@ interface AuditEventSummary {
   sequence: number;
   actorId: string | null;
   actorName: string | null;
-  siteId: string | null;
   action: string;
   resource: string;
   result: AuditResult;
@@ -54,22 +51,26 @@ interface AuditIntegrity {
 `audit_events` conserva las columnas originales y agrega:
 
 - `sequence`: consecutivo por gimnasio, índice único `(organization_id, sequence)`.
-- `site_id`: sede del recurso o del actor cuando aplica.
 - `origin`: fuente del evento (`tauri` para comandos locales).
 - `prev_hash`: hash del evento anterior de la cadena.
 - `event_hash`: SHA-256 de los campos canónicos, incluido `prev_hash`.
 
 La migración 4 renumera los eventos heredados y los conserva con `origin =
-'legacy'` sin hash. La cadena verificable empieza en el primer evento posterior a
-la migración; los eventos heredados siguen siendo inmutables por trigger.
+'legacy'` sin hash. La migración 6 elimina la columna `site_id`, limpia los hashes
+existentes y reinicia la cadena con el formato canónico
+`fitness-gym-audit-v2`. La cadena verificable empieza en el primer evento posterior
+a esa migración; los eventos heredados siguen siendo inmutables por trigger.
 
 ## Acciones registradas
 
 - `auth.owner_created`, `auth.login`, `auth.logout`.
-- `site.created`, `site.updated`.
+- `auth.owner_recovery_generated`, `auth.owner_recovered`.
 - `staff.created`, `staff.updated`.
 - `access.simulated` solo cuando se inserta un evento nuevo (no en replay
   idempotente).
+- `catalog.product_created`, `catalog.variant_created`,
+  `catalog.product_updated`, `catalog.variant_updated` y `catalog.price_added`.
+- `sale.completed`, con `correlationId` igual al id de la venta.
 - `backup.created`.
 
 Las exportaciones y operaciones de finanzas/inventario se agregarán cuando esos
@@ -97,5 +98,5 @@ módulos existan.
 ## Fuera de alcance
 
 Exportación firmada, envío a un colector externo, retención automática y
-búsqueda avanzada. La consulta actual es por sede y límite, sin filtros por
-acción o fecha.
+búsqueda avanzada. La consulta actual es por límite, sin filtros por acción o
+fecha.

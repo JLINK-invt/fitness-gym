@@ -11,7 +11,7 @@ pub mod ids;
 pub mod rbac;
 
 pub use error::CoreError;
-pub use ids::{OrganizationId, SiteId, UserId};
+pub use ids::{OrganizationId, UserId};
 
 /// Version reported by the core module in health checks.
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");

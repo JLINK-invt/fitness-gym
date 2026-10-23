@@ -13,8 +13,11 @@ SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY versi
 PRAGMA integrity_check;
 ```
 
-La app expone el mismo estado en la pantalla de diagnóstico. Versión actual: 4
-(`0004_immutable_audit.sql`).
+La app expone el mismo estado en la pantalla de diagnóstico. Versión actual: 8
+(`0008_owner_recovery.sql`). La migración 6 elimina las sedes, limpia los hashes
+de auditoría y reinicia la cadena; la migración 7 agrega ventas y líneas
+append-only; la migración 8 agrega `users.recovery_code_hash`. Ninguna admite
+rollback automático: se revierten restaurando un snapshot anterior.
 
 ## Rollback
 
@@ -27,7 +30,6 @@ DROP TABLE IF EXISTS module_events;
 DROP TABLE IF EXISTS audit_events;
 DROP TABLE IF EXISTS backup_snapshots;
 DROP TABLE IF EXISTS staff_memberships;
-DROP TABLE IF EXISTS sites;
 DROP TABLE IF EXISTS organizations;
 DELETE FROM schema_migrations WHERE version = 1;
 PRAGMA user_version = 0;

@@ -4,6 +4,7 @@
 - **Fecha:** 2026-10-20
 - **Decide:** Identidad, sesión y permisos
 - **Relacionado:** Phase 1, Phase 2
+- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin alcance por sede)
 
 ## Contexto
 
@@ -15,36 +16,36 @@ alterar historial o un ex empleado con acceso al equipo.
 ## Decisión
 
 1. **Identidad local por organización.** Cada usuario tiene `user_id` UUID,
-   nombre, rol y alcance de sede. No se requiere correo ni nube.
+   nombre y rol. No se requiere correo ni nube.
 2. **Contraseña local** con Argon2id y salt único. Valores iniciales: mínimo 8
    caracteres (12 para el owner) y bloqueo de 5 minutos tras 5 intentos
    fallidos, con auditoría del evento.
 3. **Sesión en memoria** dentro del proceso Tauri. Sin tokens en el webview,
    `localStorage` ni cookies. Bloqueo automático por inactividad a los 15
    minutos (configurable por organización).
-4. **Roles V1:** `owner`, `manager`, `cashier`, `accounting`. Un usuario puede
-   tener una membresía por organización/sede; `site_id = NULL` significa
-   alcance de toda la organización y solo se permite a `owner`.
+4. **Roles V1:** `owner`, `manager`, `cashier`, `accounting`. Un usuario tiene
+   una membresía por organización. Un `manager` administra solo cajeros y
+   contabilidad; el `owner` administra a todos.
 5. **Autorización en Rust, no en la UI.** Cada comando valida permiso, estado de
-   membresía, organización y sede antes de tocar datos. La UI solo oculta
-   acciones; el backend siempre vuelve a decidir.
+   membresía y organización antes de tocar datos. La UI solo oculta acciones; el
+   backend siempre vuelve a decidir.
 6. **Denegado por defecto.** Un permiso no listado se rechaza. Toda denegación
    sensible se registra en `audit_events` con actor, recurso y correlación.
 7. **PIN rápido:** aplazado. Si se implementa, será un desbloqueo local sobre
    una sesión ya autenticada, nunca el único factor, con rate limit y auditoría.
 8. **Bootstrap:** en el primer arranque se crea el `owner` con contraseña. No
    existe usuario por defecto ni contraseña universal.
-9. **MFA y recuperación del dueño:** diferidos a Phase 5 (endurecimiento). No
-   bloquean la operación V1 porque el equipo es local, de un solo gimnasio, y el
-   dueño custodia su contraseña. Si se implementan, MFA será adicional (nunca
-   sustituto) y la recuperación exigirá presencia física más un factor de
-   recuperación auditable; no habrá reset por correo.
+9. **MFA y recuperación del dueño:** MFA sigue diferido a Phase 5. La
+   recuperación se implementó en V1 mediante un código de un solo uso mostrado al
+   crear la cuenta y regenerable por el dueño desde **Equipo**. El código se
+   guarda solo como hash Argon2id, se rota al usarlo y exige presencia física en
+   el equipo; no hay reset por correo ni autenticador.
 
 ## Consecuencias
 
-- El equipo debe custodiar la contraseña del owner; no hay "recuperar cuenta"
-  por correo ni reset automático. Perderla exige intervención de soporte con
-  acceso físico y un procedimiento auditado que se definirá en Phase 5.
+- El equipo debe custodiar la contraseña y el código de recuperación del owner.
+  No hay "recuperar cuenta" por correo ni reset automático. Si se pierden ambos,
+  solo queda restaurar un backup anterior o reinstalar en desarrollo.
 - Cambiar de cajero requiere login o bloqueo/desbloqueo; se medirá el costo en
   el vertical slice antes de añadir PIN.
 - La matriz de permisos es un contrato verificable en pruebas unitarias.
