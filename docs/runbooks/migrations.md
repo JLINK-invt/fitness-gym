@@ -13,11 +13,21 @@ SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY versi
 PRAGMA integrity_check;
 ```
 
-La app expone el mismo estado en la pantalla de diagnóstico. Versión actual: 8
-(`0008_owner_recovery.sql`). La migración 6 elimina las sedes, limpia los hashes
+La app expone el mismo estado en la pantalla de diagnóstico. Versión actual: 12
+(`0012_inventory.sql`). La migración 6 elimina las sedes, limpia los hashes
 de auditoría y reinicia la cadena; la migración 7 agrega ventas y líneas
-append-only; la migración 8 agrega `users.recovery_code_hash`. Ninguna admite
-rollback automático: se revierten restaurando un snapshot anterior.
+append-only; la migración 8 agrega `users.recovery_code_hash`; la migración 9
+agrega `cash_sessions` y enlaza las ventas nuevas con `cash_session_id`; la
+migración 10 agrega `cash_movements`, el motivo de diferencia y sus triggers de
+inmutabilidad; la migración 11 agrega devoluciones, sus líneas, el ledger
+inmutable y el backfill de ventas existentes al ledger; la migración 12 agrega
+movimientos de inventario, políticas de mínimo y la vista de balances; la
+migración 13 elimina ubicaciones y transferencias, conserva entradas, ventas,
+devoluciones y ajustes, y recrea los balances por variante; la migración 14
+agrega la clave de idempotencia y el hash de contenido por venta; la migración
+15 agrega idempotencia a devoluciones y la tabla append-only `payment_charges`
+para cargos y reembolsos conciliables. Ninguna admite rollback automático: se
+revierten restaurando un snapshot anterior.
 
 ## Rollback
 

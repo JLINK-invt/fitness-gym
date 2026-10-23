@@ -1,12 +1,16 @@
 import type {
+  CashSession,
   CatalogProduct,
   CatalogVariant,
   CreateSaleInput,
+  CreateSaleReturnInput,
   PaymentMethod,
   Sale,
+  SaleReturn,
 } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { api } from "../lib/tauri";
 
@@ -34,8 +38,41 @@ export function SalesPage() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashReceived, setCashReceived] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const saleAttempt = useRef({ fingerprint: "", key: crypto.randomUUID() });
+  const attemptFingerprint = JSON.stringify({
+    cart,
+    paymentMethod,
+    cashReceived,
+    paymentReference,
+  });
+  if (saleAttempt.current.fingerprint !== attemptFingerprint) {
+    saleAttempt.current = {
+      fingerprint: attemptFingerprint,
+      key: crypto.randomUUID(),
+    };
+  }
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Sale | null>(null);
+  const [returning, setReturning] = useState<Sale | null>(null);
+  const [returnQuantities, setReturnQuantities] = useState<Record<string, string>>({});
+  const [returnReason, setReturnReason] = useState("");
+  const [returnReference, setReturnReference] = useState("");
+  const [returnError, setReturnError] = useState<string | null>(null);
+  const returnAttempt = useRef({ fingerprint: "", key: crypto.randomUUID() });
+  const returnFingerprint = JSON.stringify({
+    saleId: returning?.id ?? "",
+    reason: returnReason,
+    quantities: returnQuantities,
+    paymentReference: returnReference,
+  });
+  if (returnAttempt.current.fingerprint !== returnFingerprint) {
+    returnAttempt.current = {
+      fingerprint: returnFingerprint,
+      key: crypto.randomUUID(),
+    };
+  }
+  const [lastReturn, setLastReturn] = useState<SaleReturn | null>(null);
 
   const catalog = useQuery<CatalogProduct[]>({
     queryKey: ["catalog"],
@@ -44,6 +81,14 @@ export function SalesPage() {
   const sales = useQuery<Sale[]>({
     queryKey: ["sales"],
     queryFn: api.listSales,
+  });
+  const returns = useQuery<SaleReturn[]>({
+    queryKey: ["sale-returns"],
+    queryFn: () => api.listSaleReturns(),
+  });
+  const cashSession = useQuery<CashSession | null>({
+    queryKey: ["cash-session"],
+    queryFn: api.currentCashSession,
   });
 
   const sellable = useMemo(
@@ -125,12 +170,110 @@ export function SalesPage() {
       setCashReceived("");
       setError(null);
       queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory-movements"] });
       queryClient.invalidateQueries({ queryKey: ["audit"] });
     },
     onError: (cause) => {
       setError(cause instanceof Error ? cause.message : "No se pudo registrar la venta.");
     },
   });
+
+  const createReturn = useMutation({
+    mutationFn: (input: CreateSaleReturnInput) => api.createSaleReturn(input),
+    onSuccess: (record) => {
+      setLastReturn(record);
+      setReturning(null);
+      setReturnQuantities({});
+      setReturnReason("");
+      setReturnReference("");
+      setReturnError(null);
+      queryClient.invalidateQueries({ queryKey: ["sales"] });
+      queryClient.invalidateQueries({ queryKey: ["sale-returns"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory-movements"] });
+      queryClient.invalidateQueries({ queryKey: ["audit"] });
+    },
+    onError: (cause) => {
+      setReturnError(
+        cause instanceof Error ? cause.message : "No se pudo registrar la devolución.",
+      );
+    },
+  });
+
+  const openReturn = (sale: Sale) => {
+    setReturning(sale);
+    setReturnReason("");
+    setReturnReference("");
+    setReturnError(null);
+    setLastReturn(null);
+    setReturnQuantities(
+      Object.fromEntries(sale.items.map((item) => [item.id, "0"])),
+    );
+  };
+
+  const returnLines = useMemo(() => {
+    if (!returning) {
+      return [];
+    }
+    return returning.items.map((item) => {
+      const remainingQuantity = item.quantity - item.refundedQuantity;
+      const parsed = Number(returnQuantities[item.id] ?? "0");
+      const requestedQuantity =
+        Number.isInteger(parsed) && parsed > 0
+          ? Math.min(parsed, remainingQuantity)
+          : 0;
+      const remainingAmount = item.totalMinor - item.refundedMinor;
+      const amountMinor =
+        requestedQuantity === 0
+          ? 0
+          : requestedQuantity === remainingQuantity
+            ? remainingAmount
+            : Math.floor((remainingAmount * requestedQuantity) / remainingQuantity);
+      return {
+        item,
+        remainingQuantity,
+        requestedQuantity,
+        amountMinor,
+      };
+    });
+  }, [returnQuantities, returning]);
+
+  const returnTotal = returnLines.reduce((total, line) => total + line.amountMinor, 0);
+  const reasonValid =
+    returnReason.trim().length > 0 && returnReason.trim().length <= 300;
+  const quantitiesValid = returnLines.every(
+    (line) => line.requestedQuantity <= line.remainingQuantity,
+  );
+  const returnValid =
+    Boolean(cashSession.data) &&
+    Boolean(returning) &&
+    returnTotal > 0 &&
+    reasonValid &&
+    quantitiesValid &&
+    !createReturn.isPending;
+
+  const submitReturn = () => {
+    if (!returning) {
+      return;
+    }
+    createReturn.mutate({
+      saleId: returning.id,
+      reason: returnReason.trim(),
+      items: returnLines
+        .filter((line) => line.requestedQuantity > 0)
+        .map((line) => ({
+          saleItemId: line.item.id,
+          quantity: line.requestedQuantity,
+        })),
+      paymentReference: returnReference.trim() || undefined,
+      idempotencyKey: returnAttempt.current.key,
+    });
+  };
 
   const add = (variantId: string) => {
     setError(null);
@@ -162,7 +305,7 @@ export function SalesPage() {
   };
 
   const complete = () => {
-    if (lines.length === 0) {
+    if (lines.length === 0 || !cashSession.data) {
       return;
     }
     const input: CreateSaleInput = {
@@ -171,6 +314,8 @@ export function SalesPage() {
         quantity: line.quantity,
       })),
       paymentMethod,
+      paymentReference: paymentReference.trim() || undefined,
+      idempotencyKey: saleAttempt.current.key,
     };
     if (paymentMethod === "cash" && cashReceived.trim()) {
       input.cashReceivedMinor = toMinor(cashReceived);
@@ -187,10 +332,34 @@ export function SalesPage() {
             Cobra productos y servicios con el precio vigente del catálogo.
           </p>
         </div>
-        <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-          {paymentLabels[paymentMethod]}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={[
+              "rounded-full px-3 py-1 text-xs font-medium",
+              cashSession.data
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-amber-50 text-amber-700",
+            ].join(" ")}
+          >
+            {cashSession.data ? "Caja abierta" : "Sin turno de caja"}
+          </span>
+          <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+            {paymentLabels[paymentMethod]}
+          </span>
+        </div>
       </header>
+
+      {cashSession.data === null && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+          <p>Abre la caja y registra el fondo inicial antes de cobrar.</p>
+          <Link
+            to="/cash"
+            className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+          >
+            Ir a Caja
+          </Link>
+        </section>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -324,6 +493,7 @@ export function SalesPage() {
                 onChange={(event) => {
                   setPaymentMethod(event.target.value as PaymentMethod);
                   setCashReceived("");
+                  setPaymentReference("");
                 }}
                 className={`${fieldClass} mt-1`}
               >
@@ -332,6 +502,24 @@ export function SalesPage() {
                 <option value="point">Terminal Point</option>
               </select>
             </label>
+
+            {paymentMethod !== "cash" && (
+              <label className="block text-sm font-medium text-slate-700">
+                Referencia del pago
+                <input
+                  value={paymentReference}
+                  onChange={(event) => setPaymentReference(event.target.value)}
+                  maxLength={120}
+                  placeholder={
+                    paymentMethod === "point" ? "Folio de la terminal" : "Folio o clave bancaria"
+                  }
+                  className={`${fieldClass} mt-1`}
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Opcional. Se usa para conciliar el cobro.
+                </span>
+              </label>
+            )}
 
             {paymentMethod === "cash" && (
               <label className="block text-sm font-medium text-slate-700">
@@ -361,10 +549,16 @@ export function SalesPage() {
             <button
               type="button"
               onClick={complete}
-              disabled={create.isPending || lines.length === 0 || !cashIsValid}
+              disabled={
+                create.isPending || lines.length === 0 || !cashIsValid || !cashSession.data
+              }
               className={`${primaryButton} w-full`}
             >
-              {create.isPending ? "Registrando…" : "Completar venta"}
+              {create.isPending
+                ? "Registrando…"
+                : cashSession.data
+                  ? "Completar venta"
+                  : "Abre la caja para cobrar"}
             </button>
           </div>
         </section>
@@ -389,6 +583,18 @@ export function SalesPage() {
         </section>
       )}
 
+      {lastReturn && (
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-800">
+            Devolución registrada
+          </h2>
+          <p className="mt-1 text-sm text-emerald-900">
+            {formatMinor(lastReturn.totalMinor, lastReturn.currency)} devueltos por{" "}
+            {paymentLabels[lastReturn.refundMethod].toLowerCase()}. Motivo: {lastReturn.reason}
+          </p>
+        </section>
+      )}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
           Ventas recientes
@@ -399,26 +605,190 @@ export function SalesPage() {
           <p className="mt-4 text-sm text-slate-500">Todavía no hay ventas registradas.</p>
         ) : (
           <ul className="mt-3 divide-y divide-slate-100">
-            {(sales.data ?? []).map((sale) => (
-              <li key={sale.id} className="flex flex-wrap items-center gap-3 py-3">
+            {(sales.data ?? []).map((sale) => {
+              const fullyReturned = sale.refundedMinor >= sale.totalMinor;
+              return (
+                <li key={sale.id} className="flex flex-wrap items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">
+                      {formatMinor(sale.totalMinor, sale.currency)} ·{" "}
+                      {paymentLabels[sale.paymentMethod]}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {new Date(sale.createdAt).toLocaleString("es-MX")} ·{" "}
+                      {sale.items.reduce((count, item) => count + item.quantity, 0)} artículos
+                      {sale.soldByName ? ` · ${sale.soldByName}` : ""}
+                      {sale.refundedMinor > 0
+                        ? ` · Devuelto ${formatMinor(sale.refundedMinor, sale.currency)}`
+                        : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReceipt(sale)}
+                    className={secondaryButton}
+                  >
+                    Ver ticket
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openReturn(sale)}
+                    disabled={!cashSession.data || fullyReturned}
+                    className={secondaryButton}
+                  >
+                    {fullyReturned ? "Devuelta" : "Devolver"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {returning && (
+        <section className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Devolución de venta
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Venta {returning.id.slice(0, 8)} ·{" "}
+                {formatMinor(returning.totalMinor, returning.currency)} ·{" "}
+                {paymentLabels[returning.paymentMethod]}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setReturning(null);
+                setReturnError(null);
+              }}
+              className={secondaryButton}
+            >
+              Cerrar
+            </button>
+          </div>
+
+          {!cashSession.data && (
+            <p className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Abre un turno de caja para registrar la devolución y reflejar la salida
+              de efectivo.
+            </p>
+          )}
+
+          <ul className="mt-4 divide-y divide-slate-100">
+            {returnLines.map(({ item, remainingQuantity, amountMinor }) => (
+              <li
+                key={item.id}
+                className="flex flex-wrap items-center gap-3 py-3"
+              >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {formatMinor(sale.totalMinor, sale.currency)} ·{" "}
-                    {paymentLabels[sale.paymentMethod]}
+                  <p className="truncate text-sm font-medium">{item.productName}</p>
+                  <p className="truncate text-xs text-slate-500">
+                    {item.variantName} · {item.sku}
                   </p>
-                  <p className="text-xs text-slate-500">
-                    {new Date(sale.createdAt).toLocaleString("es-MX")} ·{" "}
-                    {sale.items.reduce((count, item) => count + item.quantity, 0)} artículos
-                    {sale.soldByName ? ` · ${sale.soldByName}` : ""}
+                  <p className="mt-1 text-xs text-slate-500">
+                    Vendidos: {item.quantity} · Devueltos: {item.refundedQuantity} ·
+                    Disponibles: {remainingQuantity}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setReceipt(sale)}
-                  className={secondaryButton}
-                >
-                  Ver ticket
-                </button>
+                <label className="text-xs font-medium text-slate-600">
+                  Cantidad
+                  <input
+                    type="number"
+                    min={0}
+                    max={remainingQuantity}
+                    step={1}
+                    value={returnQuantities[item.id] ?? "0"}
+                    onChange={(event) =>
+                      setReturnQuantities((current) => ({
+                        ...current,
+                        [item.id]: event.target.value,
+                      }))
+                    }
+                    disabled={remainingQuantity === 0}
+                    aria-label={`Cantidad a devolver ${item.productName}`}
+                    className={`${fieldClass} mt-1 w-24`}
+                  />
+                </label>
+                <span className="w-24 text-right text-sm font-semibold tabular-nums">
+                  {formatMinor(amountMinor, returning.currency)}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-4 border-t border-slate-200 pt-3">
+            <label className="block max-w-xl flex-1 text-sm font-medium text-slate-700">
+              Motivo de la devolución
+              <textarea
+                value={returnReason}
+                onChange={(event) => setReturnReason(event.target.value)}
+                rows={2}
+                maxLength={300}
+                placeholder="Producto dañado, cobro duplicado, cancelación…"
+                className={`${fieldClass} mt-1`}
+              />
+            </label>
+            {returning.paymentMethod !== "cash" && (
+              <label className="block text-sm font-medium text-slate-700">
+                Referencia de la devolución
+                <input
+                  value={returnReference}
+                  onChange={(event) => setReturnReference(event.target.value)}
+                  maxLength={120}
+                  placeholder="Folio de la terminal o transferencia"
+                  className={`${fieldClass} mt-1`}
+                />
+              </label>
+            )}
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-wide text-slate-500">
+                Devolución total
+              </p>
+              <p className="text-lg font-semibold tabular-nums">
+                {formatMinor(returnTotal, returning.currency)}
+              </p>
+            </div>
+          </div>
+
+          {returnError && <p className="mt-2 text-sm text-red-600">{returnError}</p>}
+
+          <button
+            type="button"
+            onClick={submitReturn}
+            disabled={!returnValid}
+            className={`${primaryButton} mt-3`}
+          >
+            {createReturn.isPending ? "Registrando…" : "Registrar devolución"}
+          </button>
+        </section>
+      )}
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Devoluciones recientes
+        </h2>
+        {returns.isLoading ? (
+          <p className="mt-4 text-sm text-slate-500">Cargando devoluciones…</p>
+        ) : (returns.data ?? []).length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">
+            Todavía no hay devoluciones registradas.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {(returns.data ?? []).map((record) => (
+              <li key={record.id} className="py-3 text-sm">
+                <p className="font-medium">
+                  {formatMinor(record.totalMinor, record.currency)} ·{" "}
+                  {paymentLabels[record.refundMethod]} · {record.reason}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {new Date(record.createdAt).toLocaleString("es-MX")} · Venta{" "}
+                  {record.saleId.slice(0, 8)}
+                  {record.authorizedByName ? ` · ${record.authorizedByName}` : ""}
+                </p>
               </li>
             ))}
           </ul>
@@ -483,6 +853,7 @@ function Receipt({ sale }: { sale: Sale }) {
         {sale.changeMinor != null
           ? ` · Cambio ${formatMinor(sale.changeMinor, sale.currency)}`
           : ""}
+        {sale.paymentReference ? ` · Ref. ${sale.paymentReference}` : ""}
       </p>
       {sale.soldByName && (
         <p className="mt-1 text-xs text-slate-500">Atendió: {sale.soldByName}</p>

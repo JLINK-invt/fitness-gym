@@ -160,7 +160,7 @@ Fronteras:
 | Cajero invoca comandos de finanzas/backups | Autorización obligatoria en Rust, denegado por defecto | Implementado en los comandos actuales |
 | XSS en el webview invoca IPC arbitrario | CSP estricta, sin contenido remoto, allowlist de comandos | Parcial |
 | Acceso a shell/filesystem desde la UI | Sin plugins shell/fs; solo comandos propios | Implementado |
-| Cruce de organización | Filtro por `organization_id` en cada consulta | Implementado en personal; extender a módulos operativos |
+| Cruce de organización | Filtro por `organization_id` en cada consulta | Implementado en auth, personal, catálogo, ventas y caja |
 | Encargado edita a otro encargado o al dueño | Roles permitidos y rol actual validados en Rust | Implementado |
 | Path traversal en restore | Se exige nombre de archivo simple dentro de `backups/` | Implementado |
 
@@ -190,6 +190,10 @@ Fronteras:
 7. **Insider borra ventas:** `sales` y `sale_items` rechazan `UPDATE` y
    `DELETE` por trigger; una corrección futura exigirá un documento
    compensatorio auditado.
+8. **Cajero oculta un faltante:** el cierre compara el efectivo contado con el
+   esperado, exige un motivo cuando hay diferencia y guarda actor, hora y motivo.
+   `cash_sessions` no admite borrado ni reapertura; los ingresos y gastos son
+   append-only. Un faltante requiere revisión y queda visible en el historial.
 
 ## 6.1 Integraciones futuras modeladas
 

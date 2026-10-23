@@ -7,14 +7,31 @@ import type {
   AddCatalogVariantInput,
   AuditIntegrity,
   BackupSummary,
+  CashMovement,
+  CashSession,
   CatalogProduct,
+  CloseCashSessionInput,
   CreateCatalogItemInput,
   CreateSaleInput,
+  CreateSaleReturnInput,
+  AdjustInventoryInput,
+  FinancialReport,
+  FinancialReportExport,
+  FinancialReportInput,
   HealthReport,
+  InventoryItem,
+  InventoryMovement,
+  ListPaymentChargesInput,
+  OpenCashSessionInput,
+  PaymentCharge,
+  RecordCashMovementInput,
+  RecordInventoryEntryInput,
+  UpdateInventoryThresholdInput,
   RecoveryCode,
   RecoveryKit,
   RestoreOutcome,
   Sale,
+  SaleReturn,
   SessionSummary,
   SetupState,
   StaffRole,
@@ -68,6 +85,38 @@ export const api = {
     invoke<CatalogProduct>("add_catalog_price", { input }),
   listSales: () => invoke<Sale[]>("list_sales"),
   createSale: (input: CreateSaleInput) => invoke<Sale>("create_sale", { input }),
+  listSaleReturns: (saleId?: string) =>
+    invoke<SaleReturn[]>("list_sale_returns", { saleId: saleId ?? null }),
+  createSaleReturn: (input: CreateSaleReturnInput) =>
+    invoke<SaleReturn>("create_sale_return", { input }),
+  listPaymentCharges: (input: ListPaymentChargesInput = {}) =>
+    invoke<PaymentCharge[]>("list_payment_charges", { input }),
+  financialReport: (input: FinancialReportInput) =>
+    invoke<FinancialReport>("financial_report", { input }),
+  exportFinancialReportCsv: (input: FinancialReportInput) =>
+    invoke<FinancialReportExport>("export_financial_report_csv", { input }),
+  listInventory: () => invoke<InventoryItem[]>("list_inventory"),
+  listInventoryMovements: (options?: { variantId?: string; limit?: number }) =>
+    invoke<InventoryMovement[]>("list_inventory_movements", {
+      variantId: options?.variantId ?? null,
+      limit: options?.limit ?? null,
+    }),
+  recordInventoryEntry: (input: RecordInventoryEntryInput) =>
+    invoke<InventoryMovement>("record_inventory_entry", { input }),
+  adjustInventory: (input: AdjustInventoryInput) =>
+    invoke<InventoryMovement>("adjust_inventory", { input }),
+  updateInventoryThreshold: (input: UpdateInventoryThresholdInput) =>
+    invoke<InventoryItem>("update_inventory_threshold", { input }),
+  currentCashSession: () => invoke<CashSession | null>("current_cash_session"),
+  listCashSessions: () => invoke<CashSession[]>("list_cash_sessions"),
+  openCashSession: (input: OpenCashSessionInput) =>
+    invoke<CashSession>("open_cash_session", { input }),
+  closeCashSession: (input: CloseCashSessionInput) =>
+    invoke<CashSession>("close_cash_session", { input }),
+  listCashMovements: (sessionId: string) =>
+    invoke<CashMovement[]>("list_cash_movements", { sessionId }),
+  recordCashMovement: (input: RecordCashMovementInput) =>
+    invoke<CashMovement>("record_cash_movement", { input }),
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),

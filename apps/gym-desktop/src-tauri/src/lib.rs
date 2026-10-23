@@ -4,12 +4,17 @@ use gym_backup::{
 };
 use gym_contracts::{
     AccessDecision, AccessEventSummary, AccessRequest, AddCatalogPriceInput,
-    AddCatalogVariantInput, ApiError, AuditEventSummary, AuditIntegrity, AuditResult,
-    BackupSummary, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
-    CatalogVariant, CreateCatalogItemInput, CreateSaleInput, ErrorCode, HealthReport, HealthStatus,
-    ModuleHealth, PaymentMethod, RecoveryCode, RecoveryKit, RestoreOutcome, Sale, SaleItem,
+    AddCatalogVariantInput, AdjustInventoryInput, ApiError, AuditEventSummary, AuditIntegrity,
+    AuditResult, BackupSummary, CashMovement, CashMovementType, CashSession, CashSessionStatus,
+    CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit, CatalogVariant,
+    CloseCashSessionInput, CreateCatalogItemInput, CreateSaleInput, CreateSaleReturnInput,
+    ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput, HealthReport,
+    HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
+    ListPaymentChargesInput, ModuleHealth, OpenCashSessionInput, PaymentCharge, PaymentMethod,
+    PaymentMethodTotal, ProductSalesTotal, RecordCashMovementInput, RecordInventoryEntryInput,
+    RecoveryCode, RecoveryKit, RestoreOutcome, Sale, SaleItem, SaleReturn, SaleReturnItem,
     SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary, UpdateCatalogProductInput,
-    UpdateCatalogVariantInput, CONTRACT_VERSION,
+    UpdateCatalogVariantInput, UpdateInventoryThresholdInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
@@ -22,10 +27,14 @@ use gym_core::{
     CORE_VERSION, SERVICE_NAME,
 };
 use gym_data::{
-    sha256_hex, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, DataError, Db,
-    DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider, NewCatalogItem,
-    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewSale,
-    NewSaleItem, SaleItemRecord, SaleRecord,
+    sha256_hex, CashMovementRecord, CashSessionRecord, CatalogPriceRecord, CatalogProductRecord,
+    CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider,
+    FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord, InventoryMovementRecord,
+    KeyProvider, KeyringKeyProvider, NewCashMovement, NewCatalogItem, NewCatalogPrice,
+    NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewInventoryAdjustment,
+    NewInventoryEntry, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, PaymentChargeRecord,
+    PaymentMethodTotalRecord, ProductSalesRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord,
+    SaleReturnRecord,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -41,6 +50,7 @@ const KEYRING_ACCOUNT: &str = "database-key";
 struct AppPaths {
     db_path: PathBuf,
     backups_dir: PathBuf,
+    exports_dir: PathBuf,
 }
 
 fn load_or_migrate_key(data_dir: &Path) -> Result<DbKey, String> {
@@ -142,6 +152,13 @@ impl AuthState {
     }
 
     fn authorize(&mut self, permission: Permission) -> Result<gym_core::auth::Session, ApiError> {
+        self.authorize_any(&[permission])
+    }
+
+    fn authorize_any(
+        &mut self,
+        permissions: &[Permission],
+    ) -> Result<gym_core::auth::Session, ApiError> {
         if self.session_expired() {
             self.session = None;
             return Err(ApiError::new(
@@ -155,12 +172,15 @@ impl AuthState {
         })?;
         active.last_seen = Instant::now();
         let session = active.session.clone();
-        rbac::authorize(session.role, permission).map_err(|_| {
-            ApiError::new(
+        let allowed = permissions
+            .iter()
+            .any(|permission| rbac::authorize(session.role, *permission).is_ok());
+        if !allowed {
+            return Err(ApiError::new(
                 ErrorCode::Unauthorized,
                 "tu rol no permite realizar esta acción",
-            )
-        })?;
+            ));
+        }
         Ok(session)
     }
 
@@ -232,6 +252,19 @@ impl AppState {
             )
         })?;
         auth.authorize(permission)
+    }
+
+    fn authorize_any(
+        &self,
+        permissions: &[Permission],
+    ) -> Result<gym_core::auth::Session, ApiError> {
+        let mut auth = self.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        auth.authorize_any(permissions)
     }
 
     fn clear_session(&self) {
@@ -449,6 +482,8 @@ fn sale_item(record: SaleItemRecord) -> SaleItem {
         subtotal_minor: record.subtotal_minor,
         tax_minor: record.tax_minor,
         total_minor: record.total_minor,
+        refunded_quantity: record.refunded_quantity,
+        refunded_minor: record.refunded_minor,
     }
 }
 
@@ -459,12 +494,234 @@ fn sale(record: SaleRecord) -> Sale {
         subtotal_minor: record.subtotal_minor,
         tax_minor: record.tax_minor,
         total_minor: record.total_minor,
+        refunded_minor: record.refunded_minor,
         payment_method: payment_method(&record.payment_method),
         cash_received_minor: record.cash_received_minor,
         change_minor: record.change_minor,
         sold_by: record.sold_by,
         sold_by_name: record.sold_by_name,
+        cash_session_id: record.cash_session_id,
+        payment_reference: record.payment_reference,
         items: record.items.into_iter().map(sale_item).collect(),
+        created_at: record.created_at,
+    }
+}
+
+fn sale_return_item(record: SaleReturnItemRecord) -> SaleReturnItem {
+    SaleReturnItem {
+        id: record.id,
+        sale_item_id: record.sale_item_id,
+        product_name: record.product_name,
+        variant_name: record.variant_name,
+        sku: record.sku,
+        quantity: record.quantity,
+        amount_minor: record.amount_minor,
+    }
+}
+
+fn sale_return(record: SaleReturnRecord) -> SaleReturn {
+    SaleReturn {
+        id: record.id,
+        sale_id: record.sale_id,
+        cash_session_id: record.cash_session_id,
+        currency: record.currency,
+        refund_method: payment_method(&record.refund_method),
+        total_minor: record.total_minor,
+        reason: record.reason,
+        authorized_by: record.authorized_by,
+        authorized_by_name: record.authorized_by_name,
+        payment_reference: record.payment_reference,
+        created_at: record.created_at,
+        items: record.items.into_iter().map(sale_return_item).collect(),
+    }
+}
+
+fn payment_charge(record: PaymentChargeRecord) -> PaymentCharge {
+    PaymentCharge {
+        id: record.id,
+        sale_id: record.sale_id,
+        sale_return_id: record.sale_return_id,
+        kind: record.kind,
+        method: payment_method(&record.method),
+        provider: record.provider,
+        status: record.status,
+        amount_minor: record.amount_minor,
+        currency: record.currency,
+        external_reference: record.external_reference,
+        created_at: record.created_at,
+    }
+}
+
+fn payment_method_total(record: PaymentMethodTotalRecord) -> PaymentMethodTotal {
+    PaymentMethodTotal {
+        payment_method: payment_method(&record.payment_method),
+        sales_count: record.sales_count,
+        gross_sales_minor: record.gross_sales_minor,
+        refunds_count: record.refunds_count,
+        refunded_minor: record.refunded_minor,
+        net_sales_minor: record.net_sales_minor,
+    }
+}
+
+fn product_sales_total(record: ProductSalesRecord) -> ProductSalesTotal {
+    ProductSalesTotal {
+        variant_id: record.variant_id,
+        product_name: record.product_name,
+        variant_name: record.variant_name,
+        sku: record.sku,
+        unit: record.unit,
+        sold_units: record.sold_units,
+        refunded_units: record.refunded_units,
+        net_units: record.net_units,
+        gross_sales_minor: record.gross_sales_minor,
+        refunded_minor: record.refunded_minor,
+        net_sales_minor: record.net_sales_minor,
+        cost_minor: record.cost_minor,
+        margin_minor: record.margin_minor,
+    }
+}
+
+fn inventory_adjustment_total(record: InventoryAdjustmentRecord) -> InventoryAdjustmentTotal {
+    InventoryAdjustmentTotal {
+        variant_id: record.variant_id,
+        product_name: record.product_name,
+        variant_name: record.variant_name,
+        sku: record.sku,
+        units_delta: record.units_delta,
+        cost_minor: record.cost_minor,
+    }
+}
+
+fn financial_report_contract(record: FinancialReportRecord) -> FinancialReport {
+    FinancialReport {
+        from: record.from,
+        to: record.to,
+        generated_at: record.generated_at,
+        currency: record.currency,
+        sales_count: record.sales_count,
+        gross_sales_minor: record.gross_sales_minor,
+        tax_minor: record.tax_minor,
+        refunds_count: record.refunds_count,
+        refunded_minor: record.refunded_minor,
+        net_sales_minor: record.net_sales_minor,
+        average_sale_minor: record.average_sale_minor,
+        payment_methods: record
+            .payment_methods
+            .into_iter()
+            .map(payment_method_total)
+            .collect(),
+        cash_sessions_count: record.cash_sessions_count,
+        open_cash_sessions: record.open_cash_sessions,
+        closed_cash_sessions: record.closed_cash_sessions,
+        cash_difference_minor: record.cash_difference_minor,
+        cash_difference_abs_minor: record.cash_difference_abs_minor,
+        product_sales: record
+            .product_sales
+            .into_iter()
+            .map(product_sales_total)
+            .collect(),
+        inventory_adjustments: record
+            .inventory_adjustments
+            .into_iter()
+            .map(inventory_adjustment_total)
+            .collect(),
+    }
+}
+
+fn inventory_item(record: InventoryItemRecord) -> InventoryItem {
+    InventoryItem {
+        variant_id: record.variant_id,
+        product_name: record.product_name,
+        variant_name: record.variant_name,
+        sku: record.sku,
+        unit: record.unit,
+        stock: record.stock,
+        value_minor: record.value_minor,
+        avg_unit_cost_minor: record.avg_unit_cost_minor,
+        min_stock: record.min_stock,
+        low_stock: record.low_stock,
+    }
+}
+
+fn inventory_movement(record: InventoryMovementRecord) -> InventoryMovement {
+    InventoryMovement {
+        id: record.id,
+        variant_id: record.variant_id,
+        movement_type: record.movement_type,
+        quantity_delta: record.quantity_delta,
+        unit_cost_minor: record.unit_cost_minor,
+        total_cost_minor: record.total_cost_minor,
+        source_type: record.source_type,
+        source_id: record.source_id,
+        reference: record.reference,
+        note: record.note,
+        authorized_by: record.authorized_by,
+        authorized_by_name: record.authorized_by_name,
+        created_at: record.created_at,
+    }
+}
+
+fn cash_session_status(value: &str) -> CashSessionStatus {
+    match value {
+        "closed" => CashSessionStatus::Closed,
+        _ => CashSessionStatus::Open,
+    }
+}
+
+fn cash_session(record: CashSessionRecord) -> CashSession {
+    CashSession {
+        id: record.id,
+        status: cash_session_status(&record.status),
+        currency: record.currency,
+        opening_amount_minor: record.opening_amount_minor,
+        expected_cash_minor: record.expected_cash_minor,
+        cash_sales_minor: record.cash_sales_minor,
+        sales_count: record.sales_count,
+        cash_income_minor: record.cash_income_minor,
+        income_minor: record.income_minor,
+        cash_expense_minor: record.cash_expense_minor,
+        expense_minor: record.expense_minor,
+        cash_refunds_minor: record.cash_refunds_minor,
+        refunded_minor: record.refunded_minor,
+        refunds_count: record.refunds_count,
+        movements_count: record.movements_count,
+        counted_amount_minor: record.counted_amount_minor,
+        difference_minor: record.difference_minor,
+        difference_reason: record.difference_reason,
+        opened_by: record.opened_by,
+        opened_by_name: record.opened_by_name,
+        opened_at: record.opened_at,
+        closed_by: record.closed_by,
+        closed_by_name: record.closed_by_name,
+        closed_at: record.closed_at,
+    }
+}
+
+fn cash_movement_type(value: &str) -> CashMovementType {
+    match value {
+        "expense" => CashMovementType::Expense,
+        _ => CashMovementType::Income,
+    }
+}
+
+fn cash_movement_type_str(value: CashMovementType) -> &'static str {
+    match value {
+        CashMovementType::Income => "income",
+        CashMovementType::Expense => "expense",
+    }
+}
+
+fn cash_movement(record: CashMovementRecord) -> CashMovement {
+    CashMovement {
+        id: record.id,
+        cash_session_id: record.cash_session_id,
+        movement_type: cash_movement_type(&record.movement_type),
+        category: record.category,
+        amount_minor: record.amount_minor,
+        payment_method: payment_method(&record.payment_method),
+        evidence: record.evidence,
+        authorized_by: record.authorized_by,
+        authorized_by_name: record.authorized_by_name,
         created_at: record.created_at,
     }
 }
@@ -498,6 +755,68 @@ fn catalog_api_error(error: DataError) -> ApiError {
         DataError::InvalidValue(message) => ApiError::invalid(message),
         other => ApiError::new(ErrorCode::Storage, "no se pudo guardar el catálogo")
             .with_details(other.to_string()),
+    }
+}
+
+fn cash_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::CashSessionAlreadyOpen => {
+            ApiError::invalid("ya hay un turno de caja abierto en este gimnasio")
+        }
+        DataError::CashSessionNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el turno de caja no existe")
+        }
+        DataError::CashSessionRequired => {
+            ApiError::invalid("abre la caja antes de registrar una venta")
+        }
+        DataError::CashSessionNotOpen => ApiError::invalid("el turno de caja ya está cerrado"),
+        DataError::CashMovementNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el movimiento de caja no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo guardar el turno de caja")
+            .with_details(other.to_string()),
+    }
+}
+
+fn inventory_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::CatalogVariantNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la variante no existe")
+        }
+        DataError::InventoryMovementNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el movimiento de inventario no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo guardar el inventario")
+            .with_details(other.to_string()),
+    }
+}
+
+fn sale_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::CatalogProductNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el producto no existe")
+        }
+        DataError::CatalogVariantNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la variante no existe")
+        }
+        DataError::CashSessionRequired => {
+            ApiError::invalid("abre la caja antes de registrar una venta o devolución")
+        }
+        DataError::SaleIdempotencyConflict => ApiError::invalid(
+            "la clave de idempotencia ya se usó con otra operación; inicia un intento nuevo",
+        ),
+        DataError::SaleNotFound => ApiError::new(ErrorCode::NotFound, "la venta no existe"),
+        DataError::SaleReturnNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la devolución no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo registrar la operación de venta",
+        )
+        .with_details(other.to_string()),
     }
 }
 
@@ -1428,10 +1747,12 @@ fn create_sale(input: CreateSaleInput, state: State<'_, AppState>) -> Result<Sal
             .collect(),
         payment_method: payment_method_str(input.payment_method).to_string(),
         cash_received_minor: input.cash_received_minor,
+        payment_reference: input.payment_reference,
+        idempotency_key: input.idempotency_key,
     };
     let record = db
         .create_sale(&session.organization_id, &session.user_id, new_sale)
-        .map_err(catalog_api_error)?;
+        .map_err(sale_api_error)?;
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
@@ -1442,6 +1763,307 @@ fn create_sale(input: CreateSaleInput, state: State<'_, AppState>) -> Result<Sal
         Some(&record.id),
     );
     Ok(sale(record))
+}
+
+#[tauri::command]
+fn list_sale_returns(
+    sale_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SaleReturn>, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    db.list_sale_returns(&session.organization_id, sale_id.as_deref(), 50)
+        .map_err(sale_api_error)
+        .map(|returns| returns.into_iter().map(sale_return).collect())
+}
+
+#[tauri::command]
+fn create_sale_return(
+    input: CreateSaleReturnInput,
+    state: State<'_, AppState>,
+) -> Result<SaleReturn, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let record = db
+        .create_sale_return(
+            &session.organization_id,
+            &session.user_id,
+            NewSaleReturn {
+                sale_id: input.sale_id,
+                reason: input.reason,
+                items: input
+                    .items
+                    .into_iter()
+                    .map(|item| NewSaleReturnItem {
+                        sale_item_id: item.sale_item_id,
+                        quantity: item.quantity,
+                    })
+                    .collect(),
+                payment_reference: input.payment_reference,
+                idempotency_key: input.idempotency_key,
+            },
+        )
+        .map_err(sale_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "sale.returned",
+        "sale_return",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(sale_return(record))
+}
+
+#[tauri::command]
+fn list_payment_charges(
+    input: ListPaymentChargesInput,
+    state: State<'_, AppState>,
+) -> Result<Vec<PaymentCharge>, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.list_payment_charges(
+        &session.organization_id,
+        input.sale_id.as_deref(),
+        input.external_reference.as_deref(),
+        input.limit.unwrap_or(50),
+    )
+    .map_err(sale_api_error)
+    .map(|charges| charges.into_iter().map(payment_charge).collect())
+}
+
+#[tauri::command]
+fn list_inventory(state: State<'_, AppState>) -> Result<Vec<InventoryItem>, ApiError> {
+    let session = state.authorize(Permission::ManageInventory)?;
+    let db = state.db()?;
+    db.list_inventory(&session.organization_id)
+        .map_err(inventory_api_error)
+        .map(|items| items.into_iter().map(inventory_item).collect())
+}
+
+#[tauri::command]
+fn list_inventory_movements(
+    variant_id: Option<String>,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<InventoryMovement>, ApiError> {
+    let session = state.authorize(Permission::ManageInventory)?;
+    let db = state.db()?;
+    db.list_inventory_movements(
+        &session.organization_id,
+        variant_id.as_deref(),
+        limit.unwrap_or(50),
+    )
+    .map_err(inventory_api_error)
+    .map(|movements| movements.into_iter().map(inventory_movement).collect())
+}
+
+#[tauri::command]
+fn record_inventory_entry(
+    input: RecordInventoryEntryInput,
+    state: State<'_, AppState>,
+) -> Result<InventoryMovement, ApiError> {
+    let session = state.authorize(Permission::ManageInventory)?;
+    let db = state.db()?;
+    let record = db
+        .record_inventory_entry(
+            &session.organization_id,
+            &session.user_id,
+            NewInventoryEntry {
+                variant_id: input.variant_id,
+                quantity: input.quantity,
+                unit_cost_minor: input.unit_cost_minor,
+                reference: input.reference,
+                note: input.note,
+            },
+        )
+        .map_err(inventory_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "inventory.entry",
+        "inventory_movement",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(inventory_movement(record))
+}
+
+#[tauri::command]
+fn adjust_inventory(
+    input: AdjustInventoryInput,
+    state: State<'_, AppState>,
+) -> Result<InventoryMovement, ApiError> {
+    let session = state.authorize(Permission::ManageInventory)?;
+    let db = state.db()?;
+    let record = db
+        .adjust_inventory(
+            &session.organization_id,
+            &session.user_id,
+            NewInventoryAdjustment {
+                variant_id: input.variant_id,
+                quantity_delta: input.quantity_delta,
+                unit_cost_minor: input.unit_cost_minor,
+                reason: input.reason,
+            },
+        )
+        .map_err(inventory_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "inventory.adjusted",
+        "inventory_movement",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(inventory_movement(record))
+}
+
+#[tauri::command]
+fn update_inventory_threshold(
+    input: UpdateInventoryThresholdInput,
+    state: State<'_, AppState>,
+) -> Result<InventoryItem, ApiError> {
+    let session = state.authorize(Permission::ManageInventory)?;
+    let db = state.db()?;
+    let record = db
+        .update_inventory_threshold(
+            &session.organization_id,
+            &session.user_id,
+            &input.variant_id,
+            input.min_stock,
+        )
+        .map_err(inventory_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "inventory.threshold.updated",
+        "inventory_policy",
+        "allowed",
+        "tauri",
+        Some(&record.variant_id),
+    );
+    Ok(inventory_item(record))
+}
+
+#[tauri::command]
+fn current_cash_session(state: State<'_, AppState>) -> Result<Option<CashSession>, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    db.current_cash_session(&session.organization_id)
+        .map_err(cash_api_error)
+        .map(|record| record.map(cash_session))
+}
+
+#[tauri::command]
+fn list_cash_sessions(state: State<'_, AppState>) -> Result<Vec<CashSession>, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.list_cash_sessions(&session.organization_id, 50)
+        .map_err(cash_api_error)
+        .map(|sessions| sessions.into_iter().map(cash_session).collect())
+}
+
+#[tauri::command]
+fn open_cash_session(
+    input: OpenCashSessionInput,
+    state: State<'_, AppState>,
+) -> Result<CashSession, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let record = db
+        .open_cash_session(
+            &session.organization_id,
+            &session.user_id,
+            input.opening_amount_minor,
+        )
+        .map_err(cash_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "cash.opened",
+        "cash_session",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(cash_session(record))
+}
+
+#[tauri::command]
+fn close_cash_session(
+    input: CloseCashSessionInput,
+    state: State<'_, AppState>,
+) -> Result<CashSession, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let record = db
+        .close_cash_session(
+            &session.organization_id,
+            &input.session_id,
+            &session.user_id,
+            input.counted_amount_minor,
+            input.difference_reason.as_deref(),
+        )
+        .map_err(cash_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "cash.closed",
+        "cash_session",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(cash_session(record))
+}
+
+#[tauri::command]
+fn list_cash_movements(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CashMovement>, ApiError> {
+    let session = state.authorize_any(&[Permission::OperatePos, Permission::ViewFinance])?;
+    let db = state.db()?;
+    db.list_cash_movements(&session.organization_id, &session_id, 100)
+        .map_err(cash_api_error)
+        .map(|movements| movements.into_iter().map(cash_movement).collect())
+}
+
+#[tauri::command]
+fn record_cash_movement(
+    input: RecordCashMovementInput,
+    state: State<'_, AppState>,
+) -> Result<CashMovement, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let record = db
+        .record_cash_movement(
+            &session.organization_id,
+            &session.user_id,
+            NewCashMovement {
+                cash_session_id: input.session_id,
+                movement_type: cash_movement_type_str(input.movement_type).into(),
+                category: input.category,
+                amount_minor: input.amount_minor,
+                payment_method: payment_method_str(input.payment_method).into(),
+                evidence: input.evidence,
+            },
+        )
+        .map_err(cash_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "cash.movement_recorded",
+        "cash_movement",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(cash_movement(record))
 }
 
 #[tauri::command]
@@ -1517,6 +2139,175 @@ fn restore_backup(
     Ok(outcome)
 }
 
+fn csv_text(value: &str) -> String {
+    let escaped = value.replace('"', "\"\"");
+    let needs_guard = value.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    let needs_quotes = escaped
+        .chars()
+        .any(|character| matches!(character, ',' | '"' | '\n' | '\r'));
+    if needs_guard {
+        format!("\"'{escaped}\"")
+    } else if needs_quotes {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
+    }
+}
+
+fn financial_report_csv(report: &FinancialReport) -> String {
+    let mut rows = vec![
+        "Reporte financiero".to_string(),
+        format!("Desde,{}", csv_text(&report.from)),
+        format!("Hasta,{}", csv_text(&report.to)),
+        format!("Generado,{}", csv_text(&report.generated_at)),
+        format!("Moneda,{}", csv_text(&report.currency)),
+        String::new(),
+        "Resumen".to_string(),
+        "Métrica,Valor".to_string(),
+        format!("Ventas,{}", report.sales_count),
+        format!("Venta bruta (centavos),{}", report.gross_sales_minor),
+        format!("Impuestos (centavos),{}", report.tax_minor),
+        format!("Devoluciones,{}", report.refunds_count),
+        format!("Devoluciones (centavos),{}", report.refunded_minor),
+        format!("Venta neta (centavos),{}", report.net_sales_minor),
+        format!("Ticket promedio (centavos),{}", report.average_sale_minor),
+        format!("Turnos de caja,{}", report.cash_sessions_count),
+        format!("Turnos abiertos,{}", report.open_cash_sessions),
+        format!("Turnos cerrados,{}", report.closed_cash_sessions),
+        format!(
+            "Diferencia de caja (centavos),{}",
+            report.cash_difference_minor
+        ),
+        format!(
+            "Diferencia absoluta de caja (centavos),{}",
+            report.cash_difference_abs_minor
+        ),
+        String::new(),
+        "Métodos de pago".to_string(),
+        "Método,Ventas,Cantidad,Devoluciones,Cantidad,Neto".to_string(),
+    ];
+    for method in &report.payment_methods {
+        rows.push(format!(
+            "{},{},{},{},{},{}",
+            csv_text(payment_method_str(method.payment_method)),
+            method.gross_sales_minor,
+            method.sales_count,
+            method.refunded_minor,
+            method.refunds_count,
+            method.net_sales_minor
+        ));
+    }
+    rows.push(String::new());
+    rows.push("Productos (centavos)".to_string());
+    rows.push(
+        "SKU,Producto,Variante,Unidad,Vendidas,Devueltas,Netas,Venta bruta,Devoluciones,Venta neta,Costo,Margen"
+            .to_string(),
+    );
+    for product in &report.product_sales {
+        rows.push(format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            csv_text(&product.sku),
+            csv_text(&product.product_name),
+            csv_text(&product.variant_name),
+            csv_text(&product.unit),
+            product.sold_units,
+            product.refunded_units,
+            product.net_units,
+            product.gross_sales_minor,
+            product.refunded_minor,
+            product.net_sales_minor,
+            product.cost_minor,
+            product.margin_minor
+        ));
+    }
+    rows.push(String::new());
+    rows.push("Ajustes de inventario (centavos)".to_string());
+    rows.push("SKU,Producto,Variante,Unidades,Costo".to_string());
+    for adjustment in &report.inventory_adjustments {
+        rows.push(format!(
+            "{},{},{},{},{}",
+            csv_text(&adjustment.sku),
+            csv_text(&adjustment.product_name),
+            csv_text(&adjustment.variant_name),
+            adjustment.units_delta,
+            adjustment.cost_minor
+        ));
+    }
+    rows.join("\r\n") + "\r\n"
+}
+
+fn report_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo generar el reporte")
+            .with_details(other.to_string()),
+    }
+}
+
+#[tauri::command]
+fn financial_report(
+    input: FinancialReportInput,
+    state: State<'_, AppState>,
+) -> Result<FinancialReport, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.financial_report(&session.organization_id, &input.from, &input.to)
+        .map_err(report_api_error)
+        .map(financial_report_contract)
+}
+
+#[tauri::command]
+fn export_financial_report_csv(
+    input: FinancialReportInput,
+    state: State<'_, AppState>,
+) -> Result<FinancialReportExport, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    let report = db
+        .financial_report(&session.organization_id, &input.from, &input.to)
+        .map_err(report_api_error)?;
+    let report = financial_report_contract(report);
+    let csv = financial_report_csv(&report);
+    let generated_at = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+    let file_name = format!(
+        "reporte-{}-{}-{generated_at}.csv",
+        report.from.get(..10).unwrap_or("inicio"),
+        report.to.get(..10).unwrap_or("fin")
+    );
+    fs::create_dir_all(&state.paths.exports_dir).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo preparar la carpeta de exportaciones",
+        )
+        .with_details(error.to_string())
+    })?;
+    let path = state.paths.exports_dir.join(&file_name);
+    fs::write(&path, csv.as_bytes()).map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo escribir la exportación")
+            .with_details(error.to_string())
+    })?;
+    if let Err(error) = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "report.exported",
+        "financial_report",
+        "allowed",
+        "tauri",
+        Some(&file_name),
+    ) {
+        let _ = fs::remove_file(&path);
+        return Err(
+            ApiError::new(ErrorCode::Storage, "no se pudo auditar la exportación")
+                .with_details(error.to_string()),
+        );
+    }
+    Ok(FinancialReportExport {
+        file_name,
+        path: path.to_string_lossy().into_owned(),
+        bytes: csv.len() as u64,
+    })
+}
+
 #[tauri::command]
 fn list_audit_events(
     limit: Option<u32>,
@@ -1585,6 +2376,7 @@ pub fn run() {
 
             let paths = AppPaths {
                 backups_dir: data_dir.join("backups"),
+                exports_dir: data_dir.join("exports"),
                 db_path,
             };
 
@@ -1621,6 +2413,22 @@ pub fn run() {
             add_catalog_price,
             list_sales,
             create_sale,
+            list_sale_returns,
+            create_sale_return,
+            list_payment_charges,
+            financial_report,
+            export_financial_report_csv,
+            list_inventory,
+            list_inventory_movements,
+            record_inventory_entry,
+            adjust_inventory,
+            update_inventory_threshold,
+            current_cash_session,
+            list_cash_sessions,
+            open_cash_session,
+            close_cash_session,
+            list_cash_movements,
+            record_cash_movement,
             list_audit_events,
             verify_audit_chain
         ])

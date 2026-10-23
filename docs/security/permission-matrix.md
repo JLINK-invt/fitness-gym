@@ -11,7 +11,7 @@ acciones. **El backend siempre revalida.**
 | `owner` | Dueño del gimnasio; configuración, personal, finanzas y backups |
 | `manager` | Encargado; operación, personal, inventario, catálogo y backups |
 | `cashier` | Mostrador; cobros y ajustes operativos de inventario |
-| `accounting` | Contabilidad; consulta de finanzas y auditoría, sin operar caja |
+| `accounting` | Contabilidad; consulta de finanzas, historial de caja y auditoría, sin operar caja |
 
 ## Matriz
 
@@ -50,6 +50,9 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 | --- | --- | --- |
 | Ver reportes financieros | `ViewFinance` | Solo lectura; exportaciones auditadas |
 | Cobrar, cancelar o reembolsar | `OperatePos` | Reembolso/cancelación con motivo y auditoría |
+| Abrir o cerrar turno de caja | `OperatePos` | Un solo turno abierto; cierre con efectivo contado y motivo obligatorio si hay diferencia |
+| Registrar ingreso o gasto de caja | `OperatePos` | Monto positivo, método, categoría y evidencia; movimiento append-only |
+| Consultar historial de turnos | `ViewFinance` | Solo lectura; incluye fondo, esperado, contado, diferencia, motivo y movimientos |
 | Ajustar inventario | `ManageInventory` | Motivo obligatorio; auditar diferencia y actor |
 | Crear o modificar catálogo | `ManageCatalog` | Precios append-only; editar un precio crea una versión nueva |
 | Crear/editar personal | `ManageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
@@ -77,14 +80,15 @@ Cada comando sensible debe registrar en `audit_events`:
 
 ## Estado de implementación
 
-- Aplicado en auth, personal, acceso, backups, catálogo y ventas: permisos,
-  membresía activa, validación de recurso y auditoría append-only.
-- `OperatePos` cubre cobrar y consultar ventas recientes; contabilidad no opera
-  caja.
+- Aplicado en auth, personal, acceso, backups, catálogo, ventas, caja,
+  inventario, reportes y exportaciones: permisos, membresía activa, validación
+  de recurso y auditoría append-only.
+- `OperatePos` cubre abrir/cerrar caja, registrar ingresos/gastos, cobrar y
+  consultar ventas recientes; contabilidad consulta historial y movimientos con
+  `ViewFinance` pero no opera caja.
 - `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
   edición o borrado.
-- Pendiente al construir cada módulo: recepción, finanzas, inventario y
-  exportaciones.
+- Pendiente al construir cada módulo: recepción, socios y analítica.
 
 ## Pendientes de endurecimiento (Phase 5)
 

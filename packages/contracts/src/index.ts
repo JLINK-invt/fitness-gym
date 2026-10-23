@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.2.0";
+export const CONTRACT_VERSION = "2.10.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -198,6 +198,133 @@ export interface CreateSaleInput {
   items: SaleItemInput[];
   paymentMethod: PaymentMethod;
   cashReceivedMinor?: number;
+  paymentReference?: string;
+  idempotencyKey: string;
+}
+
+export interface SaleReturnItemInput {
+  saleItemId: string;
+  quantity: number;
+}
+
+export interface CreateSaleReturnInput {
+  saleId: string;
+  reason: string;
+  items: SaleReturnItemInput[];
+  paymentReference?: string;
+  idempotencyKey: string;
+}
+
+export interface SaleReturnItem {
+  id: string;
+  saleItemId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  quantity: number;
+  amountMinor: number;
+}
+
+export interface SaleReturn {
+  id: string;
+  saleId: string;
+  cashSessionId: string;
+  currency: string;
+  refundMethod: PaymentMethod;
+  totalMinor: number;
+  reason: string;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  paymentReference: string | null;
+  createdAt: string;
+  items: SaleReturnItem[];
+}
+
+export interface PaymentCharge {
+  id: string;
+  saleId: string;
+  saleReturnId: string | null;
+  kind: "charge" | "refund";
+  method: PaymentMethod;
+  provider: "manual" | "point";
+  status: "approved";
+  amountMinor: number;
+  currency: string;
+  externalReference: string | null;
+  createdAt: string;
+}
+
+export interface ListPaymentChargesInput {
+  saleId?: string;
+  externalReference?: string;
+  limit?: number;
+}
+
+export interface FinancialReportInput {
+  from: string;
+  to: string;
+}
+
+export interface PaymentMethodTotal {
+  paymentMethod: PaymentMethod;
+  salesCount: number;
+  grossSalesMinor: number;
+  refundsCount: number;
+  refundedMinor: number;
+  netSalesMinor: number;
+}
+
+export interface ProductSalesTotal {
+  variantId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unit: CatalogUnit;
+  soldUnits: number;
+  refundedUnits: number;
+  netUnits: number;
+  grossSalesMinor: number;
+  refundedMinor: number;
+  netSalesMinor: number;
+  costMinor: number;
+  marginMinor: number;
+}
+
+export interface InventoryAdjustmentTotal {
+  variantId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unitsDelta: number;
+  costMinor: number;
+}
+
+export interface FinancialReport {
+  from: string;
+  to: string;
+  generatedAt: string;
+  currency: string;
+  salesCount: number;
+  grossSalesMinor: number;
+  taxMinor: number;
+  refundsCount: number;
+  refundedMinor: number;
+  netSalesMinor: number;
+  averageSaleMinor: number;
+  paymentMethods: PaymentMethodTotal[];
+  cashSessionsCount: number;
+  openCashSessions: number;
+  closedCashSessions: number;
+  cashDifferenceMinor: number;
+  cashDifferenceAbsMinor: number;
+  productSales: ProductSalesTotal[];
+  inventoryAdjustments: InventoryAdjustmentTotal[];
+}
+
+export interface FinancialReportExport {
+  fileName: string;
+  path: string;
+  bytes: number;
 }
 
 export interface SaleItem {
@@ -215,6 +342,8 @@ export interface SaleItem {
   subtotalMinor: number;
   taxMinor: number;
   totalMinor: number;
+  refundedQuantity: number;
+  refundedMinor: number;
 }
 
 export interface Sale {
@@ -223,13 +352,128 @@ export interface Sale {
   subtotalMinor: number;
   taxMinor: number;
   totalMinor: number;
+  refundedMinor: number;
   paymentMethod: PaymentMethod;
   cashReceivedMinor: number | null;
   changeMinor: number | null;
   soldBy: string | null;
   soldByName: string | null;
+  cashSessionId: string | null;
+  paymentReference: string | null;
   items: SaleItem[];
   createdAt: string;
+}
+
+export interface InventoryItem {
+  variantId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unit: CatalogUnit;
+  stock: number;
+  valueMinor: number;
+  avgUnitCostMinor: number;
+  minStock: number;
+  lowStock: boolean;
+}
+
+export interface InventoryMovement {
+  id: string;
+  variantId: string;
+  movementType: "entry" | "sale" | "return" | "adjustment";
+  quantityDelta: number;
+  unitCostMinor: number;
+  totalCostMinor: number;
+  sourceType: "manual" | "sale" | "sale_return" | "adjustment";
+  sourceId: string | null;
+  reference: string | null;
+  note: string | null;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  createdAt: string;
+}
+
+export interface RecordInventoryEntryInput {
+  variantId: string;
+  quantity: number;
+  unitCostMinor: number;
+  reference?: string;
+  note?: string;
+}
+
+export interface AdjustInventoryInput {
+  variantId: string;
+  quantityDelta: number;
+  unitCostMinor?: number;
+  reason: string;
+}
+
+export interface UpdateInventoryThresholdInput {
+  variantId: string;
+  minStock: number;
+}
+
+export type CashSessionStatus = "open" | "closed";
+
+export interface CashSession {
+  id: string;
+  status: CashSessionStatus;
+  currency: string;
+  openingAmountMinor: number;
+  expectedCashMinor: number;
+  cashSalesMinor: number;
+  salesCount: number;
+  cashIncomeMinor: number;
+  incomeMinor: number;
+  cashExpenseMinor: number;
+  expenseMinor: number;
+  cashRefundsMinor: number;
+  refundedMinor: number;
+  refundsCount: number;
+  movementsCount: number;
+  countedAmountMinor: number | null;
+  differenceMinor: number | null;
+  differenceReason: string | null;
+  openedBy: string | null;
+  openedByName: string | null;
+  openedAt: string;
+  closedBy: string | null;
+  closedByName: string | null;
+  closedAt: string | null;
+}
+
+export type CashMovementType = "income" | "expense";
+
+export interface CashMovement {
+  id: string;
+  cashSessionId: string;
+  movementType: CashMovementType;
+  category: string;
+  amountMinor: number;
+  paymentMethod: PaymentMethod;
+  evidence: string;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  createdAt: string;
+}
+
+export interface OpenCashSessionInput {
+  openingAmountMinor: number;
+}
+
+export interface CloseCashSessionInput {
+  sessionId: string;
+  countedAmountMinor: number;
+  differenceReason: string | null;
+}
+
+export interface RecordCashMovementInput {
+  sessionId: string;
+  movementType: CashMovementType;
+  category: string;
+  amountMinor: number;
+  paymentMethod: PaymentMethod;
+  evidence: string;
 }
 
 export type AuditResult = "allowed" | "denied" | "failed";

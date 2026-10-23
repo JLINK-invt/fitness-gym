@@ -16,7 +16,7 @@
   "properties": {
     "service": { "type": "string" },
     "version": { "type": "string" },
-    "contractVersion": { "const": "1.0.0" },
+    "contractVersion": { "const": "2.10.0" },
     "status": { "enum": ["ok", "degraded", "down"] },
     "modules": {
       "type": "array",

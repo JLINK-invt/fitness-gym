@@ -41,7 +41,31 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - `catalog_products` conserva productos y variantes con archivo lógico;
   `catalog_price_versions` es append-only.
 - `sales` y `sale_items` son append-only y guardan snapshot de nombres, SKU,
-  unidad y precio; cada línea referencia la versión de precio cobrada.
+  unidad y precio; cada línea referencia la versión de precio cobrada. La
+  migración 14 agrega `idempotency_key` y `request_hash` por venta para que un
+  reintento devuelva la operación original sin duplicar cobro ni stock.
+- `cash_sessions` guarda cada turno con fondo inicial, conteo, diferencia,
+  motivo y usuarios de apertura/cierre. Un índice único parcial permite un solo
+  turno abierto y las ventas se enlazan con `cash_session_id`.
+- `cash_movements` guarda ingresos y gastos con método, categoría, evidencia y
+  autorizante. Es append-only y el cierre recalcula el efectivo esperado con los
+  movimientos en efectivo.
+- `sale_returns` y `sale_return_items` son documentos compensatorios
+  append-only; referencian la venta y el turno donde sale el dinero. La
+  migración 15 agrega idempotencia por devolución para que un reintento no
+  reembolse dos veces.
+- `payment_charges` registra cargos y reembolsos aprobados con método,
+  proveedor (`manual` o `point`), importe, referencia externa e idempotencia.
+  Es append-only y nunca almacena PAN, CVV ni datos de tarjeta.
+- `ledger_entries` es el journal inmutable: ventas positivas y devoluciones
+  negativas, sin `UPDATE` ni `DELETE`. Los reportes reconstruyen totales desde
+  él y la migración 11 hizo backfill de las ventas previas.
+- `inventory_movements` es el único origen del stock: entradas, ventas,
+  devoluciones y ajustes son filas append-only. La migración 13 elimina el
+  modelo multi-ubicación y la vista `inventory_balances` agrega cantidad y
+  valor por variante en la única ubicación lógica.
+- `inventory_policies` guarda el mínimo por variante; el estado `lowStock` se
+  calcula como `stock <= minStock` al consultar.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
 
@@ -71,8 +95,9 @@ La nube no participa en la operación. Todo el flujo anterior es local.
   base restaurada puede tener otro dueño o personal revocado.
 - `auth.owner_created`, `auth.login`, `auth.logout`,
   `auth.owner_recovery_generated`, `auth.owner_recovered`, `staff.created`,
-  `staff.updated`, `access.simulated`, `catalog.*`, `sale.completed` y
-  `backup.created` se registran en `audit_events` con el actor de la sesión.
+  `staff.updated`, `access.simulated`, `catalog.*`, `sale.completed`,
+  `cash.opened`, `cash.closed`, `inventory.*` y `backup.created` se registran
+  en `audit_events` con el actor de la sesión.
 
 ## Auditoría
 
@@ -115,16 +140,51 @@ La pantalla **Ventas** requiere `OperatePos`. El cajero busca variantes activas
 del catálogo, arma el carrito y cobra en efectivo, transferencia o terminal
 Point. Rust resuelve la versión de precio vigente y calcula subtotal, impuesto y
 total; la UI solo muestra el desglose. La venta guarda un snapshot inmutable y
-las tablas rechazan `UPDATE` y `DELETE`. El ticket es no fiscal y se imprime bajo
-demanda. El contrato completo está en
-[`contracts/sales.md`](contracts/sales.md).
+las tablas rechazan `UPDATE` y `DELETE`. Toda venta exige un turno de caja
+abierto y una clave de idempotencia por intento. Transferencias y Point aceptan
+una referencia externa opcional para conciliación, guardada también en
+`payment_charges`. Las devoluciones se registran como documentos nuevos por
+línea, con motivo, método derivado de la venta e idempotencia propia; cada una
+genera un asiento negativo en el ledger y un reembolso en `payment_charges`. El ticket es no fiscal y se imprime bajo demanda. El contrato completo
+está en [`contracts/sales.md`](contracts/sales.md).
+
+## Reportes financieros
+
+La pantalla **Reportes** requiere `ViewFinance`. Rust reconstruye el cierre desde
+el ledger inmutable: ventas, devoluciones, desglose por método de pago, ventas
+por producto con margen, ajustes de inventario y diferencias de turnos. El costo
+sale de `inventory_movements`; los servicios usan costo cero. La exportación
+escribe un CSV en `<app_data>/exports/` y registra `report.exported` con el
+nombre del archivo como correlación; si la auditoría falla, el archivo se
+elimina. El contrato completo está en
+[`contracts/reports.md`](contracts/reports.md).
+
+## Caja y turnos
+
+La pantalla **Caja** requiere `OperatePos` para abrir, consultar el turno actual
+y cerrar; solo `ViewFinance` puede listar el historial. El cajero registra el
+fondo inicial, registra ingresos y gastos con evidencia y la app impide cobrar
+sin un turno abierto. Al cerrar, cuenta el efectivo: Rust calcula el esperado
+con las ventas, movimientos y devoluciones en efectivo del turno, exige motivo
+cuando hay diferencia y bloquea reaperturas. El contrato completo está en
+[`contracts/cash.md`](contracts/cash.md).
+
+## Inventario y valoración
+
+El **Panel** resume existencias, valor, SKU bajo mínimo y rotación de los
+últimos 30 días. La pantalla **Inventario** requiere `ManageInventory` y muestra
+existencias, valor y costo promedio por variante pieza. El stock nunca se edita:
+entradas, ajustes, ventas y devoluciones agregan movimientos inmutables. Las
+ventas pueden dejar stock negativo. El modelo multi-ubicación se eliminó en la
+migración 13; el contrato completo está en
+[`contracts/inventory.md`](contracts/inventory.md).
 
 ## Acceso simulado
 
-La UI de Acceso llama a `simulate_access`; `gym-core` decide sin I/O y
-`gym-data` inserta una sola vez en `module_events`. La misma clave con el mismo
-lector y credencial devuelve el evento original; con datos distintos se rechaza.
-El contrato completo está en
+El backend conserva `simulate_access`: `gym-core` decide sin I/O y `gym-data`
+inserta una sola vez en `module_events`. La misma clave con el mismo lector y
+credencial devuelve el evento original; con datos distintos se rechaza. La ruta
+y la navegación no se exponen en la UI de V1. El contrato completo está en
 [`contracts/access-simulated.md`](contracts/access-simulated.md).
 
 ## Backups
