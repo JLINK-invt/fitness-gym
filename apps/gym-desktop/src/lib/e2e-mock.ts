@@ -1,5 +1,5 @@
 type Organization = { id: string; name: string };
-type Owner = { id: string; name: string; password: string };
+type Owner = { id: string; name: string; password: string; recoveryCode: string };
 type Session = {
   userId: string;
   organizationId: string;
@@ -74,6 +74,36 @@ type StoredProduct = {
   updatedAt: string;
 };
 type StoredPrice = CatalogPrice & { variantId: string };
+type StoredSaleItem = {
+  id: string;
+  variantId: string;
+  priceVersionId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unit: StoredVariant["unit"];
+  quantity: number;
+  unitAmountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+};
+type StoredSale = {
+  id: string;
+  currency: string;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paymentMethod: "cash" | "transfer" | "point";
+  cashReceivedMinor: number | null;
+  changeMinor: number | null;
+  soldBy: string | null;
+  soldByName: string | null;
+  items: StoredSaleItem[];
+  createdAt: string;
+};
 
 (() => {
   const state: {
@@ -88,6 +118,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
     auditEvents: AuditEvent[];
     catalog: StoredProduct[];
     catalogPrices: StoredPrice[];
+    sales: StoredSale[];
   } = {
     organizations: [],
     owner: null,
@@ -100,11 +131,20 @@ type StoredPrice = CatalogPrice & { variantId: string };
     auditEvents: [],
     catalog: [],
     catalogPrices: [],
+    sales: [],
   };
 
   const now = () => new Date().toISOString();
   const uuid = () => crypto.randomUUID();
   const apiError = (code: string, message: string) => ({ code, message });
+  const recoveryAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const makeRecoveryCode = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(20));
+    const code = Array.from(bytes, (byte) => recoveryAlphabet[byte % 32]).join("");
+    return code.match(/.{5}/g)!.join("-");
+  };
+  const normalizeRecoveryCode = (value: string) =>
+    value.replace(/[\s-]/g, "").toUpperCase();
   const permissionsFor = (role: Session["role"]) => {
     switch (role) {
       case "owner":
@@ -194,7 +234,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.0.0",
+    contractVersion: "2.2.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -240,6 +280,22 @@ type StoredPrice = CatalogPrice & { variantId: string };
     state.catalog.flatMap((product) =>
       product.variants.map((variant) => ({ product, variant })),
     );
+  const roundDiv = (numerator: number, denominator: number) =>
+    Math.floor((numerator * 2 + denominator) / (denominator * 2));
+  const lineTotals = (
+    unitAmountMinor: number,
+    quantity: number,
+    taxRateBps: number,
+    priceIncludesTax: boolean,
+  ) => {
+    const gross = unitAmountMinor * quantity;
+    if (priceIncludesTax) {
+      const subtotal = roundDiv(gross * 10_000, 10_000 + taxRateBps);
+      return { subtotal, tax: gross - subtotal, total: gross };
+    }
+    const tax = roundDiv(gross * taxRateBps, 10_000);
+    return { subtotal: gross, tax, total: gross + tax };
+  };
   const parseCatalogPrice = (input: Record<string, unknown>) => {
     const amountMinor = Number(input.amountMinor);
     const taxRateBps = Number(input.taxRateBps);
@@ -325,7 +381,12 @@ type StoredPrice = CatalogPrice & { variantId: string };
           if (password.length < 12) {
             throw apiError("invalidRequest", "La contraseña debe tener al menos 12 caracteres.");
           }
-          const owner: Owner = { id: uuid(), name, password };
+          const owner: Owner = {
+            id: uuid(),
+            name,
+            password,
+            recoveryCode: makeRecoveryCode(),
+          };
           state.owner = owner;
           state.session = {
             userId: owner.id,
@@ -339,7 +400,71 @@ type StoredPrice = CatalogPrice & { variantId: string };
             action: "auth.owner_created",
             resource: "staff_membership",
           });
-          return { ...state.session };
+          return {
+            session: { ...state.session },
+            recoveryCode: owner.recoveryCode,
+          };
+        }
+
+        case "generate_owner_recovery": {
+          const session = requirePermission("manageSettings");
+          if (session.role !== "owner" || !state.owner) {
+            throw apiError(
+              "unauthorized",
+              "Solo la cuenta del dueño puede generar el código de recuperación.",
+            );
+          }
+          state.owner.recoveryCode = makeRecoveryCode();
+          recordAudit({
+            actor: session,
+            action: "auth.owner_recovery_generated",
+            resource: "staff_membership",
+          });
+          return { recoveryCode: state.owner.recoveryCode };
+        }
+
+        case "recover_owner": {
+          const code = normalizeRecoveryCode(String(args.recoveryCode ?? ""));
+          const newPassword = String(args.newPassword ?? "");
+          if (
+            !state.owner ||
+            !code ||
+            code !== normalizeRecoveryCode(state.owner.recoveryCode)
+          ) {
+            recordAudit({
+              action: "auth.owner_recovered",
+              resource: "staff_membership",
+              result: "failed",
+            });
+            throw apiError(
+              "unauthorized",
+              "Código de recuperación incorrecto o no configurado.",
+            );
+          }
+          if (newPassword.length < 12) {
+            throw apiError(
+              "invalidRequest",
+              "La contraseña del dueño debe tener al menos 12 caracteres.",
+            );
+          }
+          state.owner.password = newPassword;
+          state.owner.recoveryCode = makeRecoveryCode();
+          state.session = {
+            userId: state.owner.id,
+            organizationId: state.organizations[0]!.id,
+            name: state.owner.name,
+            role: "owner",
+            permissions: permissionsFor("owner"),
+          };
+          recordAudit({
+            actor: state.session,
+            action: "auth.owner_recovered",
+            resource: "staff_membership",
+          });
+          return {
+            session: { ...state.session },
+            recoveryCode: state.owner.recoveryCode,
+          };
         }
 
         case "login": {
@@ -499,6 +624,128 @@ type StoredPrice = CatalogPrice & { variantId: string };
         case "list_catalog": {
           requirePermission("operatePos");
           return state.catalog.map(catalogSnapshot);
+        }
+
+        case "list_sales": {
+          requirePermission("operatePos");
+          return state.sales.slice(0, 50);
+        }
+
+        case "create_sale": {
+          const session = requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const rawItems = Array.isArray(input.items) ? input.items : [];
+          if (rawItems.length === 0) {
+            throw apiError("invalidRequest", "La venta necesita al menos un artículo.");
+          }
+          if (rawItems.length > 50) {
+            throw apiError("invalidRequest", "La venta admite como máximo 50 artículos.");
+          }
+          const paymentMethod = String(input.paymentMethod ?? "");
+          if (!["cash", "transfer", "point"].includes(paymentMethod)) {
+            throw apiError("invalidRequest", "Método de pago inválido.");
+          }
+          const seen = new Set<string>();
+          const items: StoredSaleItem[] = rawItems.map((rawItem) => {
+            const item = (rawItem ?? {}) as Record<string, unknown>;
+            const variantId = String(item.variantId ?? "");
+            const quantity = Number(item.quantity);
+            if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
+              throw apiError("invalidRequest", "La cantidad debe estar entre 1 y 999.");
+            }
+            if (seen.has(variantId)) {
+              throw apiError(
+                "invalidRequest",
+                "La misma variante no puede repetirse en la venta.",
+              );
+            }
+            seen.add(variantId);
+            const match = allVariants().find((entry) => entry.variant.id === variantId);
+            if (!match) {
+              throw apiError("notFound", "La variante no existe.");
+            }
+            if (match.product.status !== "active" || match.variant.status !== "active") {
+              throw apiError(
+                "invalidRequest",
+                "No puedes vender productos o variantes archivadas.",
+              );
+            }
+            const price = currentPriceFor(variantId);
+            if (!price) {
+              throw apiError("invalidRequest", "La variante no tiene un precio vigente.");
+            }
+            const totals = lineTotals(
+              price.amountMinor,
+              quantity,
+              price.taxRateBps,
+              price.priceIncludesTax,
+            );
+            return {
+              id: uuid(),
+              variantId,
+              priceVersionId: price.id,
+              productName: match.product.name,
+              variantName: match.variant.name,
+              sku: match.variant.sku,
+              unit: match.variant.unit,
+              quantity,
+              unitAmountMinor: price.amountMinor,
+              taxRateBps: price.taxRateBps,
+              priceIncludesTax: price.priceIncludesTax,
+              subtotalMinor: totals.subtotal,
+              taxMinor: totals.tax,
+              totalMinor: totals.total,
+            };
+          });
+          const subtotalMinor = items.reduce((total, item) => total + item.subtotalMinor, 0);
+          const taxMinor = items.reduce((total, item) => total + item.taxMinor, 0);
+          const totalMinor = items.reduce((total, item) => total + item.totalMinor, 0);
+          if (totalMinor > 1_000_000_000) {
+            throw apiError("invalidRequest", "El total de la venta es demasiado grande.");
+          }
+          let cashReceivedMinor: number | null = null;
+          let changeMinor: number | null = null;
+          if (paymentMethod === "cash") {
+            const received = Number(input.cashReceivedMinor ?? totalMinor);
+            if (!Number.isInteger(received) || received < totalMinor) {
+              throw apiError(
+                "invalidRequest",
+                "El efectivo recibido debe cubrir el total.",
+              );
+            }
+            if (received > 1_000_000_000) {
+              throw apiError("invalidRequest", "El efectivo recibido es demasiado grande.");
+            }
+            cashReceivedMinor = received;
+            changeMinor = received - totalMinor;
+          } else if (input.cashReceivedMinor != null) {
+            throw apiError(
+              "invalidRequest",
+              "El efectivo recibido solo aplica a pagos en efectivo.",
+            );
+          }
+          const sale: StoredSale = {
+            id: uuid(),
+            currency: "MXN",
+            subtotalMinor,
+            taxMinor,
+            totalMinor,
+            paymentMethod: paymentMethod as StoredSale["paymentMethod"],
+            cashReceivedMinor,
+            changeMinor,
+            soldBy: session.userId,
+            soldByName: session.name,
+            items,
+            createdAt: now(),
+          };
+          state.sales.unshift(sale);
+          recordAudit({
+            actor: state.session,
+            action: "sale.completed",
+            resource: "sale",
+            correlationId: sale.id,
+          });
+          return sale;
         }
 
         case "create_catalog_item": {
@@ -840,7 +1087,7 @@ type StoredPrice = CatalogPrice & { variantId: string };
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 6,
+      schemaVersion: 7,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);

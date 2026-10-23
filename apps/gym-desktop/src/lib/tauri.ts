@@ -9,8 +9,12 @@ import type {
   BackupSummary,
   CatalogProduct,
   CreateCatalogItemInput,
+  CreateSaleInput,
   HealthReport,
+  RecoveryCode,
+  RecoveryKit,
   RestoreOutcome,
+  Sale,
   SessionSummary,
   SetupState,
   StaffRole,
@@ -29,7 +33,10 @@ export const api = {
   health: () => invoke<HealthReport>("health"),
   setupState: () => invoke<SetupState>("get_setup_state"),
   bootstrapOwner: (name: string, password: string, gymName?: string) =>
-    invoke<SessionSummary>("bootstrap_owner", { name, password, gymName }),
+    invoke<RecoveryKit>("bootstrap_owner", { name, password, gymName }),
+  generateOwnerRecovery: () => invoke<RecoveryCode>("generate_owner_recovery"),
+  recoverOwner: (recoveryCode: string, newPassword: string) =>
+    invoke<RecoveryKit>("recover_owner", { recoveryCode, newPassword }),
   login: (name: string, password: string) =>
     invoke<SessionSummary>("login", { name, password }),
   logout: () => invoke<void>("logout"),
@@ -59,6 +66,8 @@ export const api = {
     invoke<CatalogProduct>("update_catalog_variant", { input }),
   addCatalogPrice: (input: AddCatalogPriceInput) =>
     invoke<CatalogProduct>("add_catalog_price", { input }),
+  listSales: () => invoke<Sale[]>("list_sales"),
+  createSale: (input: CreateSaleInput) => invoke<Sale>("create_sale", { input }),
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),

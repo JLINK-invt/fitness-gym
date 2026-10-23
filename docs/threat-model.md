@@ -107,6 +107,7 @@ Fronteras:
 | Amenaza | Control | Estado |
 | --- | --- | --- |
 | Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría encadenada | Implementado |
+| Robar o adivinar el código de recuperación | 20 símbolos aleatorios, hash Argon2id, un solo uso, rotación, bloqueo y auditoría | Implementado |
 | Sesión abierta en mostrador | Bloqueo por inactividad (15 min) y cierre de sesión manual | Implementado |
 | Backup restaurado para hacerse pasar por otro usuario | Restore requiere `ManageBackups`; auditoría; aviso de reemplazo total | Parcial |
 | PIN compartido | PIN no será factor único | Decidido |
@@ -127,7 +128,7 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, personal, acceso y backups; ventas pendientes |
+| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, personal, acceso, backups, catálogo y ventas; descuentos y ajustes pendientes |
 | Cuenta compartida | Identidad por persona y bloqueo de sesión | Decidido |
 | Restore sin responsable | Registrar actor, backup y resultado | Pendiente |
 
@@ -136,6 +137,7 @@ Fronteras:
 | Amenaza | Control | Estado |
 | --- | --- | --- |
 | Robo del equipo o del disco | SQLCipher AES-256 + clave en keychain | Implementado; keychain del SO |
+| Código de recuperación visible en pantalla o archivo | Se muestra una vez; queda a cargo del dueño guardarlo fuera del equipo | Aceptado |
 | Backup filtrado | XChaCha20-Poly1305 + Argon2id; passphrase no almacenada | Implementado |
 | Clave en logs o errores | Sin `Debug` de claves; mensajes genéricos | Implementado |
 | Clave junto a la base | Keychain; archivo `0600` solo fallback dev/CI | Implementado |
@@ -146,7 +148,7 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Disco lleno durante venta o backup | Backup previo, escritura atómica, monitoreo de espacio | Pendiente |
+| Disco lleno durante venta o backup | Backup previo, escritura atómica, monitoreo de espacio | Parcial: venta en transacción; monitoreo pendiente |
 | Base corrupta | `integrity_check`, backups verificados, runbook de restore | Implementado |
 | Bloqueo por archivo abierto | Cierre y checkpoint antes de restore | Implementado |
 | Borrado accidental de backups | Confirmación y retención configurable | Pendiente |
@@ -185,8 +187,9 @@ Fronteras:
    depende de la passphrase elegida.
 6. **Webview comprometido:** solo puede llamar comandos allowlisted; la
    autorización se revalida en Rust y no hay shell.
-7. **Insider borra ventas:** no existe borrado físico en Phase 1; los ajustes
-   requieren auditoría (por implementar).
+7. **Insider borra ventas:** `sales` y `sale_items` rechazan `UPDATE` y
+   `DELETE` por trigger; una corrección futura exigirá un documento
+   compensatorio auditado.
 
 ## 6.1 Integraciones futuras modeladas
 
@@ -232,6 +235,7 @@ su propio ADR antes de implementarse.
 | Rollback a una base válida anterior | Medio | Aceptado en Phase 1; evaluar ancla monotónica en Phase 2 |
 | Truncado del final de la cadena de auditoría | Medio | Parcial; copia externa y anclaje monotónico en una fase posterior |
 | Pérdida de passphrase de backups | Alto | Aceptado; educación y prueba trimestral de restore |
+| Pérdida de contraseña y código de recuperación del dueño | Alto | Sin puerta trasera; restaurar un backup o reinstalar en desarrollo |
 | Dependencia comprometida | Medio | Lockfiles, auditorías y builds firmados |
 | Keychain no disponible | Bajo | Fallback dev con advertencia; no se crea base en claro |
 | Sin anti-rollback de binarios hasta Phase 5 | Medio | Distribución controlada y firma planificada |
@@ -256,6 +260,7 @@ su propio ADR antes de implementarse.
 - [x] Clave migrada al keychain del SO (2026-10-21).
 - [x] Login local, sesión y RBAC conectados a auth y personal.
 - [x] Auditoría append-only con hash chain y verificación.
+- [x] RBAC y auditoría en catálogo y ventas.
 - [ ] Extender RBAC y auditoría a recepción, finanzas e inventario.
 - [x] Vertical slice de acceso simulado con deduplicación por `idempotency_key`.
 - [x] Backup/restore desde la UI con IPC simulado; el binario nativo se valida

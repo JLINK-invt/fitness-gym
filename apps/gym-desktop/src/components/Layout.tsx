@@ -17,6 +17,7 @@ type NavigationItem = {
 const navigation: NavigationItem[] = [
   { to: "/", label: "Diagnóstico" },
   { to: "/access", label: "Acceso", permission: "operatePos" },
+  { to: "/sales", label: "Ventas", permission: "operatePos" },
   { to: "/catalog", label: "Catálogo", permission: "manageCatalog" },
   { to: "/staff", label: "Equipo", permission: "manageStaff" },
   { to: "/backups", label: "Backups", permission: "manageBackups" },

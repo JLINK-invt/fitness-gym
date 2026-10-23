@@ -36,6 +36,13 @@ pub struct UserCredentialRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerRecoveryRecord {
+    pub user_id: String,
+    pub name: String,
+    pub recovery_code_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaffRecord {
     pub user_id: String,
     pub name: String,
@@ -97,6 +104,40 @@ struct ValidatedCatalogPrice {
     effective_from: String,
 }
 
+const MAX_AMOUNT_MINOR: i64 = 1_000_000_000;
+
+struct SaleVariantRow {
+    product_id: String,
+    product_name: String,
+    variant_name: String,
+    sku: String,
+    unit: String,
+    variant_status: String,
+    product_status: String,
+    price_version_id: Option<String>,
+    amount_minor: Option<i64>,
+    tax_rate_bps: Option<i64>,
+    price_includes_tax: Option<i64>,
+}
+
+struct SaleLine {
+    position: usize,
+    product_id: String,
+    variant_id: String,
+    price_version_id: String,
+    product_name: String,
+    variant_name: String,
+    sku: String,
+    unit: String,
+    quantity: i64,
+    unit_amount_minor: i64,
+    tax_rate_bps: i64,
+    price_includes_tax: bool,
+    subtotal_minor: i64,
+    tax_minor: i64,
+    total_minor: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewCatalogItem {
     pub name: String,
@@ -134,6 +175,53 @@ pub struct NewCatalogVariantUpdate {
     pub unit: String,
     pub cost_minor: i64,
     pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewSaleItem {
+    pub variant_id: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewSale {
+    pub items: Vec<NewSaleItem>,
+    pub payment_method: String,
+    pub cash_received_minor: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaleItemRecord {
+    pub id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub unit: String,
+    pub quantity: i64,
+    pub unit_amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    pub subtotal_minor: i64,
+    pub tax_minor: i64,
+    pub total_minor: i64,
+    pub price_version_id: String,
+    pub variant_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaleRecord {
+    pub id: String,
+    pub currency: String,
+    pub subtotal_minor: i64,
+    pub tax_minor: i64,
+    pub total_minor: i64,
+    pub payment_method: String,
+    pub cash_received_minor: Option<i64>,
+    pub change_minor: Option<i64>,
+    pub sold_by: Option<String>,
+    pub sold_by_name: Option<String>,
+    pub created_at: String,
+    pub items: Vec<SaleItemRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -995,6 +1083,347 @@ impl Db {
         self.catalog_product(organization_id, &product_id)
     }
 
+    pub fn list_sales(
+        &self,
+        organization_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SaleRecord>, DataError> {
+        let limit = limit.clamp(1, 100);
+        self.load_sales(organization_id, None, limit)
+    }
+
+    pub fn sale(&self, organization_id: &str, sale_id: &str) -> Result<SaleRecord, DataError> {
+        self.load_sales(organization_id, Some(sale_id), 1)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| DataError::InvalidValue("the sale does not exist in this gym".into()))
+    }
+
+    fn load_sales(
+        &self,
+        organization_id: &str,
+        sale_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<SaleRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut sale_statement = conn.prepare(
+                "SELECT s.id, s.currency, s.subtotal_minor, s.tax_minor, s.total_minor,
+                        s.payment_method, s.cash_received_minor, s.change_minor,
+                        s.sold_by, u.name, s.created_at
+                 FROM sales s
+                 LEFT JOIN users u ON u.id = s.sold_by
+                 WHERE s.organization_id = ?1
+                   AND (?2 IS NULL OR s.id = ?2)
+                 ORDER BY s.created_at DESC, s.id DESC
+                 LIMIT ?3",
+            )?;
+            let sales = sale_statement
+                .query_map(params![organization_id, sale_id, limit], |row| {
+                    Ok(SaleRecord {
+                        id: row.get(0)?,
+                        currency: row.get(1)?,
+                        subtotal_minor: row.get(2)?,
+                        tax_minor: row.get(3)?,
+                        total_minor: row.get(4)?,
+                        payment_method: row.get(5)?,
+                        cash_received_minor: row.get(6)?,
+                        change_minor: row.get(7)?,
+                        sold_by: row.get(8)?,
+                        sold_by_name: row.get(9)?,
+                        created_at: row.get(10)?,
+                        items: Vec::new(),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut item_statement = conn.prepare(
+                "SELECT sale_id, id, product_name, variant_name, sku, unit, quantity,
+                        unit_amount_minor, tax_rate_bps, price_includes_tax,
+                        subtotal_minor, tax_minor, total_minor, price_version_id, variant_id
+                 FROM sale_items
+                 WHERE organization_id = ?1
+                   AND (
+                       (?2 IS NOT NULL AND sale_id = ?2)
+                       OR
+                       (?2 IS NULL AND sale_id IN (
+                           SELECT id FROM sales
+                           WHERE organization_id = ?1
+                           ORDER BY created_at DESC, id DESC
+                           LIMIT ?3
+                       ))
+                   )
+                 ORDER BY sale_id, position",
+            )?;
+            let items = item_statement
+                .query_map(params![organization_id, sale_id, limit], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        SaleItemRecord {
+                            id: row.get(1)?,
+                            product_name: row.get(2)?,
+                            variant_name: row.get(3)?,
+                            sku: row.get(4)?,
+                            unit: row.get(5)?,
+                            quantity: row.get(6)?,
+                            unit_amount_minor: row.get(7)?,
+                            tax_rate_bps: row.get(8)?,
+                            price_includes_tax: row.get::<_, i64>(9)? != 0,
+                            subtotal_minor: row.get(10)?,
+                            tax_minor: row.get(11)?,
+                            total_minor: row.get(12)?,
+                            price_version_id: row.get(13)?,
+                            variant_id: row.get(14)?,
+                        },
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut sales = sales;
+            let positions: HashMap<String, usize> = sales
+                .iter()
+                .enumerate()
+                .map(|(index, sale)| (sale.id.clone(), index))
+                .collect();
+            for (sale_id, item) in items {
+                if let Some(index) = positions.get(&sale_id) {
+                    sales[*index].items.push(item);
+                }
+            }
+            Ok(sales)
+        })
+    }
+
+    pub fn create_sale(
+        &self,
+        organization_id: &str,
+        sold_by: &str,
+        sale: NewSale,
+    ) -> Result<SaleRecord, DataError> {
+        if sale.items.is_empty() {
+            return Err(DataError::InvalidValue(
+                "a sale needs at least one item".into(),
+            ));
+        }
+        if sale.items.len() > 50 {
+            return Err(DataError::InvalidValue(
+                "a sale accepts at most 50 items".into(),
+            ));
+        }
+        if !matches!(sale.payment_method.as_str(), "cash" | "transfer" | "point") {
+            return Err(DataError::InvalidValue("invalid payment method".into()));
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for item in &sale.items {
+            if !(1..=999).contains(&item.quantity) {
+                return Err(DataError::InvalidValue(
+                    "quantity must be between 1 and 999".into(),
+                ));
+            }
+            if !seen.insert(item.variant_id.as_str()) {
+                return Err(DataError::InvalidValue(
+                    "the same variant appears more than once".into(),
+                ));
+            }
+        }
+
+        let sale_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let currency = organization_currency(&transaction, organization_id)?;
+            let effective_at =
+                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+            let mut lines = Vec::with_capacity(sale.items.len());
+            for (position, item) in sale.items.iter().enumerate() {
+                let row = transaction
+                    .query_row(
+                        "SELECT v.id, p.id, p.name, v.name, v.sku, v.unit,
+                                v.status, p.status, pr.id, pr.amount_minor,
+                                pr.tax_rate_bps, pr.price_includes_tax
+                         FROM catalog_variants v
+                         JOIN catalog_products p ON p.id = v.product_id
+                         LEFT JOIN catalog_price_versions pr
+                           ON pr.id = (
+                               SELECT id FROM catalog_price_versions
+                               WHERE variant_id = v.id AND effective_from <= ?3
+                               ORDER BY effective_from DESC, created_at DESC
+                               LIMIT 1
+                           )
+                         WHERE v.id = ?1 AND v.organization_id = ?2",
+                        params![item.variant_id, organization_id, effective_at],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                SaleVariantRow {
+                                    product_id: row.get(1)?,
+                                    product_name: row.get(2)?,
+                                    variant_name: row.get(3)?,
+                                    sku: row.get(4)?,
+                                    unit: row.get(5)?,
+                                    variant_status: row.get(6)?,
+                                    product_status: row.get(7)?,
+                                    price_version_id: row.get(8)?,
+                                    amount_minor: row.get(9)?,
+                                    tax_rate_bps: row.get(10)?,
+                                    price_includes_tax: row.get(11)?,
+                                },
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((variant_id, row)) = row else {
+                    return Err(DataError::CatalogVariantNotFound);
+                };
+                if row.variant_status != "active" || row.product_status != "active" {
+                    return Err(DataError::InvalidValue(
+                        "archived products or variants cannot be sold".into(),
+                    ));
+                }
+                let (
+                    Some(price_version_id),
+                    Some(amount_minor),
+                    Some(tax_rate_bps),
+                    Some(includes),
+                ) = (
+                    row.price_version_id,
+                    row.amount_minor,
+                    row.tax_rate_bps,
+                    row.price_includes_tax,
+                )
+                else {
+                    return Err(DataError::InvalidValue(
+                        "a variant has no effective price".into(),
+                    ));
+                };
+                if amount_minor < 0 || !(0..=10_000).contains(&tax_rate_bps) {
+                    return Err(DataError::InvalidValue("invalid catalog price".into()));
+                }
+                let price_includes_tax = includes != 0;
+                let (subtotal_minor, tax_minor, total_minor) = line_totals(
+                    amount_minor,
+                    item.quantity,
+                    tax_rate_bps,
+                    price_includes_tax,
+                )?;
+                lines.push(SaleLine {
+                    position,
+                    product_id: row.product_id,
+                    variant_id,
+                    price_version_id,
+                    product_name: row.product_name,
+                    variant_name: row.variant_name,
+                    sku: row.sku,
+                    unit: row.unit,
+                    quantity: item.quantity,
+                    unit_amount_minor: amount_minor,
+                    tax_rate_bps,
+                    price_includes_tax,
+                    subtotal_minor,
+                    tax_minor,
+                    total_minor,
+                });
+            }
+
+            let subtotal_minor = lines.iter().try_fold(0_i64, |total, line| {
+                total.checked_add(line.subtotal_minor).ok_or_else(overflow)
+            })?;
+            let tax_minor = lines.iter().try_fold(0_i64, |total, line| {
+                total.checked_add(line.tax_minor).ok_or_else(overflow)
+            })?;
+            let total_minor = lines.iter().try_fold(0_i64, |total, line| {
+                total.checked_add(line.total_minor).ok_or_else(overflow)
+            })?;
+            if subtotal_minor > MAX_AMOUNT_MINOR || total_minor > MAX_AMOUNT_MINOR {
+                return Err(DataError::InvalidValue(
+                    "the sale total is too large".into(),
+                ));
+            }
+
+            let (cash_received_minor, change_minor) = match sale.payment_method.as_str() {
+                "cash" => {
+                    let received = sale.cash_received_minor.unwrap_or(total_minor);
+                    if received < total_minor {
+                        return Err(DataError::InvalidValue(
+                            "cash received is less than the total".into(),
+                        ));
+                    }
+                    if received > MAX_AMOUNT_MINOR {
+                        return Err(DataError::InvalidValue("cash received is too large".into()));
+                    }
+                    (Some(received), Some(received - total_minor))
+                }
+                _ => {
+                    if sale.cash_received_minor.is_some() {
+                        return Err(DataError::InvalidValue(
+                            "cash received only applies to cash payments".into(),
+                        ));
+                    }
+                    (None, None)
+                }
+            };
+
+            transaction.execute(
+                "INSERT INTO sales
+                     (id, organization_id, currency, subtotal_minor, tax_minor,
+                      total_minor, payment_method, cash_received_minor, change_minor,
+                      sold_by, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    sale_id,
+                    organization_id,
+                    currency,
+                    subtotal_minor,
+                    tax_minor,
+                    total_minor,
+                    sale.payment_method,
+                    cash_received_minor,
+                    change_minor,
+                    sold_by,
+                    now
+                ],
+            )?;
+            for line in &lines {
+                transaction.execute(
+                    "INSERT INTO sale_items
+                         (id, organization_id, sale_id, position, product_id, variant_id,
+                          price_version_id, product_name, variant_name, sku, unit,
+                          quantity, unit_amount_minor, tax_rate_bps, price_includes_tax,
+                          subtotal_minor, tax_minor, total_minor)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                             ?14, ?15, ?16, ?17, ?18)",
+                    params![
+                        uuid::Uuid::new_v4().to_string(),
+                        organization_id,
+                        sale_id,
+                        line.position as i64,
+                        line.product_id,
+                        line.variant_id,
+                        line.price_version_id,
+                        line.product_name,
+                        line.variant_name,
+                        line.sku,
+                        line.unit,
+                        line.quantity,
+                        line.unit_amount_minor,
+                        line.tax_rate_bps,
+                        i64::from(line.price_includes_tax),
+                        line.subtotal_minor,
+                        line.tax_minor,
+                        line.total_minor
+                    ],
+                )?;
+            }
+            transaction.commit()?;
+        }
+
+        self.sale(organization_id, &sale_id)
+    }
+
     /// Creates the first owner and its organization-wide membership atomically.
     /// There is no default user or universal password.
     pub fn create_owner(
@@ -1002,6 +1431,7 @@ impl Db {
         organization_id: &str,
         name: &str,
         password_hash: &str,
+        recovery_code_hash: Option<&str>,
     ) -> Result<UserRecord, DataError> {
         let name = name.trim();
         if name.is_empty() || password_hash.trim().is_empty() {
@@ -1044,9 +1474,17 @@ impl Db {
 
         transaction.execute(
             "INSERT INTO users
-                 (id, organization_id, name, password_hash, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
-            params![user_id, organization_id, name, password_hash, created_at],
+                 (id, organization_id, name, password_hash, recovery_code_hash,
+                  status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
+            params![
+                user_id,
+                organization_id,
+                name,
+                password_hash,
+                recovery_code_hash,
+                created_at
+            ],
         )?;
         transaction.execute(
             "INSERT INTO staff_memberships
@@ -1096,6 +1534,125 @@ impl Db {
             .optional()
             .map_err(DataError::from)
         })
+    }
+
+    /// Reads the owner's current recovery hash. The hash is never returned to
+    /// the webview; core code uses it only to verify a submitted code.
+    pub fn owner_recovery(
+        &self,
+        organization_id: &str,
+    ) -> Result<Option<OwnerRecoveryRecord>, DataError> {
+        self.with_connection(|conn| {
+            conn.query_row(
+                "SELECT u.id, u.name, u.recovery_code_hash
+                 FROM users u
+                 JOIN staff_memberships s
+                   ON s.organization_id = u.organization_id AND s.user_id = u.id
+                 WHERE u.organization_id = ?1
+                   AND u.status = 'active'
+                   AND s.role = 'owner'
+                   AND s.status = 'active'
+                 LIMIT 1",
+                params![organization_id],
+                |row| {
+                    Ok(OwnerRecoveryRecord {
+                        user_id: row.get(0)?,
+                        name: row.get(1)?,
+                        recovery_code_hash: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DataError::from)
+        })
+    }
+
+    /// Replaces the owner's recovery hash. Generating a new code invalidates
+    /// every previously printed code.
+    pub fn set_owner_recovery_hash(
+        &self,
+        organization_id: &str,
+        owner_id: &str,
+        recovery_code_hash: &str,
+    ) -> Result<(), DataError> {
+        if recovery_code_hash.trim().is_empty() {
+            return Err(DataError::InvalidValue(
+                "recovery code hash is required".into(),
+            ));
+        }
+        let updated = self.with_connection(|conn| {
+            conn.execute(
+                "UPDATE users
+                 SET recovery_code_hash = ?3, updated_at = ?4
+                 WHERE organization_id = ?1 AND id = ?2
+                   AND EXISTS (
+                       SELECT 1 FROM staff_memberships s
+                       WHERE s.organization_id = users.organization_id
+                         AND s.user_id = users.id
+                         AND s.role = 'owner'
+                         AND s.status = 'active'
+                   )",
+                params![
+                    organization_id,
+                    owner_id,
+                    recovery_code_hash,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(DataError::from)
+        })?;
+        if updated == 0 {
+            return Err(DataError::StaffNotFound);
+        }
+        Ok(())
+    }
+
+    /// Sets a new owner password and recovery hash in one transaction. The
+    /// caller has already verified the old recovery code.
+    pub fn reset_owner_password(
+        &self,
+        organization_id: &str,
+        owner_id: &str,
+        expected_recovery_code_hash: &str,
+        password_hash: &str,
+        recovery_code_hash: &str,
+    ) -> Result<(), DataError> {
+        if expected_recovery_code_hash.trim().is_empty()
+            || password_hash.trim().is_empty()
+            || recovery_code_hash.trim().is_empty()
+        {
+            return Err(DataError::InvalidValue(
+                "recovery and password hashes are required".into(),
+            ));
+        }
+        let updated = self.with_connection(|conn| {
+            conn.execute(
+                "UPDATE users
+                 SET password_hash = ?4, recovery_code_hash = ?5, updated_at = ?6
+                 WHERE organization_id = ?1 AND id = ?2
+                   AND recovery_code_hash = ?3
+                   AND EXISTS (
+                       SELECT 1 FROM staff_memberships s
+                       WHERE s.organization_id = users.organization_id
+                         AND s.user_id = users.id
+                         AND s.role = 'owner'
+                         AND s.status = 'active'
+                   )",
+                params![
+                    organization_id,
+                    owner_id,
+                    expected_recovery_code_hash,
+                    password_hash,
+                    recovery_code_hash,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(DataError::from)
+        })?;
+        if updated == 0 {
+            return Err(DataError::RecoveryCodeConflict);
+        }
+        Ok(())
     }
 
     pub fn mark_login(&self, user_id: &str) -> Result<(), DataError> {
@@ -1486,6 +2043,34 @@ fn validate_catalog_status(value: &str) -> Result<(), DataError> {
     }
 }
 
+fn overflow() -> DataError {
+    DataError::InvalidValue("amount is too large".into())
+}
+
+fn line_totals(
+    unit_amount_minor: i64,
+    quantity: i64,
+    tax_rate_bps: i64,
+    price_includes_tax: bool,
+) -> Result<(i64, i64, i64), DataError> {
+    let gross = i128::from(unit_amount_minor)
+        .checked_mul(i128::from(quantity))
+        .ok_or_else(overflow)?;
+    let (subtotal, tax, total) = if price_includes_tax {
+        let denominator = 10_000 + i128::from(tax_rate_bps);
+        let subtotal = (gross * 20_000 + denominator) / (denominator * 2);
+        (subtotal, gross - subtotal, gross)
+    } else {
+        let tax = (gross * i128::from(tax_rate_bps) + 5_000) / 10_000;
+        (gross, tax, gross + tax)
+    };
+    let limit = i128::from(MAX_AMOUNT_MINOR);
+    if subtotal > limit || tax > limit || total > limit {
+        return Err(overflow());
+    }
+    Ok((subtotal as i64, tax as i64, total as i64))
+}
+
 fn validate_new_price(price: NewCatalogPrice) -> Result<ValidatedCatalogPrice, DataError> {
     if price.amount_minor < 0 {
         return Err(DataError::InvalidValue(
@@ -1698,7 +2283,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 6);
+        assert_eq!(second_status.schema_version, 8);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -1730,14 +2315,19 @@ mod tests {
 
         assert!(!db.has_owner().expect("owner query"));
         let owner = db
-            .create_owner(&organization_id, "Ana Pérez", "$argon2id$dummy")
+            .create_owner(
+                &organization_id,
+                "Ana Pérez",
+                "$argon2id$dummy",
+                Some("$argon2id$recovery"),
+            )
             .expect("creates owner");
         assert_eq!(owner.name, "Ana Pérez");
         assert_eq!(owner.role, "owner");
         assert!(db.has_owner().expect("owner query"));
 
         let duplicate = db
-            .create_owner(&organization_id, "Luis", "$argon2id$dummy")
+            .create_owner(&organization_id, "Luis", "$argon2id$dummy", None)
             .expect_err("must reject a second owner");
         assert!(matches!(duplicate, DataError::OwnerAlreadyExists));
 
@@ -1748,6 +2338,52 @@ mod tests {
         assert_eq!(credentials.user_id, owner.id);
         assert_eq!(credentials.role, "owner");
         assert_eq!(credentials.password_hash, "$argon2id$dummy");
+
+        let recovery = db
+            .owner_recovery(&organization_id)
+            .expect("reads owner recovery")
+            .expect("owner recovery exists");
+        assert_eq!(recovery.user_id, owner.id);
+        assert_eq!(
+            recovery.recovery_code_hash.as_deref(),
+            Some("$argon2id$recovery")
+        );
+
+        db.set_owner_recovery_hash(&organization_id, &owner.id, "$argon2id$new-recovery")
+            .expect("rotates recovery code");
+        db.reset_owner_password(
+            &organization_id,
+            &owner.id,
+            "$argon2id$new-recovery",
+            "$argon2id$new-password",
+            "$argon2id$reset-recovery",
+        )
+        .expect("resets owner password");
+
+        let reused = db
+            .reset_owner_password(
+                &organization_id,
+                &owner.id,
+                "$argon2id$new-recovery",
+                "$argon2id$reused-password",
+                "$argon2id$reused-recovery",
+            )
+            .expect_err("must reject a reused recovery hash");
+        assert!(matches!(reused, DataError::RecoveryCodeConflict));
+
+        let credentials = db
+            .find_user_credentials(&organization_id, "Ana Pérez")
+            .expect("looks up user")
+            .expect("user exists");
+        assert_eq!(credentials.password_hash, "$argon2id$new-password");
+        assert_eq!(
+            db.owner_recovery(&organization_id)
+                .expect("reads owner recovery")
+                .expect("owner recovery exists")
+                .recovery_code_hash
+                .as_deref(),
+            Some("$argon2id$reset-recovery")
+        );
     }
 
     #[test]
@@ -1758,7 +2394,7 @@ mod tests {
         let organization_id = db
             .create_organization("Gimnasio Centro")
             .expect("creates organization");
-        db.create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+        db.create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
             .expect("creates owner");
 
         let staff = db
@@ -1819,7 +2455,7 @@ mod tests {
             .create_organization("Gimnasio Centro")
             .expect("creates organization");
         let owner = db
-            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
             .expect("creates owner");
 
         let product = db
@@ -1971,7 +2607,7 @@ mod tests {
             .create_organization("Gimnasio Centro")
             .expect("creates organization");
         let owner = db
-            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner")
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
             .expect("creates owner");
         let item = || NewCatalogItem {
             name: "Agua".into(),
@@ -2232,6 +2868,136 @@ mod tests {
         let p95 = samples[94];
         println!("access p95 = {p95:?}");
         assert!(p95 < Duration::from_millis(300));
+    }
+
+    #[test]
+    fn sales_snapshot_prices_and_reject_invalid_payments() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
+            .expect("creates owner");
+        let product = db
+            .create_catalog_item(
+                &organization_id,
+                &owner.id,
+                NewCatalogItem {
+                    name: "Membresía mensual".into(),
+                    category: None,
+                    variant_name: "Mensual".into(),
+                    sku: "MEM-MEN".into(),
+                    barcode: None,
+                    unit: "service".into(),
+                    cost_minor: 0,
+                    price: NewCatalogPrice {
+                        amount_minor: 10_000,
+                        tax_rate_bps: 1_600,
+                        price_includes_tax: true,
+                        effective_from: Some("2020-01-01T00:00:00Z".into()),
+                    },
+                },
+            )
+            .expect("creates product");
+        let variant_id = product.variants[0].id.clone();
+        let price_id = product.variants[0]
+            .current_price
+            .as_ref()
+            .expect("price")
+            .id
+            .clone();
+
+        let sale = db
+            .create_sale(
+                &organization_id,
+                &owner.id,
+                NewSale {
+                    items: vec![NewSaleItem {
+                        variant_id: variant_id.clone(),
+                        quantity: 1,
+                    }],
+                    payment_method: "cash".into(),
+                    cash_received_minor: Some(20_000),
+                },
+            )
+            .expect("creates sale");
+        assert_eq!(sale.subtotal_minor, 8_621);
+        assert_eq!(sale.tax_minor, 1_379);
+        assert_eq!(sale.total_minor, 10_000);
+        assert_eq!(sale.cash_received_minor, Some(20_000));
+        assert_eq!(sale.change_minor, Some(10_000));
+        assert_eq!(sale.sold_by_name.as_deref(), Some("Ana Pérez"));
+        assert_eq!(sale.items.len(), 1);
+        assert_eq!(sale.items[0].price_version_id, price_id);
+        assert_eq!(sale.items[0].sku, "MEM-MEN");
+
+        let transfer = db
+            .create_sale(
+                &organization_id,
+                &owner.id,
+                NewSale {
+                    items: vec![NewSaleItem {
+                        variant_id: variant_id.clone(),
+                        quantity: 2,
+                    }],
+                    payment_method: "transfer".into(),
+                    cash_received_minor: None,
+                },
+            )
+            .expect("creates transfer sale");
+        assert_eq!(transfer.total_minor, 20_000);
+        assert_eq!(transfer.cash_received_minor, None);
+        assert_eq!(db.list_sales(&organization_id, 50).expect("lists").len(), 2);
+
+        assert!(matches!(
+            db.create_sale(
+                &organization_id,
+                &owner.id,
+                NewSale {
+                    items: vec![NewSaleItem {
+                        variant_id: variant_id.clone(),
+                        quantity: 1,
+                    }],
+                    payment_method: "cash".into(),
+                    cash_received_minor: Some(1),
+                },
+            )
+            .expect_err("cash below total"),
+            DataError::InvalidValue(_)
+        ));
+        assert!(matches!(
+            db.create_sale(
+                &organization_id,
+                &owner.id,
+                NewSale {
+                    items: vec![
+                        NewSaleItem {
+                            variant_id: variant_id.clone(),
+                            quantity: 1,
+                        },
+                        NewSaleItem {
+                            variant_id: variant_id.clone(),
+                            quantity: 1,
+                        },
+                    ],
+                    payment_method: "cash".into(),
+                    cash_received_minor: None,
+                },
+            )
+            .expect_err("duplicate variant"),
+            DataError::InvalidValue(_)
+        ));
+        assert!(matches!(
+            db.with_connection(|conn| {
+                conn.execute("UPDATE sales SET total_minor = 0", [])?;
+                Ok(())
+            })
+            .expect_err("sales are append-only"),
+            DataError::Sqlite(_)
+        ));
     }
 
     #[test]

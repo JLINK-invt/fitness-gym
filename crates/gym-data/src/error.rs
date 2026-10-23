@@ -45,6 +45,9 @@ pub enum DataError {
     #[error("the staff member does not exist in this gym")]
     StaffNotFound,
 
+    #[error("the recovery code was already used or replaced")]
+    RecoveryCodeConflict,
+
     #[error("a catalog product with that name already exists")]
     CatalogProductAlreadyExists,
 

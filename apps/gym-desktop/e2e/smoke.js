@@ -4,6 +4,7 @@ async (page) => {
     passed.push(name);
     console.log(`PASS ${name}`);
   };
+  let recoveryCode = "";
 
   await page.addInitScript(() => {
     window.__e2eAnswers = [];
@@ -22,6 +23,19 @@ async (page) => {
   await page.getByLabel(/^Contraseña/).fill("clave-segura-123");
   await page.getByLabel("Repetir contraseña").fill("clave-segura-123");
   await page.getByRole("button", { name: "Crear cuenta y entrar" }).click();
+  await page.getByRole("heading", { name: "Guarda tu código de recuperación" }).waitFor();
+  recoveryCode = (await page.locator("code").first().innerText()).trim();
+  if (!/^[A-Z2-9]{5}(-[A-Z2-9]{5}){3}$/.test(recoveryCode)) {
+    throw new Error(`Código de recuperación con formato inesperado: ${recoveryCode}`);
+  }
+  await page.waitForTimeout(31_000);
+  if ((await page.getByRole("heading", { name: "Guarda tu código de recuperación" }).count()) === 0) {
+    throw new Error("La pantalla del código desapareció sin confirmación.");
+  }
+  await page
+    .getByLabel("Ya guardé el código de recuperación en un lugar seguro.")
+    .check();
+  await page.getByRole("button", { name: "Continuar" }).click();
   await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
   await page.getByText("Ana E2E").waitFor();
   await page.getByText("Dueño", { exact: true }).waitFor();
@@ -179,6 +193,16 @@ async (page) => {
   await page.getByRole("link", { name: "Acceso" }).waitFor();
   pass("cajero no ve módulos administrativos");
 
+  await page.getByRole("link", { name: "Ventas" }).click();
+  await page.getByRole("heading", { name: "Ventas", exact: true }).waitFor();
+  await page.getByRole("button", { name: /Membresía mensual/ }).first().click();
+  await page.getByLabel("Efectivo recibido").fill("500");
+  await page.getByText("Cambio: $100.00").waitFor();
+  await page.getByRole("button", { name: "Completar venta" }).click();
+  await page.getByRole("heading", { name: "Ticket de venta" }).waitFor();
+  await page.getByText("Ticket no fiscal").waitFor();
+  pass("cajero cobra una venta en efectivo");
+
   await page.getByRole("button", { name: "Salir" }).click();
   await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-segura-123");
@@ -204,6 +228,33 @@ async (page) => {
   await page.getByRole("button", { name: "Entrar" }).click();
   await page.getByText("Nombre o contraseña incorrectos.").waitFor();
   pass("empleado desactivado ya no puede entrar");
+
+  await page.getByRole("button", { name: "¿Olvidaste la contraseña del dueño?" }).click();
+  await page.getByRole("heading", { name: "Recupera la cuenta" }).waitFor();
+  await page.getByLabel("Código de recuperación").fill(recoveryCode);
+  await page.getByLabel(/^Contraseña nueva/).fill("clave-nueva-456");
+  await page.getByLabel("Repetir contraseña nueva").fill("clave-nueva-456");
+  await page.getByRole("button", { name: "Fijar contraseña y entrar" }).click();
+  await page.getByRole("heading", { name: "Tu nuevo código de recuperación" }).waitFor();
+  const nextRecoveryCode = (await page.locator("code").first().innerText()).trim();
+  if (!nextRecoveryCode || nextRecoveryCode === recoveryCode) {
+    throw new Error("La recuperación no rotó el código.");
+  }
+  await page
+    .getByLabel("Ya guardé el código de recuperación en un lugar seguro.")
+    .check();
+  await page.getByRole("button", { name: "Continuar" }).click();
+  await page.getByRole("heading", { name: "Equipo" }).waitFor();
+  await page.getByRole("link", { name: "Diagnóstico" }).click();
+  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  pass("código de recuperación permite fijar contraseña y entrar");
+
+  await page.getByRole("button", { name: "Salir" }).click();
+  await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
+  await page.getByLabel("Contraseña").fill("clave-nueva-456");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  pass("la contraseña recuperada inicia sesión");
 
   await page.screenshot({ path: "e2e-smoke.png", fullPage: true });
   return { checks: passed.length, passed };

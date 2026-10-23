@@ -5,33 +5,37 @@ backend Rust modular y SQLite cifrada con SQLCipher.
 
 Las **Fases 1 y 2** están cerradas: fundación desktop Rust/SQLite, identidad
 local, sesiones, tenancy, RBAC y auditoría inmutable. La **Fase 3** añade POS,
-caja, inventario y suscripciones para usuarios comunes. El primer slice de
-catálogo, precios e impuestos ya está operativo. CRM, socios, membresías
+caja, inventario y suscripciones para usuarios comunes. El catálogo con precios
+versionados y las ventas con cobro ya están operativos. CRM, socios, membresías
 y clases forman parte de la misma versión desktop. Mobile queda para próximamente.
 
 ## Estado actual
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v6 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v8 |
 | Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
-| Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, sin usuario por defecto |
+| Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
-| RBAC por rol en comandos Tauri | Operativo para auth, personal y catálogo |
+| Recuperación del dueño | Operativo: código de un solo uso, sin correo ni autenticador |
+| RBAC por rol en comandos Tauri | Operativo para auth, personal, catálogo y ventas |
 | Personal | Operativo: crear accesos, cambiar rol y desactivar/reactivar con auditoría |
 | Auditoría inmutable | Operativo: append-only, hash chain y verificación de integridad |
 | Catálogo, precios e impuestos | Operativo: productos, variantes, precios versionados y archivo lógico |
+| Ventas y cobro | Operativo: carrito, impuestos, efectivo/transferencia/Point y ticket no fiscal |
 | Suscripciones | Siguiente en Fase 3: planes, altas, renovaciones y vencimientos |
 | CRM, socios y membresías | Misma versión desktop, Fase 4 |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 17 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 20 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
-exige login, administra accesos del equipo con permisos revalidados en Rust,
+entrega un código de recuperación, exige login, administra accesos del equipo con
+permisos revalidados en Rust,
 registra auditoría append-only con hash chain, administra el catálogo con precios
-versionados, simula accesos y crea snapshots cifrados. Funciona sin Internet. Solo
-se admite un gimnasio por instalación; la pantalla no expone conceptos de
-multi-organización ni multi-sede.
+versionados, cobra ventas con snapshot de precio, simula accesos y crea
+snapshots cifrados. Funciona sin Internet. Solo se admite un gimnasio por
+instalación; la pantalla no expone conceptos de multi-organización ni
+multi-sede.
 
 ## Requisitos
 
@@ -114,7 +118,8 @@ idempotencia, validación de frase, creación de backup, rechazo de frase
 incorrecta, restauración y cierre de sesión. También crea un producto con precio
 inicial, una nueva versión de precio y una segunda variante, además de un cajero.
 Comprueba que el cajero no ve módulos administrativos, verifica la cadena de
-auditoría y confirma que una cuenta desactivada ya no puede iniciar sesión.
+auditoría, confirma que una cuenta desactivada ya no puede iniciar sesión y que
+el código de recuperación permite fijar una contraseña nueva.
 
 ## Estructura
 

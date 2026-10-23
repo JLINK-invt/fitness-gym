@@ -35,17 +35,17 @@ alterar historial o un ex empleado con acceso al equipo.
    una sesión ya autenticada, nunca el único factor, con rate limit y auditoría.
 8. **Bootstrap:** en el primer arranque se crea el `owner` con contraseña. No
    existe usuario por defecto ni contraseña universal.
-9. **MFA y recuperación del dueño:** diferidos a Phase 5 (endurecimiento). No
-   bloquean la operación V1 porque el equipo es local, de un solo gimnasio, y el
-   dueño custodia su contraseña. Si se implementan, MFA será adicional (nunca
-   sustituto) y la recuperación exigirá presencia física más un factor de
-   recuperación auditable; no habrá reset por correo.
+9. **MFA y recuperación del dueño:** MFA sigue diferido a Phase 5. La
+   recuperación se implementó en V1 mediante un código de un solo uso mostrado al
+   crear la cuenta y regenerable por el dueño desde **Equipo**. El código se
+   guarda solo como hash Argon2id, se rota al usarlo y exige presencia física en
+   el equipo; no hay reset por correo ni autenticador.
 
 ## Consecuencias
 
-- El equipo debe custodiar la contraseña del owner; no hay "recuperar cuenta"
-  por correo ni reset automático. Perderla exige intervención de soporte con
-  acceso físico y un procedimiento auditado que se definirá en Phase 5.
+- El equipo debe custodiar la contraseña y el código de recuperación del owner.
+  No hay "recuperar cuenta" por correo ni reset automático. Si se pierden ambos,
+  solo queda restaurar un backup anterior o reinstalar en desarrollo.
 - Cambiar de cajero requiere login o bloqueo/desbloqueo; se medirá el costo en
   el vertical slice antes de añadir PIN.
 - La matriz de permisos es un contrato verificable en pruebas unitarias.

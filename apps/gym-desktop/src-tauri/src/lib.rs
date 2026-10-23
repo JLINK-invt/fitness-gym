@@ -6,15 +6,17 @@ use gym_contracts::{
     AccessDecision, AccessEventSummary, AccessRequest, AddCatalogPriceInput,
     AddCatalogVariantInput, ApiError, AuditEventSummary, AuditIntegrity, AuditResult,
     BackupSummary, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
-    CatalogVariant, CreateCatalogItemInput, ErrorCode, HealthReport, HealthStatus, ModuleHealth,
-    RestoreOutcome, SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary,
-    UpdateCatalogProductInput, UpdateCatalogVariantInput, CONTRACT_VERSION,
+    CatalogVariant, CreateCatalogItemInput, CreateSaleInput, ErrorCode, HealthReport, HealthStatus,
+    ModuleHealth, PaymentMethod, RecoveryCode, RecoveryKit, RestoreOutcome, Sale, SaleItem,
+    SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary, UpdateCatalogProductInput,
+    UpdateCatalogVariantInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
     auth::{
-        hash_password, normalize_person_name, verify_password, IDLE_TIMEOUT_MINUTES,
-        LOGIN_LOCK_MINUTES, MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS, STAFF_MIN_PASSWORD_CHARS,
+        generate_recovery_code, hash_password, hash_recovery_code, normalize_person_name,
+        verify_password, verify_recovery_code, IDLE_TIMEOUT_MINUTES, LOGIN_LOCK_MINUTES,
+        MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS, STAFF_MIN_PASSWORD_CHARS,
     },
     rbac::{self, Permission, Role},
     CORE_VERSION, SERVICE_NAME,
@@ -22,7 +24,8 @@ use gym_core::{
 use gym_data::{
     sha256_hex, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, DataError, Db,
     DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider, NewCatalogItem,
-    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate,
+    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewSale,
+    NewSaleItem, SaleItemRecord, SaleRecord,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -414,6 +417,58 @@ fn catalog_product(record: CatalogProductRecord) -> CatalogProduct {
     }
 }
 
+fn payment_method(value: &str) -> PaymentMethod {
+    match value {
+        "transfer" => PaymentMethod::Transfer,
+        "point" => PaymentMethod::Point,
+        _ => PaymentMethod::Cash,
+    }
+}
+
+fn payment_method_str(value: PaymentMethod) -> &'static str {
+    match value {
+        PaymentMethod::Cash => "cash",
+        PaymentMethod::Transfer => "transfer",
+        PaymentMethod::Point => "point",
+    }
+}
+
+fn sale_item(record: SaleItemRecord) -> SaleItem {
+    SaleItem {
+        id: record.id,
+        variant_id: record.variant_id,
+        price_version_id: record.price_version_id,
+        product_name: record.product_name,
+        variant_name: record.variant_name,
+        sku: record.sku,
+        unit: catalog_unit(&record.unit),
+        quantity: record.quantity,
+        unit_amount_minor: record.unit_amount_minor,
+        tax_rate_bps: record.tax_rate_bps,
+        price_includes_tax: record.price_includes_tax,
+        subtotal_minor: record.subtotal_minor,
+        tax_minor: record.tax_minor,
+        total_minor: record.total_minor,
+    }
+}
+
+fn sale(record: SaleRecord) -> Sale {
+    Sale {
+        id: record.id,
+        currency: record.currency,
+        subtotal_minor: record.subtotal_minor,
+        tax_minor: record.tax_minor,
+        total_minor: record.total_minor,
+        payment_method: payment_method(&record.payment_method),
+        cash_received_minor: record.cash_received_minor,
+        change_minor: record.change_minor,
+        sold_by: record.sold_by,
+        sold_by_name: record.sold_by_name,
+        items: record.items.into_iter().map(sale_item).collect(),
+        created_at: record.created_at,
+    }
+}
+
 fn new_catalog_price(input: CatalogPriceInput) -> NewCatalogPrice {
     NewCatalogPrice {
         amount_minor: input.amount_minor,
@@ -519,12 +574,20 @@ fn bootstrap_owner(
     password: String,
     gym_name: Option<String>,
     state: State<'_, AppState>,
-) -> Result<SessionSummary, ApiError> {
+) -> Result<RecoveryKit, ApiError> {
     let db = state.db()?;
     let name = normalize_person_name(&name)
         .map_err(|error| ApiError::invalid(format!("nombre del dueño inválido: {error}")))?;
     let password_hash = hash_password(&password, OWNER_MIN_PASSWORD_CHARS)
         .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let recovery_code = generate_recovery_code();
+    let recovery_code_hash = hash_recovery_code(&recovery_code).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Internal,
+            "no se pudo crear el código de recuperación",
+        )
+        .with_details(error.to_string())
+    })?;
 
     let organization = match db.organization().map_err(|error| {
         ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
@@ -560,7 +623,12 @@ fn bootstrap_owner(
     };
 
     let owner = db
-        .create_owner(&organization.id, &name, &password_hash)
+        .create_owner(
+            &organization.id,
+            &name,
+            &password_hash,
+            Some(&recovery_code_hash),
+        )
         .map_err(|error| match error {
             DataError::OwnerAlreadyExists => {
                 ApiError::invalid("este gimnasio ya tiene una cuenta de dueño")
@@ -602,7 +670,207 @@ fn bootstrap_owner(
         })?;
         auth.session = Some(active);
     }
-    Ok(summary)
+    Ok(RecoveryKit {
+        session: summary,
+        recovery_code,
+    })
+}
+
+#[tauri::command]
+fn generate_owner_recovery(state: State<'_, AppState>) -> Result<RecoveryCode, ApiError> {
+    let session = state.authorize(Permission::ManageSettings)?;
+    if session.role != Role::Owner {
+        return Err(ApiError::new(
+            ErrorCode::Unauthorized,
+            "solo la cuenta del dueño puede generar el código de recuperación",
+        ));
+    }
+
+    let db = state.db()?;
+    let recovery_code = generate_recovery_code();
+    let recovery_code_hash = hash_recovery_code(&recovery_code).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Internal,
+            "no se pudo crear el código de recuperación",
+        )
+        .with_details(error.to_string())
+    })?;
+    db.set_owner_recovery_hash(
+        &session.organization_id,
+        &session.user_id,
+        &recovery_code_hash,
+    )
+    .map_err(|error| {
+        ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo guardar el código de recuperación",
+        )
+        .with_details(error.to_string())
+    })?;
+
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "auth.owner_recovery_generated",
+        "staff_membership",
+        "allowed",
+        "tauri",
+        None,
+    );
+    Ok(RecoveryCode { recovery_code })
+}
+
+#[tauri::command]
+fn recover_owner(
+    recovery_code: String,
+    new_password: String,
+    state: State<'_, AppState>,
+) -> Result<RecoveryKit, ApiError> {
+    const RECOVERY_KEY: &str = "__owner_recovery__";
+
+    let db = state.db()?;
+    let organization = db
+        .organization()
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo leer la configuración local")
+                .with_details(error.to_string())
+        })?
+        .ok_or_else(|| ApiError::invalid("configura el gimnasio antes de recuperar la cuenta"))?;
+    let owner = db
+        .owner_recovery(&organization.id)
+        .map_err(|error| {
+            ApiError::new(
+                ErrorCode::Storage,
+                "no se pudo consultar la cuenta del dueño",
+            )
+            .with_details(error.to_string())
+        })?
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "la cuenta del dueño no existe"))?;
+
+    let now = Instant::now();
+    {
+        let auth = state.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        if auth.is_blocked(RECOVERY_KEY, now) {
+            return Err(ApiError::new(
+                ErrorCode::Unauthorized,
+                "demasiados intentos fallidos; espera 5 minutos",
+            ));
+        }
+    }
+
+    let valid = owner
+        .recovery_code_hash
+        .as_deref()
+        .is_some_and(|hash| verify_recovery_code(hash, &recovery_code))
+        || (owner.recovery_code_hash.is_none()
+            && verify_password(dummy_password_hash(), &recovery_code));
+
+    if !valid {
+        let blocked = {
+            let mut auth = state.auth.lock().map_err(|_| {
+                ApiError::new(
+                    ErrorCode::Internal,
+                    "el estado de autenticación no está disponible",
+                )
+            })?;
+            auth.record_failure(RECOVERY_KEY, now)
+        };
+        let _ = db.record_audit_event(
+            &organization.id,
+            None,
+            "auth.owner_recovered",
+            "staff_membership",
+            "failed",
+            "tauri",
+            None,
+        );
+        return Err(ApiError::new(
+            ErrorCode::Unauthorized,
+            if blocked {
+                "demasiados intentos fallidos; espera 5 minutos"
+            } else {
+                "código de recuperación incorrecto o no configurado"
+            },
+        ));
+    }
+
+    let password_hash = hash_password(&new_password, OWNER_MIN_PASSWORD_CHARS)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let next_recovery_code = generate_recovery_code();
+    let next_recovery_hash = hash_recovery_code(&next_recovery_code).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Internal,
+            "no se pudo crear el código de recuperación",
+        )
+        .with_details(error.to_string())
+    })?;
+
+    db.reset_owner_password(
+        &organization.id,
+        &owner.user_id,
+        owner.recovery_code_hash.as_deref().unwrap_or_default(),
+        &password_hash,
+        &next_recovery_hash,
+    )
+    .map_err(|error| match error {
+        DataError::RecoveryCodeConflict => ApiError::new(
+            ErrorCode::Unauthorized,
+            "el código de recuperación ya fue usado o reemplazado",
+        ),
+        other => ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo actualizar la cuenta del dueño",
+        )
+        .with_details(other.to_string()),
+    })?;
+
+    {
+        let mut auth = state.auth.lock().map_err(|_| {
+            ApiError::new(
+                ErrorCode::Internal,
+                "el estado de autenticación no está disponible",
+            )
+        })?;
+        auth.clear_failures(RECOVERY_KEY);
+        auth.session = Some(ActiveSession {
+            session: gym_core::auth::Session {
+                user_id: owner.user_id.clone(),
+                organization_id: organization.id.clone(),
+                name: owner.name.clone(),
+                role: Role::Owner,
+            },
+            last_seen: Instant::now(),
+        });
+    }
+    let _ = db.mark_login(&owner.user_id);
+    let _ = db.record_audit_event(
+        &organization.id,
+        Some(&owner.user_id),
+        "auth.owner_recovered",
+        "staff_membership",
+        "allowed",
+        "tauri",
+        None,
+    );
+
+    let active = ActiveSession {
+        session: gym_core::auth::Session {
+            user_id: owner.user_id,
+            organization_id: organization.id,
+            name: owner.name,
+            role: Role::Owner,
+        },
+        last_seen: Instant::now(),
+    };
+    Ok(RecoveryKit {
+        session: session_summary(&active),
+        recovery_code: next_recovery_code,
+    })
 }
 
 #[tauri::command]
@@ -1137,6 +1405,46 @@ fn add_catalog_price(
 }
 
 #[tauri::command]
+fn list_sales(state: State<'_, AppState>) -> Result<Vec<Sale>, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    db.list_sales(&session.organization_id, 50)
+        .map_err(catalog_api_error)
+        .map(|sales| sales.into_iter().map(sale).collect())
+}
+
+#[tauri::command]
+fn create_sale(input: CreateSaleInput, state: State<'_, AppState>) -> Result<Sale, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let new_sale = NewSale {
+        items: input
+            .items
+            .into_iter()
+            .map(|item| NewSaleItem {
+                variant_id: item.variant_id,
+                quantity: item.quantity,
+            })
+            .collect(),
+        payment_method: payment_method_str(input.payment_method).to_string(),
+        cash_received_minor: input.cash_received_minor,
+    };
+    let record = db
+        .create_sale(&session.organization_id, &session.user_id, new_sale)
+        .map_err(catalog_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "sale.completed",
+        "sale",
+        "allowed",
+        "tauri",
+        Some(&record.id),
+    );
+    Ok(sale(record))
+}
+
+#[tauri::command]
 fn create_backup(
     passphrase: String,
     state: State<'_, AppState>,
@@ -1292,6 +1600,8 @@ pub fn run() {
             health,
             get_setup_state,
             bootstrap_owner,
+            generate_owner_recovery,
+            recover_owner,
             login,
             logout,
             current_session,
@@ -1309,6 +1619,8 @@ pub fn run() {
             update_catalog_product,
             update_catalog_variant,
             add_catalog_price,
+            list_sales,
+            create_sale,
             list_audit_events,
             verify_audit_chain
         ])

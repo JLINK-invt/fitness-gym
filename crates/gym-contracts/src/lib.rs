@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.0.0";
+pub const CONTRACT_VERSION: &str = "2.2.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,6 +133,22 @@ pub struct SessionSummary {
     pub name: String,
     pub role: StaffRole,
     pub permissions: Vec<String>,
+}
+
+/// Returned exactly once after creating or recovering the owner account. The
+/// plaintext recovery code must be stored outside the app because only its
+/// Argon2id hash is persisted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKit {
+    pub session: SessionSummary,
+    pub recovery_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryCode {
+    pub recovery_code: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +294,66 @@ pub struct UpdateCatalogVariantInput {
 pub struct AddCatalogPriceInput {
     pub variant_id: String,
     pub price: CatalogPriceInput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PaymentMethod {
+    Cash,
+    Transfer,
+    Point,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleItemInput {
+    pub variant_id: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSaleInput {
+    pub items: Vec<SaleItemInput>,
+    pub payment_method: PaymentMethod,
+    #[serde(default)]
+    pub cash_received_minor: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleItem {
+    pub id: String,
+    pub variant_id: String,
+    pub price_version_id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub unit: CatalogUnit,
+    pub quantity: i64,
+    pub unit_amount_minor: i64,
+    pub tax_rate_bps: i64,
+    pub price_includes_tax: bool,
+    pub subtotal_minor: i64,
+    pub tax_minor: i64,
+    pub total_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sale {
+    pub id: String,
+    pub currency: String,
+    pub subtotal_minor: i64,
+    pub tax_minor: i64,
+    pub total_minor: i64,
+    pub payment_method: PaymentMethod,
+    pub cash_received_minor: Option<i64>,
+    pub change_minor: Option<i64>,
+    pub sold_by: Option<String>,
+    pub sold_by_name: Option<String>,
+    pub items: Vec<SaleItem>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,6 +515,20 @@ mod tests {
         let json = serde_json::to_value(session).expect("serializes");
         assert_eq!(json["role"], "owner");
         assert_eq!(json["permissions"][0], "manageSettings");
+
+        let kit = RecoveryKit {
+            session: SessionSummary {
+                user_id: "user-1".into(),
+                organization_id: "org-1".into(),
+                name: "Ana".into(),
+                role: StaffRole::Owner,
+                permissions: vec!["manageSettings".into()],
+            },
+            recovery_code: "AAAAA-BBBBB-CCCCC-DDDDD".into(),
+        };
+        let json = serde_json::to_value(kit).expect("serializes");
+        assert_eq!(json["recoveryCode"], "AAAAA-BBBBB-CCCCC-DDDDD");
+        assert_eq!(json["session"]["role"], "owner");
     }
 
     #[test]

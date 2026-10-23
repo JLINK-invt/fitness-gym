@@ -13,8 +13,8 @@ pub use db::{
     verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CatalogPriceRecord,
     CatalogProductRecord, CatalogVariantRecord, Db, LocalDatabaseStatus, ModuleEventRecord,
     NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
-    NewCatalogVariantUpdate, OrganizationRecord, RecordedModuleEvent, StaffRecord,
-    UserCredentialRecord, UserRecord,
+    NewCatalogVariantUpdate, NewSale, NewSaleItem, OrganizationRecord, OwnerRecoveryRecord,
+    RecordedModuleEvent, SaleItemRecord, SaleRecord, StaffRecord, UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

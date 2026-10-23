@@ -39,21 +39,27 @@ La nube no participa en la operación. Todo el flujo anterior es local.
   chain SHA-256 (`prev_hash` + `event_hash`). La migración 4 conserva los eventos
   heredados sin hash y la cadena verificable empieza después.
 - `catalog_products` conserva productos y variantes con archivo lógico;
-  `catalog_price_versions` es append-only y una venta futura deberá referenciar
-  la versión de precio usada, no solo el producto.
+  `catalog_price_versions` es append-only.
+- `sales` y `sale_items` son append-only y guardan snapshot de nombres, SKU,
+  unidad y precio; cada línea referencia la versión de precio cobrada.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
 
 ## Identidad y sesión
 
-- `users` guarda nombre, hash Argon2id y estado; `staff_memberships` guarda el
-  rol. Solo puede existir un `owner` activo por instalación.
+- `users` guarda nombre, hash Argon2id, hash del código de recuperación y estado;
+  `staff_memberships` guarda el rol. Solo puede existir un `owner` activo por
+  instalación.
 - El primer arranque crea gimnasio y dueño en una sola operación; no hay usuario
   ni contraseña por defecto.
-- La contraseña nunca cruza al webview después del formulario; el hash queda en
-  SQLCipher y la sesión vive en memoria del proceso Tauri.
-- Cinco fallos bloquean el nombre durante cinco minutos; 15 minutos de
-  inactividad cierran la sesión.
+- La contraseña nunca cruza al webview después del formulario; el hash y el hash
+  del código de recuperación quedan en SQLCipher y la sesión vive en memoria del
+  proceso Tauri. El código en claro se muestra una sola vez.
+- El código de recuperación del dueño es de un solo uso: al recuperar la cuenta
+  se rota de forma atómica y se abre una sesión nueva. El dueño puede generar
+  otro desde **Equipo**.
+- Cinco fallos bloquean el nombre o el flujo de recuperación durante cinco
+  minutos; 15 minutos de inactividad cierran la sesión.
 - Los comandos operativos reciben el actor desde la sesión Rust, nunca desde un
   `userId` enviado por la UI.
 - El dueño administra todo el equipo. Un encargado solo ve y administra cajeros
@@ -63,9 +69,10 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - Revocar una cuenta impide el siguiente login; la sesión en memoria se invalida
   al expirar o al hacer logout. Restaurar un backup cierra la sesión porque la
   base restaurada puede tener otro dueño o personal revocado.
-- `auth.owner_created`, `auth.login`, `auth.logout`, `staff.created`,
-  `staff.updated`, `access.simulated` y `backup.created` se registran en
-  `audit_events` con el actor de la sesión.
+- `auth.owner_created`, `auth.login`, `auth.logout`,
+  `auth.owner_recovery_generated`, `auth.owner_recovered`, `staff.created`,
+  `staff.updated`, `access.simulated`, `catalog.*`, `sale.completed` y
+  `backup.created` se registran en `audit_events` con el actor de la sesión.
 
 ## Auditoría
 
@@ -101,6 +108,16 @@ impuesto incluido y `effective_from`; la UI muestra la versión vigente según l
 hora actual. La moneda proviene del gimnasio. Los SKU y códigos de barras son
 únicos por gimnasio. El contrato completo está en
 [`contracts/catalog.md`](contracts/catalog.md).
+
+## Ventas y cobro
+
+La pantalla **Ventas** requiere `OperatePos`. El cajero busca variantes activas
+del catálogo, arma el carrito y cobra en efectivo, transferencia o terminal
+Point. Rust resuelve la versión de precio vigente y calcula subtotal, impuesto y
+total; la UI solo muestra el desglose. La venta guarda un snapshot inmutable y
+las tablas rechazan `UPDATE` y `DELETE`. El ticket es no fiscal y se imprime bajo
+demanda. El contrato completo está en
+[`contracts/sales.md`](contracts/sales.md).
 
 ## Acceso simulado
 

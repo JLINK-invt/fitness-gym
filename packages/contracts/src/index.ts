@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.0.0";
+export const CONTRACT_VERSION = "2.2.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -79,6 +79,15 @@ export interface SessionSummary {
   name: string;
   role: StaffRole;
   permissions: Permission[];
+}
+
+export interface RecoveryKit {
+  session: SessionSummary;
+  recoveryCode: string;
+}
+
+export interface RecoveryCode {
+  recoveryCode: string;
 }
 
 export type StaffStatus = "active" | "revoked";
@@ -176,6 +185,51 @@ export interface UpdateCatalogVariantInput {
 export interface AddCatalogPriceInput {
   variantId: string;
   price: CatalogPriceInput;
+}
+
+export type PaymentMethod = "cash" | "transfer" | "point";
+
+export interface SaleItemInput {
+  variantId: string;
+  quantity: number;
+}
+
+export interface CreateSaleInput {
+  items: SaleItemInput[];
+  paymentMethod: PaymentMethod;
+  cashReceivedMinor?: number;
+}
+
+export interface SaleItem {
+  id: string;
+  variantId: string;
+  priceVersionId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unit: CatalogUnit;
+  quantity: number;
+  unitAmountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+}
+
+export interface Sale {
+  id: string;
+  currency: string;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paymentMethod: PaymentMethod;
+  cashReceivedMinor: number | null;
+  changeMinor: number | null;
+  soldBy: string | null;
+  soldByName: string | null;
+  items: SaleItem[];
+  createdAt: string;
 }
 
 export type AuditResult = "allowed" | "denied" | "failed";

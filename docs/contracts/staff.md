@@ -1,9 +1,9 @@
 # Contrato local · personal (Phase 2)
 
-- **Versión de contrato:** 2.0.0
+- **Versión de contrato:** 2.2.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v6 (`0006_single_site.sql`)
+- **Esquema:** v8 (`0008_owner_recovery.sql`)
 
 ## Comandos
 
@@ -65,6 +65,7 @@ No se guardan contraseñas, hashes ni datos innecesarios en la auditoría.
 
 ## Fuera de alcance
 
-Borrado físico de personas, permisos personalizados, múltiples dueños y edición
-del perfil propio. La recuperación del dueño se difiere a Phase 5
-(endurecimiento).
+Borrado físico de personas, reset de contraseñas de empleados, permisos
+personalizados, múltiples dueños y edición del perfil propio. La recuperación del
+dueño se documenta en [`auth-local.md`](auth-local.md); no se ejecuta desde el
+módulo de personal.

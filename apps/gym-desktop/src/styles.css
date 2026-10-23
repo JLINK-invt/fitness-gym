@@ -21,3 +21,24 @@ body {
   background-color: #f5f7f6;
   color: var(--color-ink-900);
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt,
+  #receipt * {
+    visibility: visible;
+  }
+
+  #receipt {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    color: #000;
+  }
+}

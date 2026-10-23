@@ -56,6 +56,7 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 | Crear/restaurar backup | `ManageBackups` | Confirmación explícita; registrar archivo y resultado |
 | Ver auditoría | `ViewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
 | Cambiar configuración | `ManageSettings` | Incluye moneda, zona horaria y política de sesión |
+| Generar código de recuperación del dueño | `ManageSettings` | Solo el rol `owner`; invalida el código anterior y se audita |
 
 ## Auditoría mínima
 
@@ -76,8 +77,10 @@ Cada comando sensible debe registrar en `audit_events`:
 
 ## Estado de implementación
 
-- Aplicado en auth, personal, acceso, backups y catálogo: permisos, membresía
-  activa, validación de recurso y auditoría append-only.
+- Aplicado en auth, personal, acceso, backups, catálogo y ventas: permisos,
+  membresía activa, validación de recurso y auditoría append-only.
+- `OperatePos` cubre cobrar y consultar ventas recientes; contabilidad no opera
+  caja.
 - `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
   edición o borrado.
 - Pendiente al construir cada módulo: recepción, finanzas, inventario y

@@ -1,9 +1,9 @@
 # Contrato local · auditoría inmutable (Phase 2)
 
-- **Versión de contrato:** 2.0.0
+- **Versión de contrato:** 2.2.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v6 (`0006_single_site.sql`)
+- **Esquema:** v8 (`0008_owner_recovery.sql`)
 
 ## Objetivo
 
@@ -64,9 +64,13 @@ a esa migración; los eventos heredados siguen siendo inmutables por trigger.
 ## Acciones registradas
 
 - `auth.owner_created`, `auth.login`, `auth.logout`.
+- `auth.owner_recovery_generated`, `auth.owner_recovered`.
 - `staff.created`, `staff.updated`.
 - `access.simulated` solo cuando se inserta un evento nuevo (no en replay
   idempotente).
+- `catalog.product_created`, `catalog.variant_created`,
+  `catalog.product_updated`, `catalog.variant_updated` y `catalog.price_added`.
+- `sale.completed`, con `correlationId` igual al id de la venta.
 - `backup.created`.
 
 Las exportaciones y operaciones de finanzas/inventario se agregarán cuando esos
