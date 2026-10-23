@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "1.4.0";
+export const CONTRACT_VERSION = "1.5.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -63,6 +63,7 @@ export type Permission =
   | "viewFinance"
   | "operatePos"
   | "manageInventory"
+  | "manageCatalog"
   | "manageBackups"
   | "viewAudit";
 
@@ -101,6 +102,92 @@ export interface StaffSummary {
   status: StaffStatus;
   lastLoginAt: string | null;
   createdAt: string;
+}
+
+export type CatalogStatus = "active" | "archived";
+
+export type CatalogUnit = "piece" | "service" | "session" | "package";
+
+export interface CatalogPrice {
+  id: string;
+  currency: string;
+  amountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  effectiveFrom: string;
+  createdAt: string;
+}
+
+export interface CatalogVariant {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string | null;
+  unit: CatalogUnit;
+  costMinor: number;
+  status: CatalogStatus;
+  currentPrice: CatalogPrice | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogProduct {
+  id: string;
+  name: string;
+  category: string | null;
+  status: CatalogStatus;
+  variants: CatalogVariant[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogPriceInput {
+  amountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  effectiveFrom?: string;
+}
+
+export interface CatalogVariantInput {
+  name: string;
+  sku: string;
+  barcode?: string;
+  unit: CatalogUnit;
+  costMinor: number;
+  price: CatalogPriceInput;
+}
+
+export interface CreateCatalogItemInput {
+  name: string;
+  category?: string;
+  variant: CatalogVariantInput;
+}
+
+export interface AddCatalogVariantInput {
+  productId: string;
+  variant: CatalogVariantInput;
+}
+
+export interface UpdateCatalogProductInput {
+  productId: string;
+  name: string;
+  category?: string;
+  status: CatalogStatus;
+}
+
+export interface UpdateCatalogVariantInput {
+  variantId: string;
+  name: string;
+  sku: string;
+  barcode?: string;
+  unit: CatalogUnit;
+  costMinor: number;
+  status: CatalogStatus;
+}
+
+export interface AddCatalogPriceInput {
+  variantId: string;
+  price: CatalogPriceInput;
 }
 
 export type AuditResult = "allowed" | "denied" | "failed";

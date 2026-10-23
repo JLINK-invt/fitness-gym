@@ -53,6 +53,37 @@ type AuditEvent = {
   createdAt: string;
 };
 
+type CatalogPrice = {
+  id: string;
+  currency: string;
+  amountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  effectiveFrom: string;
+  createdAt: string;
+};
+type StoredVariant = {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string | null;
+  unit: "piece" | "service" | "session" | "package";
+  costMinor: number;
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredProduct = {
+  id: string;
+  name: string;
+  category: string | null;
+  status: "active" | "archived";
+  variants: StoredVariant[];
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredPrice = CatalogPrice & { variantId: string };
+
 (() => {
   const state: {
     organizations: Organization[];
@@ -65,6 +96,8 @@ type AuditEvent = {
     backups: Backup[];
     secrets: Map<string, string>;
     auditEvents: AuditEvent[];
+    catalog: StoredProduct[];
+    catalogPrices: StoredPrice[];
   } = {
     organizations: [],
     owner: null,
@@ -76,6 +109,8 @@ type AuditEvent = {
     backups: [],
     secrets: new Map(),
     auditEvents: [],
+    catalog: [],
+    catalogPrices: [],
   };
 
   const now = () => new Date().toISOString();
@@ -90,6 +125,7 @@ type AuditEvent = {
           "viewFinance",
           "operatePos",
           "manageInventory",
+          "manageCatalog",
           "manageBackups",
           "viewAudit",
         ];
@@ -99,6 +135,7 @@ type AuditEvent = {
           "viewFinance",
           "operatePos",
           "manageInventory",
+          "manageCatalog",
           "manageBackups",
           "viewAudit",
         ];
@@ -177,7 +214,7 @@ type AuditEvent = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "1.4.0",
+    contractVersion: "1.5.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -188,12 +225,93 @@ type AuditEvent = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 4,
+      schemaVersion: 5,
       integrityOk: true,
       organizations: state.organizations.length,
     },
     checkedAt: now(),
   });
+
+  const currentPriceFor = (variantId: string) => {
+    const now = nowTime();
+    return (
+      state.catalogPrices
+        .filter(
+          (price) =>
+            price.variantId === variantId && Date.parse(price.effectiveFrom) <= now,
+        )
+        .sort((left, right) => {
+          const byEffective = Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom);
+          return byEffective !== 0
+            ? byEffective
+            : Date.parse(right.createdAt) - Date.parse(left.createdAt);
+        })[0] ?? null
+    );
+  };
+  const nowTime = () => Date.now();
+  const catalogSnapshot = (product: StoredProduct) => ({
+    ...product,
+    variants: product.variants.map((variant) => ({
+      ...variant,
+      currentPrice: currentPriceFor(variant.id),
+    })),
+  });
+  const allVariants = () =>
+    state.catalog.flatMap((product) =>
+      product.variants.map((variant) => ({ product, variant })),
+    );
+  const parseCatalogPrice = (input: Record<string, unknown>) => {
+    const amountMinor = Number(input.amountMinor);
+    const taxRateBps = Number(input.taxRateBps);
+    if (!Number.isInteger(amountMinor) || amountMinor < 0) {
+      throw apiError("invalidRequest", "El precio debe ser cero o mayor.");
+    }
+    if (!Number.isInteger(taxRateBps) || taxRateBps < 0 || taxRateBps > 10_000) {
+      throw apiError("invalidRequest", "El impuesto debe estar entre 0 y 100%.");
+    }
+    return {
+      amountMinor,
+      taxRateBps,
+      priceIncludesTax: Boolean(input.priceIncludesTax),
+      effectiveFrom: String(input.effectiveFrom ?? "") || now(),
+    };
+  };
+  const parseCatalogVariant = (input: Record<string, unknown>) => {
+    const name = String(input.name ?? "").trim();
+    const sku = String(input.sku ?? "").trim();
+    const barcode = String(input.barcode ?? "").trim() || null;
+    const unit = String(input.unit ?? "");
+    const costMinor = Number(input.costMinor);
+    if (name.length < 1) {
+      throw apiError("invalidRequest", "El nombre de la variante es obligatorio.");
+    }
+    if (sku.length < 1) {
+      throw apiError("invalidRequest", "El SKU es obligatorio.");
+    }
+    if (!["piece", "service", "session", "package"].includes(unit)) {
+      throw apiError("invalidRequest", "Unidad inválida.");
+    }
+    if (!Number.isInteger(costMinor) || costMinor < 0) {
+      throw apiError("invalidRequest", "El costo debe ser cero o mayor.");
+    }
+    if (allVariants().some(({ variant }) => variant.sku.toLowerCase() === sku.toLowerCase())) {
+      throw apiError("invalidRequest", "Ya existe una variante con ese SKU.");
+    }
+    if (
+      barcode &&
+      allVariants().some(({ variant }) => variant.barcode === barcode)
+    ) {
+      throw apiError("invalidRequest", "Ya existe una variante con ese código de barras.");
+    }
+    return {
+      name,
+      sku,
+      barcode,
+      unit: unit as StoredVariant["unit"],
+      costMinor,
+      price: parseCatalogPrice((input.price ?? {}) as Record<string, unknown>),
+    };
+  };
 
   const internals = {
     invoke: async (command: string, args: Record<string, unknown> = {}) => {
@@ -497,6 +615,250 @@ type AuditEvent = {
           return staffSummary(member);
         }
 
+        case "list_catalog": {
+          requirePermission("operatePos");
+          return state.catalog.map(catalogSnapshot);
+        }
+
+        case "create_catalog_item": {
+          requirePermission("manageCatalog");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          if (name.length < 2) {
+            throw apiError("invalidRequest", "El nombre del producto es demasiado corto.");
+          }
+          if (
+            state.catalog.some(
+              (product) => product.name.toLowerCase() === name.toLowerCase(),
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe un producto con ese nombre.");
+          }
+          const category = String(input.category ?? "").trim() || null;
+          const variantInput = (input.variant ?? {}) as Record<string, unknown>;
+          const variant = parseCatalogVariant(variantInput);
+          const productId = uuid();
+          const variantId = uuid();
+          const createdAt = now();
+          const price: StoredPrice = {
+            id: uuid(),
+            variantId,
+            currency: "MXN",
+            ...variant.price,
+            createdAt,
+          };
+          const product: StoredProduct = {
+            id: productId,
+            name,
+            category,
+            status: "active",
+            variants: [
+              {
+                id: variantId,
+                name: variant.name,
+                sku: variant.sku,
+                barcode: variant.barcode,
+                unit: variant.unit,
+                costMinor: variant.costMinor,
+                status: "active",
+                createdAt,
+                updatedAt: createdAt,
+              },
+            ],
+            createdAt,
+            updatedAt: createdAt,
+          };
+          state.catalog.push(product);
+          state.catalogPrices.push(price);
+          recordAudit({
+            actor: state.session,
+            action: "catalog.product_created",
+            resource: "catalog_product",
+            correlationId: product.id,
+          });
+          return catalogSnapshot(product);
+        }
+
+        case "add_catalog_variant": {
+          requirePermission("manageCatalog");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const product = state.catalog.find(
+            (item) => item.id === String(input.productId ?? ""),
+          );
+          if (!product) {
+            throw apiError("notFound", "El producto no existe.");
+          }
+          if (product.status !== "active") {
+            throw apiError("invalidRequest", "No puedes agregar variantes a un producto archivado.");
+          }
+          const variant = parseCatalogVariant(
+            (input.variant ?? {}) as Record<string, unknown>,
+          );
+          const variantId = uuid();
+          const createdAt = now();
+          product.variants.push({
+            id: variantId,
+            name: variant.name,
+            sku: variant.sku,
+            barcode: variant.barcode,
+            unit: variant.unit,
+            costMinor: variant.costMinor,
+            status: "active",
+            createdAt,
+            updatedAt: createdAt,
+          });
+          state.catalogPrices.push({
+            id: uuid(),
+            variantId,
+            currency: "MXN",
+            ...variant.price,
+            createdAt,
+          });
+          product.updatedAt = createdAt;
+          recordAudit({
+            actor: state.session,
+            action: "catalog.variant_created",
+            resource: "catalog_variant",
+            correlationId: variantId,
+          });
+          return catalogSnapshot(product);
+        }
+
+        case "update_catalog_product": {
+          requirePermission("manageCatalog");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const product = state.catalog.find(
+            (item) => item.id === String(input.productId ?? ""),
+          );
+          if (!product) {
+            throw apiError("notFound", "El producto no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const status = String(input.status ?? "");
+          if (name.length < 2) {
+            throw apiError("invalidRequest", "El nombre del producto es demasiado corto.");
+          }
+          if (status !== "active" && status !== "archived") {
+            throw apiError("invalidRequest", "Estado de producto inválido.");
+          }
+          if (
+            state.catalog.some(
+              (item) =>
+                item.id !== product.id &&
+                item.name.toLowerCase() === name.toLowerCase(),
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe un producto con ese nombre.");
+          }
+          product.name = name;
+          product.category = String(input.category ?? "").trim() || null;
+          product.status = status;
+          product.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "catalog.product_updated",
+            resource: "catalog_product",
+            correlationId: product.id,
+          });
+          return catalogSnapshot(product);
+        }
+
+        case "update_catalog_variant": {
+          requirePermission("manageCatalog");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const match = allVariants().find(
+            ({ variant }) => variant.id === String(input.variantId ?? ""),
+          );
+          if (!match) {
+            throw apiError("notFound", "La variante no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const sku = String(input.sku ?? "").trim();
+          const barcode = String(input.barcode ?? "").trim() || null;
+          const unit = String(input.unit ?? "");
+          const status = String(input.status ?? "");
+          const costMinor = Number(input.costMinor);
+          if (name.length < 1 || sku.length < 1) {
+            throw apiError("invalidRequest", "Nombre y SKU son obligatorios.");
+          }
+          if (!["piece", "service", "session", "package"].includes(unit)) {
+            throw apiError("invalidRequest", "Unidad inválida.");
+          }
+          if (status !== "active" && status !== "archived") {
+            throw apiError("invalidRequest", "Estado de variante inválido.");
+          }
+          if (!Number.isInteger(costMinor) || costMinor < 0) {
+            throw apiError("invalidRequest", "El costo debe ser cero o mayor.");
+          }
+          if (
+            allVariants().some(
+              ({ variant }) =>
+                variant.id !== match.variant.id &&
+                variant.sku.toLowerCase() === sku.toLowerCase(),
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe una variante con ese SKU.");
+          }
+          if (
+            barcode &&
+            allVariants().some(
+              ({ variant }) => variant.id !== match.variant.id && variant.barcode === barcode,
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe una variante con ese código de barras.");
+          }
+          match.variant.name = name;
+          match.variant.sku = sku;
+          match.variant.barcode = barcode;
+          match.variant.unit = unit as StoredVariant["unit"];
+          match.variant.costMinor = costMinor;
+          match.variant.status = status;
+          match.variant.updatedAt = now();
+          match.product.updatedAt = match.variant.updatedAt;
+          recordAudit({
+            actor: state.session,
+            action: "catalog.variant_updated",
+            resource: "catalog_variant",
+            correlationId: match.variant.id,
+          });
+          return catalogSnapshot(match.product);
+        }
+
+        case "add_catalog_price": {
+          requirePermission("manageCatalog");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const match = allVariants().find(
+            ({ variant }) => variant.id === String(input.variantId ?? ""),
+          );
+          if (!match) {
+            throw apiError("notFound", "La variante no existe.");
+          }
+          if (match.product.status !== "active" || match.variant.status !== "active") {
+            throw apiError(
+              "invalidRequest",
+              "No puedes agregar precios a un producto o variante archivado.",
+            );
+          }
+          const price = parseCatalogPrice((input.price ?? {}) as Record<string, unknown>);
+          const createdAt = now();
+          state.catalogPrices.push({
+            id: uuid(),
+            variantId: match.variant.id,
+            currency: "MXN",
+            ...price,
+            createdAt,
+          });
+          match.variant.updatedAt = createdAt;
+          match.product.updatedAt = createdAt;
+          recordAudit({
+            actor: state.session,
+            action: "catalog.price_added",
+            resource: "catalog_variant",
+            correlationId: match.variant.id,
+          });
+          return catalogSnapshot(match.product);
+        }
+
         case "simulate_access": {
           if (!state.session) {
             throw apiError("unauthorized", "Inicia sesión para continuar.");
@@ -597,7 +959,7 @@ type AuditEvent = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 4,
+            schemaVersion: 5,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);

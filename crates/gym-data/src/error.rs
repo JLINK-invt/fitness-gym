@@ -53,4 +53,19 @@ pub enum DataError {
 
     #[error("the site still has active staff")]
     SiteHasActiveStaff,
+
+    #[error("a catalog product with that name already exists")]
+    CatalogProductAlreadyExists,
+
+    #[error("a catalog variant with that SKU already exists")]
+    CatalogSkuAlreadyExists,
+
+    #[error("a catalog variant with that barcode already exists")]
+    CatalogBarcodeAlreadyExists,
+
+    #[error("the catalog product does not exist in this gym")]
+    CatalogProductNotFound,
+
+    #[error("the catalog variant does not exist in this gym")]
+    CatalogVariantNotFound,
 }

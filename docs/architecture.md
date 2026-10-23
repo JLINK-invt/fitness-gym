@@ -40,6 +40,9 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - `audit_events` es append-only por trigger, con `sequence` por gimnasio y hash
   chain SHA-256 (`prev_hash` + `event_hash`). La migración 4 conserva los eventos
   heredados sin hash y la cadena verificable empieza después.
+- `catalog_products` conserva productos y variantes con archivo lógico;
+  `catalog_price_versions` es append-only y una venta futura deberá referenciar
+  la versión de precio usada, no solo el producto.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
 
@@ -94,6 +97,16 @@ Reglas de autorización aplicadas en Rust:
 
 El contrato completo está en
 [`contracts/sites-staff.md`](contracts/sites-staff.md).
+
+## Catálogo y precios
+
+La pantalla **Catálogo** requiere `ManageCatalog` y permite crear productos con
+una variante inicial, editar producto o variante, archivarlos y agregar precios.
+Cada precio es una versión inmutable con monto, tasa de impuesto, indicador de
+impuesto incluido y `effective_from`; la UI muestra la versión vigente según la
+hora actual. La moneda proviene del gimnasio. Los SKU y códigos de barras son
+únicos por gimnasio. El contrato completo está en
+[`contracts/catalog.md`](contracts/catalog.md).
 
 ## Acceso simulado
 

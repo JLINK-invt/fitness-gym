@@ -1,6 +1,6 @@
 # Contrato local · auditoría inmutable (Phase 2)
 
-- **Versión de contrato:** 1.4.0 (aditiva sobre 1.3.0)
+- **Versión de contrato:** 1.5.0 (sin cambios de DTO; compatible con 1.4.0)
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 - **Esquema:** v4 (`0004_immutable_audit.sql`)

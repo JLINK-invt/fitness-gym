@@ -3,8 +3,12 @@ import type {
   AccessEventSummary,
   AccessRequest,
   AuditEventSummary,
+  AddCatalogPriceInput,
+  AddCatalogVariantInput,
   AuditIntegrity,
   BackupSummary,
+  CatalogProduct,
+  CreateCatalogItemInput,
   HealthReport,
   RestoreOutcome,
   SessionSummary,
@@ -14,6 +18,8 @@ import type {
   StaffRole,
   StaffStatus,
   StaffSummary,
+  UpdateCatalogProductInput,
+  UpdateCatalogVariantInput,
 } from "@gym/contracts";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -48,6 +54,17 @@ export const api = {
     invoke<BackupSummary>("create_backup", { passphrase }),
   restoreBackup: (fileName: string, passphrase: string) =>
     invoke<RestoreOutcome>("restore_backup", { fileName, passphrase }),
+  listCatalog: () => invoke<CatalogProduct[]>("list_catalog"),
+  createCatalogItem: (input: CreateCatalogItemInput) =>
+    invoke<CatalogProduct>("create_catalog_item", { input }),
+  addCatalogVariant: (input: AddCatalogVariantInput) =>
+    invoke<CatalogProduct>("add_catalog_variant", { input }),
+  updateCatalogProduct: (input: UpdateCatalogProductInput) =>
+    invoke<CatalogProduct>("update_catalog_product", { input }),
+  updateCatalogVariant: (input: UpdateCatalogVariantInput) =>
+    invoke<CatalogProduct>("update_catalog_variant", { input }),
+  addCatalogPrice: (input: AddCatalogPriceInput) =>
+    invoke<CatalogProduct>("add_catalog_price", { input }),
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),

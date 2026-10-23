@@ -10,8 +10,10 @@ mod key;
 mod migrations;
 
 pub use db::{
-    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, Db, LocalDatabaseStatus,
-    ModuleEventRecord, OrganizationRecord, RecordedModuleEvent, SiteRecord, StaffRecord,
+    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CatalogPriceRecord,
+    CatalogProductRecord, CatalogVariantRecord, Db, LocalDatabaseStatus, ModuleEventRecord,
+    NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
+    NewCatalogVariantUpdate, OrganizationRecord, RecordedModuleEvent, SiteRecord, StaffRecord,
     UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;

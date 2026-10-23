@@ -20,6 +20,7 @@ pub enum Permission {
     ViewFinance,
     OperatePos,
     ManageInventory,
+    ManageCatalog,
     ManageBackups,
     ViewAudit,
 }
@@ -43,6 +44,7 @@ impl Permission {
             Permission::ViewFinance => "viewFinance",
             Permission::OperatePos => "operatePos",
             Permission::ManageInventory => "manageInventory",
+            Permission::ManageCatalog => "manageCatalog",
             Permission::ManageBackups => "manageBackups",
             Permission::ViewAudit => "viewAudit",
         }
@@ -51,12 +53,13 @@ impl Permission {
 
 pub const V1_ROLES: [Role; 4] = [Role::Owner, Role::Manager, Role::Cashier, Role::Accounting];
 
-pub const V1_PERMISSIONS: [Permission; 7] = [
+pub const V1_PERMISSIONS: [Permission; 8] = [
     Permission::ManageSettings,
     Permission::ManageStaff,
     Permission::ViewFinance,
     Permission::OperatePos,
     Permission::ManageInventory,
+    Permission::ManageCatalog,
     Permission::ManageBackups,
     Permission::ViewAudit,
 ];
@@ -71,6 +74,7 @@ pub fn permissions_for(role: Role) -> &'static [Permission] {
             Permission::ViewFinance,
             Permission::OperatePos,
             Permission::ManageInventory,
+            Permission::ManageCatalog,
             Permission::ManageBackups,
             Permission::ViewAudit,
         ],
@@ -79,6 +83,7 @@ pub fn permissions_for(role: Role) -> &'static [Permission] {
             Permission::ViewFinance,
             Permission::OperatePos,
             Permission::ManageInventory,
+            Permission::ManageCatalog,
             Permission::ManageBackups,
             Permission::ViewAudit,
         ],
@@ -108,6 +113,14 @@ mod tests {
     }
 
     #[test]
+    fn cashier_cannot_change_catalog_prices() {
+        assert_eq!(
+            authorize(Role::Cashier, Permission::ManageCatalog),
+            Err(CoreError::Forbidden(Permission::ManageCatalog))
+        );
+    }
+
+    #[test]
     fn owner_can_manage_everything() {
         for permission in V1_PERMISSIONS {
             assert!(authorize(Role::Owner, permission).is_ok());
@@ -124,6 +137,7 @@ mod tests {
                 Permission::ViewFinance,
                 Permission::OperatePos,
                 Permission::ManageInventory,
+                Permission::ManageCatalog,
                 Permission::ManageBackups,
                 Permission::ViewAudit,
             ]
