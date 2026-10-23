@@ -1,6 +1,6 @@
-# Contrato local · reportes financieros (Phase 3)
+# Contrato local · reportes y analítica (Phase 3–4)
 
-- **Versión de contrato:** 2.10.0
+- **Versión de contrato:** 2.11.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
 - **Esquema:** v15 (`0015_payment_charges.sql`)
@@ -66,6 +66,16 @@ interface FinancialReport {
   refundedMinor: number;
   netSalesMinor: number;
   averageSaleMinor: number;
+  attachRateBps: number;
+  itemsPerSaleMilli: number;
+  costOfGoodsMinor: number;
+  marginMinor: number;
+  marginBps: number;
+  inventoryValueStartMinor: number;
+  inventoryValueEndMinor: number;
+  inventoryTurnoverBps: number;
+  adjustmentsUnits: number;
+  adjustmentsCostMinor: number;
   paymentMethods: PaymentMethodTotal[];
   cashSessionsCount: number;
   openCashSessions: number;
@@ -94,6 +104,20 @@ interface FinancialReportExport {
   refundedMinor`.
 - `averageSaleMinor` es el promedio entero de la venta bruta entre las ventas
   del rango, o cero si no hay ventas.
+- `attachRateBps` es el porcentaje (en puntos base) de ventas con dos o más
+  líneas distintas; `itemsPerSaleMilli` es el promedio de unidades por venta
+  expresado en milésimas.
+- `costOfGoodsMinor` suma el costo de las ventas por producto;
+  `marginMinor = netSalesMinor - costOfGoodsMinor` y `marginBps` expresa el
+  margen sobre la venta neta.
+- `inventoryValueStartMinor` y `inventoryValueEndMinor` son el valor acumulado
+  de `inventory_movements.total_cost_minor` antes de `from` y de `to`.
+  `inventoryTurnoverBps = costOfGoodsMinor / promedio de inventario`, en puntos
+  base; si el promedio no es positivo, queda en cero.
+- `adjustmentsUnits` y `adjustmentsCostMinor` son la suma firmada de los ajustes
+  del rango; se desglosan en `inventoryAdjustments`.
+- `productSales` se ordena por venta neta y unidades descendentes; el primer
+  elemento es el top de productos.
 - `paymentMethods` siempre incluye `cash`, `transfer` y `point`, aun en cero.
   Cada método separa ventas y devoluciones, y su neto reconcilia con el total.
 - Las ventas por producto agrupan por variante con snapshot de nombre, SKU,

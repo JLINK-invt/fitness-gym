@@ -353,6 +353,16 @@ pub struct FinancialReportRecord {
     pub refunded_minor: i64,
     pub net_sales_minor: i64,
     pub average_sale_minor: i64,
+    pub attach_rate_bps: i64,
+    pub items_per_sale_milli: i64,
+    pub cost_of_goods_minor: i64,
+    pub margin_minor: i64,
+    pub margin_bps: i64,
+    pub inventory_value_start_minor: i64,
+    pub inventory_value_end_minor: i64,
+    pub inventory_turnover_bps: i64,
+    pub adjustments_units: i64,
+    pub adjustments_cost_minor: i64,
     pub payment_methods: Vec<PaymentMethodTotalRecord>,
     pub cash_sessions_count: i64,
     pub open_cash_sessions: i64,
@@ -2581,6 +2591,70 @@ impl Db {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
 
+            let (multi_item_sales, sold_units): (i64, i64) = conn.query_row(
+                "SELECT COALESCE(SUM(CASE WHEN item_count >= 2 THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(units), 0)
+                 FROM (
+                     SELECT si.sale_id, COUNT(*) AS item_count, SUM(si.quantity) AS units
+                     FROM sale_items si
+                     JOIN sales s ON s.id = si.sale_id
+                     WHERE s.organization_id = ?1
+                       AND julianday(s.created_at) >= julianday(?2)
+                       AND julianday(s.created_at) < julianday(?3)
+                     GROUP BY si.sale_id
+                 )",
+                params![organization_id, from, to],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let inventory_value_before = |boundary: &str| -> Result<i64, DataError> {
+                conn.query_row(
+                    "SELECT COALESCE(SUM(total_cost_minor), 0)
+                     FROM inventory_movements
+                     WHERE organization_id = ?1
+                       AND julianday(created_at) < julianday(?2)",
+                    params![organization_id, boundary],
+                    |row| row.get(0),
+                )
+                .map_err(DataError::from)
+            };
+            let inventory_value_start_minor = inventory_value_before(&from)?;
+            let inventory_value_end_minor = inventory_value_before(&to)?;
+            let inventory_value_average_minor =
+                (inventory_value_start_minor + inventory_value_end_minor) / 2;
+
+            let adjustments_units: i64 = inventory_adjustments
+                .iter()
+                .map(|adjustment| adjustment.units_delta)
+                .sum();
+            let adjustments_cost_minor: i64 = inventory_adjustments
+                .iter()
+                .map(|adjustment| adjustment.cost_minor)
+                .sum();
+            let cost_of_goods_minor: i64 =
+                product_sales.iter().map(|product| product.cost_minor).sum();
+            let net_sales_minor = gross_sales_minor - refunded_minor;
+            let margin_minor = net_sales_minor - cost_of_goods_minor;
+            let margin_bps = if net_sales_minor == 0 {
+                0
+            } else {
+                margin_minor * 10_000 / net_sales_minor
+            };
+            let attach_rate_bps = if sales_count > 0 {
+                (multi_item_sales * 10_000 + sales_count / 2) / sales_count
+            } else {
+                0
+            };
+            let items_per_sale_milli = if sales_count > 0 {
+                (sold_units * 1_000 + sales_count / 2) / sales_count
+            } else {
+                0
+            };
+            let inventory_turnover_bps = if inventory_value_average_minor > 0 {
+                cost_of_goods_minor * 10_000 / inventory_value_average_minor
+            } else {
+                0
+            };
+
             let (
                 cash_sessions_count,
                 closed_cash_sessions,
@@ -2610,12 +2684,22 @@ impl Db {
                 tax_minor,
                 refunds_count,
                 refunded_minor,
-                net_sales_minor: gross_sales_minor - refunded_minor,
+                net_sales_minor,
                 average_sale_minor: if sales_count > 0 {
                     (gross_sales_minor + sales_count / 2) / sales_count
                 } else {
                     0
                 },
+                attach_rate_bps,
+                items_per_sale_milli,
+                cost_of_goods_minor,
+                margin_minor,
+                margin_bps,
+                inventory_value_start_minor,
+                inventory_value_end_minor,
+                inventory_turnover_bps,
+                adjustments_units,
+                adjustments_cost_minor,
                 payment_methods,
                 cash_sessions_count,
                 open_cash_sessions: cash_sessions_count - closed_cash_sessions,
@@ -5122,6 +5206,16 @@ mod tests {
         assert_eq!(report.refunded_minor, 10_000);
         assert_eq!(report.net_sales_minor, 25_000);
         assert_eq!(report.average_sale_minor, 17_500);
+        assert_eq!(report.attach_rate_bps, 5_000);
+        assert_eq!(report.items_per_sale_milli, 2_000);
+        assert_eq!(report.cost_of_goods_minor, 8_000);
+        assert_eq!(report.margin_minor, 17_000);
+        assert_eq!(report.margin_bps, 6_800);
+        assert_eq!(report.inventory_value_start_minor, 0);
+        assert_eq!(report.inventory_value_end_minor, 8_000);
+        assert_eq!(report.inventory_turnover_bps, 20_000);
+        assert_eq!(report.adjustments_units, -1);
+        assert_eq!(report.adjustments_cost_minor, -4_000);
 
         let payment_sales: i64 = report
             .payment_methods
@@ -5225,6 +5319,16 @@ mod tests {
             .expect("empty report");
         assert_eq!(future.sales_count, 0);
         assert_eq!(future.net_sales_minor, 0);
+        assert_eq!(future.attach_rate_bps, 0);
+        assert_eq!(future.items_per_sale_milli, 0);
+        assert_eq!(future.cost_of_goods_minor, 0);
+        assert_eq!(future.margin_minor, 0);
+        assert_eq!(future.margin_bps, 0);
+        assert_eq!(future.inventory_value_start_minor, 8_000);
+        assert_eq!(future.inventory_value_end_minor, 8_000);
+        assert_eq!(future.inventory_turnover_bps, 0);
+        assert_eq!(future.adjustments_units, 0);
+        assert_eq!(future.adjustments_cost_minor, 0);
         assert_eq!(future.product_sales.len(), 0);
         assert_eq!(future.payment_methods.len(), 3);
 

@@ -605,6 +605,16 @@ fn financial_report_contract(record: FinancialReportRecord) -> FinancialReport {
         refunded_minor: record.refunded_minor,
         net_sales_minor: record.net_sales_minor,
         average_sale_minor: record.average_sale_minor,
+        attach_rate_bps: record.attach_rate_bps,
+        items_per_sale_milli: record.items_per_sale_milli,
+        cost_of_goods_minor: record.cost_of_goods_minor,
+        margin_minor: record.margin_minor,
+        margin_bps: record.margin_bps,
+        inventory_value_start_minor: record.inventory_value_start_minor,
+        inventory_value_end_minor: record.inventory_value_end_minor,
+        inventory_turnover_bps: record.inventory_turnover_bps,
+        adjustments_units: record.adjustments_units,
+        adjustments_cost_minor: record.adjustments_cost_minor,
         payment_methods: record
             .payment_methods
             .into_iter()
@@ -2171,6 +2181,25 @@ fn financial_report_csv(report: &FinancialReport) -> String {
         format!("Devoluciones (centavos),{}", report.refunded_minor),
         format!("Venta neta (centavos),{}", report.net_sales_minor),
         format!("Ticket promedio (centavos),{}", report.average_sale_minor),
+        format!("Attach rate (bps),{}", report.attach_rate_bps),
+        format!(
+            "Artículos por venta (milésimas),{}",
+            report.items_per_sale_milli
+        ),
+        format!("Costo de ventas (centavos),{}", report.cost_of_goods_minor),
+        format!("Margen (centavos),{}", report.margin_minor),
+        format!("Margen (bps),{}", report.margin_bps),
+        format!(
+            "Inventario inicial (centavos),{}",
+            report.inventory_value_start_minor
+        ),
+        format!(
+            "Inventario final (centavos),{}",
+            report.inventory_value_end_minor
+        ),
+        format!("Rotación (bps),{}", report.inventory_turnover_bps),
+        format!("Ajustes (unidades),{}", report.adjustments_units),
+        format!("Ajustes (centavos),{}", report.adjustments_cost_minor),
         format!("Turnos de caja,{}", report.cash_sessions_count),
         format!("Turnos abiertos,{}", report.open_cash_sessions),
         format!("Turnos cerrados,{}", report.closed_cash_sessions),

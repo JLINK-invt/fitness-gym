@@ -289,12 +289,15 @@ async (page) => {
   pass("dueño consulta el historial de turnos");
   await page.getByRole("link", { name: "Reportes" }).click();
   await page.getByRole("heading", { name: "Reportes", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Analítica de ventas e inventario" }).waitFor();
+  await page.getByText("Attach rate", { exact: true }).waitFor();
+  await page.getByText("Rotación", { exact: true }).waitFor();
   await page.getByRole("heading", { name: "Métodos de pago" }).waitFor();
   await page.getByRole("heading", { name: "Ventas por producto" }).waitFor();
   await page.getByText("Membresía mensual").first().waitFor();
   await page.getByText("$400.00").first().waitFor();
   await page.getByText("-$10.00").waitFor();
-  pass("reporte de caja, ventas y margen reconcilia el rango");
+  pass("reporte de caja, ventas, margen y analítica reconcilia el rango");
 
   await page.getByRole("button", { name: "Exportar CSV" }).click();
   await page.getByText(/Exportado reporte-.*\.csv/).waitFor();

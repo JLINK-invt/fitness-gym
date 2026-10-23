@@ -349,7 +349,7 @@ type StoredCashSession = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.10.0",
+    contractVersion: "2.11.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -705,6 +705,50 @@ type StoredCashSession = {
       (total, session) => total + (session.differenceMinor ?? 0),
       0,
     );
+    const multiItemSales = sales.filter((sale) => sale.items.length >= 2).length;
+    const soldUnits = sales.reduce(
+      (total, sale) =>
+        total + sale.items.reduce((units, item) => units + item.quantity, 0),
+      0,
+    );
+    const costOfGoodsMinor = productSales.reduce(
+      (total, product) => total + product.costMinor,
+      0,
+    );
+    const netSalesMinor = grossSalesMinor - refundedMinor;
+    const marginMinor = netSalesMinor - costOfGoodsMinor;
+    const marginBps =
+      netSalesMinor === 0
+        ? 0
+        : Math.trunc((marginMinor * 10_000) / netSalesMinor);
+    const attachRateBps =
+      sales.length === 0
+        ? 0
+        : Math.round((multiItemSales * 10_000) / sales.length);
+    const itemsPerSaleMilli =
+      sales.length === 0 ? 0 : Math.round((soldUnits * 1_000) / sales.length);
+    const inventoryValueAt = (boundaryMs: number) =>
+      state.inventoryMovements
+        .filter((movement) => Date.parse(movement.createdAt) < boundaryMs)
+        .reduce((total, movement) => total + movement.totalCostMinor, 0);
+    const inventoryValueStartMinor = inventoryValueAt(fromMs);
+    const inventoryValueEndMinor = inventoryValueAt(toMs);
+    const inventoryValueAverageMinor =
+      (inventoryValueStartMinor + inventoryValueEndMinor) / 2;
+    const inventoryTurnoverBps =
+      inventoryValueAverageMinor > 0
+        ? Math.trunc(
+            (costOfGoodsMinor * 10_000) / inventoryValueAverageMinor,
+          )
+        : 0;
+    const adjustmentsUnits = inventoryAdjustments.reduce(
+      (total, adjustment) => total + adjustment.unitsDelta,
+      0,
+    );
+    const adjustmentsCostMinor = inventoryAdjustments.reduce(
+      (total, adjustment) => total + adjustment.costMinor,
+      0,
+    );
 
     return {
       from,
@@ -716,9 +760,19 @@ type StoredCashSession = {
       taxMinor,
       refundsCount: returns.length,
       refundedMinor,
-      netSalesMinor: grossSalesMinor - refundedMinor,
+      netSalesMinor,
       averageSaleMinor:
         sales.length > 0 ? Math.round(grossSalesMinor / sales.length) : 0,
+      attachRateBps,
+      itemsPerSaleMilli,
+      costOfGoodsMinor,
+      marginMinor,
+      marginBps,
+      inventoryValueStartMinor,
+      inventoryValueEndMinor,
+      inventoryTurnoverBps,
+      adjustmentsUnits,
+      adjustmentsCostMinor,
       paymentMethods,
       cashSessionsCount: cashSessions.length,
       openCashSessions: cashSessions.length - closedCashSessions.length,

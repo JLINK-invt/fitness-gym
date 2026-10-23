@@ -179,12 +179,51 @@ export function ReportsPage() {
             />
           </div>
 
+          <Analytics data={data} />
           <PaymentMethods data={data.paymentMethods} currency={data.currency} />
           <ProductSales data={data.productSales} currency={data.currency} />
           <Adjustments data={data.inventoryAdjustments} currency={data.currency} />
         </>
       ) : null}
     </div>
+  );
+}
+
+function Analytics({ data }: { data: FinancialReport }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div>
+        <h2 className="text-base font-semibold">Analítica de ventas e inventario</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Ticket medio, margen, attach rate, rotación y ajustes del periodo,
+          calculados con el ledger y los movimientos de inventario.
+        </p>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Summary
+          label="Margen"
+          value={formatMinor(data.marginMinor, data.currency)}
+          tone={data.marginMinor < 0 ? "warn" : "neutral"}
+        />
+        <Summary label="Margen %" value={formatPercentBps(data.marginBps)} />
+        <Summary label="Costo de ventas" value={formatMinor(data.costOfGoodsMinor, data.currency)} />
+        <Summary label="Attach rate" value={formatPercentBps(data.attachRateBps)} />
+        <Summary
+          label="Artículos por venta"
+          value={formatDecimalMilli(data.itemsPerSaleMilli)}
+        />
+        <Summary label="Rotación" value={formatTurnover(data.inventoryTurnoverBps)} />
+        <Summary
+          label="Inventario (inicio → fin)"
+          value={`${formatMinor(data.inventoryValueStartMinor, data.currency)} → ${formatMinor(data.inventoryValueEndMinor, data.currency)}`}
+        />
+        <Summary
+          label="Ajustes"
+          value={`${data.adjustmentsUnits} u · ${formatMinor(data.adjustmentsCostMinor, data.currency)}`}
+          tone={data.adjustmentsUnits < 0 ? "warn" : "neutral"}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -249,8 +288,8 @@ function ProductSales({
       <div className="border-b border-slate-200 px-6 py-4">
         <h2 className="text-base font-semibold">Ventas por producto</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Margen calculado con el costo de los movimientos de inventario; los
-          servicios usan costo cero.
+          Ordenados por venta neta (top primero). El margen usa el costo de los
+          movimientos de inventario; los servicios usan costo cero.
         </p>
       </div>
       {data.length === 0 ? (
@@ -381,6 +420,18 @@ function formatMinor(amount: number, currency: string): string {
     style: "currency",
     currency,
   }).format(amount / 100);
+}
+
+function formatPercentBps(bps: number): string {
+  return `${(bps / 100).toFixed(1)}%`;
+}
+
+function formatDecimalMilli(value: number): string {
+  return (value / 1_000).toFixed(2);
+}
+
+function formatTurnover(bps: number): string {
+  return `${(bps / 10_000).toFixed(2)}×`;
 }
 
 function formatBytes(bytes: number): string {

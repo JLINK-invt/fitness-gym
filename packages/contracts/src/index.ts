@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.10.0";
+export const CONTRACT_VERSION = "2.11.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -311,6 +311,16 @@ export interface FinancialReport {
   refundedMinor: number;
   netSalesMinor: number;
   averageSaleMinor: number;
+  attachRateBps: number;
+  itemsPerSaleMilli: number;
+  costOfGoodsMinor: number;
+  marginMinor: number;
+  marginBps: number;
+  inventoryValueStartMinor: number;
+  inventoryValueEndMinor: number;
+  inventoryTurnoverBps: number;
+  adjustmentsUnits: number;
+  adjustmentsCostMinor: number;
   paymentMethods: PaymentMethodTotal[];
   cashSessionsCount: number;
   openCashSessions: number;

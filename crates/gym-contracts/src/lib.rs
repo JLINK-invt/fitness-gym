@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.10.0";
+pub const CONTRACT_VERSION: &str = "2.11.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -499,6 +499,16 @@ pub struct FinancialReport {
     pub refunded_minor: i64,
     pub net_sales_minor: i64,
     pub average_sale_minor: i64,
+    pub attach_rate_bps: i64,
+    pub items_per_sale_milli: i64,
+    pub cost_of_goods_minor: i64,
+    pub margin_minor: i64,
+    pub margin_bps: i64,
+    pub inventory_value_start_minor: i64,
+    pub inventory_value_end_minor: i64,
+    pub inventory_turnover_bps: i64,
+    pub adjustments_units: i64,
+    pub adjustments_cost_minor: i64,
     pub payment_methods: Vec<PaymentMethodTotal>,
     pub cash_sessions_count: i64,
     pub open_cash_sessions: i64,
