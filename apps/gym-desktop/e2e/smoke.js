@@ -245,7 +245,17 @@ async (page) => {
   await page.getByRole("button", { name: "Completar venta" }).click();
   await page.getByRole("heading", { name: "Ticket de venta" }).waitFor();
   await page.getByText("Ticket no fiscal").waitFor();
-  pass("cajero cobra una venta en efectivo");
+  await page.evaluate(() => {
+    window.__e2ePrintCount = 0;
+    window.print = () => {
+      window.__e2ePrintCount += 1;
+    };
+  });
+  await page.getByRole("button", { name: "Imprimir", exact: true }).click();
+  if ((await page.evaluate(() => window.__e2ePrintCount)) !== 1) {
+    throw new Error("El ticket no invocó el diálogo de impresión del sistema.");
+  }
+  pass("cajero cobra una venta en efectivo e imprime el ticket no fiscal");
 
   await page.getByRole("button", { name: "Devolver" }).first().click();
   await page
