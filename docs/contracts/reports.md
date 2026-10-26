@@ -1,9 +1,9 @@
 # Contrato local · reportes y analítica (Phase 3–4)
 
-- **Versión de contrato:** 2.13.0
+- **Versión de contrato:** 2.14.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v15 (`0015_payment_charges.sql`)
+- **Esquema:** v19 (`0019_access_attendance_reports.sql`)
 
 ## Comandos
 
@@ -11,6 +11,11 @@
 | --- | --- | --- | --- |
 | `financial_report` | `from`, `to` (RFC3339) | `FinancialReport` | `ViewFinance` |
 | `export_financial_report_csv` | `from`, `to` (RFC3339) | `FinancialReportExport` | `ViewFinance` |
+| `create_report_schedule` | `NewReportScheduleInput` | `ReportSchedule` | `ViewFinance` |
+| `list_report_schedules` | — | `ReportSchedule[]` | `ViewFinance` |
+| `set_report_schedule_enabled` | `SetReportScheduleEnabledInput` | `ReportSchedule` | `ViewFinance` |
+| `list_report_runs` | `limit?` | `ReportRun[]` | `ViewFinance` |
+| `run_due_report_schedules` | — | `ReportRun[]` | `ViewFinance` |
 
 ## DTOs
 
@@ -91,6 +96,41 @@ interface FinancialReportExport {
   path: string;
   bytes: number;
 }
+
+interface NewReportScheduleInput {
+  cadence: "daily" | "weekly" | "monthly";
+  lookbackDays: number;
+}
+
+interface ReportSchedule {
+  id: string;
+  reportType: string;
+  cadence: string;
+  lookbackDays: number;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SetReportScheduleEnabledInput {
+  scheduleId: string;
+  enabled: boolean;
+}
+
+interface ReportRun {
+  id: string;
+  scheduleId: string | null;
+  reportType: string;
+  periodFrom: string;
+  periodTo: string;
+  generatedAt: string;
+  fileName: string | null;
+  checksum: string;
+  status: string;
+  error: string | null;
+}
 ```
 
 ## Reglas
@@ -132,8 +172,14 @@ interface FinancialReportExport {
   `<app_data>/exports/reporte-<desde>-<hasta>-<marca>.csv`. Los campos de texto
   se escapan y se neutralizan fórmulas de hoja de cálculo.
 - La moneda proviene de `organizations.currency`.
-- Solo `ViewFinance` (dueño, encargado y contabilidad) puede consultar o
-  exportar. El cajero no accede a reportes.
+- Solo `ViewFinance` (dueño, encargado y contabilidad) puede consultar,
+  exportar o programar reportes. El cajero no accede a reportes.
+- Las programaciones usan `daily` (+1 día), `weekly` (+7 días) o `monthly`
+  (+30 días). `lookbackDays` define el periodo del CSV.
+- `run_due_report_schedules` genera el CSV con `financial_report_csv`, guarda
+  el checksum SHA-256 en `report_runs` y actualiza `nextRunAt` y `lastRunAt`.
+- Una ejecución fallida queda registrada con `status = failed` y su error; el
+  resto de programaciones vencidas continúa.
 
 ## Errores
 
@@ -155,4 +201,4 @@ interface FinancialReportExport {
 ## Fuera de alcance
 
 Reportes fiscales, declaraciones, conciliación bancaria automática, envío por
-correo, programación de cierres y exportación a Excel/PDF.
+correo y exportación a Excel/PDF.

@@ -1,9 +1,9 @@
 # Contrato local · socios, membresías y cobros (Fase 4)
 
-- **Versión de contrato:** 2.13.0
+- **Versión de contrato:** 2.14.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v18 (`0018_membership_plan_rules.sql`)
+- **Esquema:** v19 (`0019_access_attendance_reports.sql`)
 
 ## Permisos
 
@@ -35,6 +35,9 @@ cajero. Contabilidad no lo tiene.
 | `member_account` | `memberId` | `MemberAccount` |
 | `record_membership_payment` | `RecordMembershipPaymentInput` | `MembershipPayment` |
 | `membership_payment_receipt` | `paymentId` | `MembershipPaymentReceipt` |
+| `list_member_credentials` | `memberId` | `MemberCredential[]` |
+| `issue_member_credential` | `memberId` | `MemberCredential` |
+| `revoke_member_credential` | `credentialId` | `MemberCredential` |
 
 ## DTOs
 
@@ -78,6 +81,18 @@ interface Member {
   debtMinor: number;
   createdAt: string;
   updatedAt: string;
+}
+
+interface MemberCredential {
+  id: string;
+  memberId: string;
+  memberNumber: string;
+  memberName: string;
+  code: string;
+  status: "active" | "revoked";
+  revision: number;
+  issuedAt: string;
+  revokedAt: string | null;
 }
 
 interface Membership {

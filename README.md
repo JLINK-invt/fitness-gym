@@ -14,8 +14,8 @@ suscripciones separadas quedan fuera de la V1.
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v18 |
-| Acceso simulado con evento idempotente | Oculto en la UI; el backend se conserva para Phase 4 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v19 |
+| Accesos, credenciales y asistencia | Operativo: snapshots firmados, credenciales por socio, bitácora idempotente y ocupación por hora |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
 | Recuperación del dueño | Operativo: código de un solo uso, sin correo ni autenticador |
@@ -29,9 +29,10 @@ suscripciones separadas quedan fuera de la V1.
 | Panel operativo | Operativo: existencias, valor, alertas de mínimo y rotación básica |
 | Journal de sincronización | Operativo en local: outbox transaccional, inbox idempotente y motor con fake server; transporte real pendiente |
 | Suscripciones V1 | Diferidas; se unifican con membresías de socios en Fase 4 |
-| CRM básico, socios y membresías | Operativo: prospectos, socios, planes, membresías, cargos y pagos |
+| CRM básico, socios y membresías | Operativo: prospectos, socios, planes, membresías, cargos, pagos y credenciales |
+| Reportes programados | Operativo: CSV financiero automático con checksum y bitácora de ejecuciones |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 35 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 38 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 entrega un código de recuperación, exige login, administra accesos del equipo con

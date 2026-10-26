@@ -26,6 +26,7 @@ gym-core = { path = "crates/gym-core" }
 gym-data = { path = "crates/gym-data" }
 gym-sync = { path = "crates/gym-sync" }
 hex = "0.4"
+hmac = "0.12"
 rand = "0.8"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
 serde = { version = "1", features = ["derive"] }

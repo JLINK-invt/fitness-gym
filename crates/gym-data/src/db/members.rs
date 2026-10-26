@@ -2678,11 +2678,11 @@ mod tests {
     }
 
     #[test]
-    fn schema_18_is_applied() {
+    fn schema_19_is_applied() {
         let (db, path) = test_db("schema");
         let status = db.status().expect("status");
         assert_eq!(status.schema_version, MIGRATIONS.last().unwrap().version);
-        assert_eq!(status.schema_version, 18);
+        assert_eq!(status.schema_version, 19);
         drop(db);
         let _ = std::fs::remove_file(path);
     }

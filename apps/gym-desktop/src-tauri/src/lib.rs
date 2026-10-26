@@ -1,29 +1,33 @@
-use chrono::Utc;
+use chrono::{Timelike, Utc};
 use gym_backup::{
     create_backup as write_backup, list_backups as read_backups, restore_backup as apply_restore,
 };
 use gym_contracts::{
-    AccessDecision, AccessEventSummary, AccessRequest, AddCatalogPriceInput,
-    AddCatalogVariantInput, AdjustInventoryInput, ApiError, AuditEventSummary, AuditIntegrity,
-    AuditResult, BackupSummary, CancelMembershipInput, CashMovement, CashMovementType, CashSession,
-    CashSessionStatus, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
-    CatalogVariant, CloseCashSessionInput, CreateCatalogItemInput, CreateMemberInput,
-    CreateMembershipInput, CreateMembershipPlanInput, CreateProspectInput, CreateSaleInput,
-    CreateSaleReturnInput, ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput,
-    HealthReport, HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
-    ListPaymentChargesInput, Member, MemberAccount, MemberStatus, Membership, MembershipCharge,
-    MembershipChargeStatus, MembershipDashboard, MembershipDashboardTrendPoint, MembershipPayment,
-    MembershipPaymentReceipt, MembershipPlan, MembershipStatus, ModuleHealth, OpenCashSessionInput,
-    PauseMembershipInput, PaymentCharge, PaymentMethod, PaymentMethodTotal, ProductSalesTotal,
-    Prospect, ProspectStatus, RecordCashMovementInput, RecordInventoryEntryInput,
-    RecordMembershipPaymentInput, RecoveryCode, RecoveryKit, RenewMembershipInput, RestoreOutcome,
-    ResumeMembershipInput, Sale, SaleItem, SaleReturn, SaleReturnItem, SessionSummary, SetupState,
-    StaffRole, StaffStatus, StaffSummary, UpdateCatalogProductInput, UpdateCatalogVariantInput,
-    UpdateInventoryThresholdInput, UpdateMemberInput, UpdateMembershipPlanInput,
-    UpdateProspectInput, CONTRACT_VERSION,
+    AccessConflict, AccessDecision, AccessEvent, AccessEventInput, AccessEventSummary,
+    AccessReconciliationInput, AccessReconciliationSummary, AccessRequest, AccessSnapshot,
+    AddCatalogPriceInput, AddCatalogVariantInput, AdjustInventoryInput, ApiError, AttendanceDay,
+    AttendanceHour, AttendanceInput, AttendanceMember, AttendancePlan, AttendanceReport,
+    AttendanceZone, AuditEventSummary, AuditIntegrity, AuditResult, BackupSummary,
+    CancelMembershipInput, CashMovement, CashMovementType, CashSession, CashSessionStatus,
+    CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit, CatalogVariant,
+    CloseCashSessionInput, CreateCatalogItemInput, CreateMemberInput, CreateMembershipInput,
+    CreateMembershipPlanInput, CreateProspectInput, CreateSaleInput, CreateSaleReturnInput,
+    ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput, HealthReport,
+    HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
+    ListPaymentChargesInput, Member, MemberAccount, MemberCredential, MemberStatus, Membership,
+    MembershipCharge, MembershipChargeStatus, MembershipDashboard, MembershipDashboardTrendPoint,
+    MembershipPayment, MembershipPaymentReceipt, MembershipPlan, MembershipStatus, ModuleHealth,
+    NewReportScheduleInput, OpenCashSessionInput, PauseMembershipInput, PaymentCharge,
+    PaymentMethod, PaymentMethodTotal, ProductSalesTotal, Prospect, ProspectStatus,
+    RecordCashMovementInput, RecordInventoryEntryInput, RecordMembershipPaymentInput, RecoveryCode,
+    RecoveryKit, RenewMembershipInput, ReportRun, ReportSchedule, RestoreOutcome,
+    ResumeMembershipInput, Sale, SaleItem, SaleReturn, SaleReturnItem, SessionSummary,
+    SetReportScheduleEnabledInput, SetupState, StaffRole, StaffStatus, StaffSummary,
+    UpdateCatalogProductInput, UpdateCatalogVariantInput, UpdateInventoryThresholdInput,
+    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, CONTRACT_VERSION,
 };
 use gym_core::{
-    access::decide_simulated_access,
+    access::{decide_member_access, decide_simulated_access, MemberAccessContext},
     auth::{
         generate_recovery_code, hash_password, hash_recovery_code, normalize_person_name,
         verify_password, verify_recovery_code, IDLE_TIMEOUT_MINUTES, LOGIN_LOCK_MINUTES,
@@ -33,17 +37,19 @@ use gym_core::{
     CORE_VERSION, SERVICE_NAME,
 };
 use gym_data::{
-    sha256_hex, CashMovementRecord, CashSessionRecord, CatalogPriceRecord, CatalogProductRecord,
-    CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider,
-    FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord, InventoryMovementRecord,
-    KeyProvider, KeyringKeyProvider, MemberAccountRecord, MemberRecord, MembershipChargeRecord,
-    MembershipDashboardRecord, MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord,
-    MembershipPaymentRecord, MembershipPlanRecord, MembershipRecord, NewCashMovement,
-    NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
-    NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewMember,
-    NewMembershipPayment, NewMembershipPlan, NewProspect, NewSale, NewSaleItem, NewSaleReturn,
-    NewSaleReturnItem, PaymentChargeRecord, PaymentMethodTotalRecord, ProductSalesRecord,
-    ProspectRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
+    sha256_hex, AccessEventRecord, AccessEventWriteOutcome, AccessSnapshotRecord,
+    AttendanceReportRecord, CashMovementRecord, CashSessionRecord, CatalogPriceRecord,
+    CatalogProductRecord, CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider,
+    FileKeyProvider, FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord,
+    InventoryMovementRecord, KeyProvider, KeyringKeyProvider, MemberAccountRecord,
+    MemberCredentialRecord, MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
+    MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord, MembershipPaymentRecord,
+    MembershipPlanRecord, MembershipRecord, NewCashMovement, NewCatalogItem, NewCatalogPrice,
+    NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewInventoryAdjustment,
+    NewInventoryEntry, NewMember, NewMembershipPayment, NewMembershipPlan, NewProspect,
+    NewReportSchedule, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, PaymentChargeRecord,
+    PaymentMethodTotalRecord, ProductSalesRecord, ProspectRecord, ReportRunRecord,
+    ReportScheduleRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
     UpdateMember, UpdateMembershipPlan, UpdateProspect,
 };
 use std::collections::HashMap;
@@ -1708,8 +1714,33 @@ fn simulate_access(
     let credential_id = request.credential_id.trim();
     let device_id = request.device_id.trim();
     let idempotency_key = request.idempotency_key.trim();
-    let local = decide_simulated_access(credential_id, device_id, idempotency_key)
-        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let local = match db
+        .access_rule_for_credential(&organization_id, credential_id)
+        .map_err(access_api_error)?
+    {
+        Some(rule) => {
+            let now = Utc::now();
+            let today = now.format("%Y-%m-%d").to_string();
+            let minute = i64::from(now.hour()) * 60 + i64::from(now.minute());
+            decide_member_access(&MemberAccessContext {
+                credential_status: &rule.credential_status,
+                member_status: &rule.member_status,
+                birth_date: rule.birth_date.as_deref(),
+                membership_status: rule.membership_status.as_deref(),
+                start_date: rule.start_date.as_deref(),
+                end_date: rule.end_date.as_deref(),
+                access_days: rule.access_days.as_deref(),
+                access_start_minute: rule.access_start_minute,
+                access_end_minute: rule.access_end_minute,
+                min_age: rule.min_age,
+                max_age: rule.max_age,
+                today: &today,
+                minute,
+            })
+        }
+        None => decide_simulated_access(credential_id, device_id, idempotency_key)
+            .map_err(|error| ApiError::invalid(error.to_string()))?,
+    };
 
     let event_type = if local.allowed {
         "access.allowed"
@@ -1780,6 +1811,464 @@ fn list_access_events(
             occurred_at: event.created_at,
         })
         .collect())
+}
+
+fn access_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::MemberNotFound => ApiError::new(ErrorCode::NotFound, "el socio no existe"),
+        DataError::MemberCredentialNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la credencial no existe")
+        }
+        DataError::AccessIdempotencyConflict => {
+            ApiError::invalid("la clave de idempotencia ya se usó con otro contenido")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo procesar el acceso")
+            .with_details(other.to_string()),
+    }
+}
+
+fn reports_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::ReportScheduleNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la programación de reportes no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo procesar el reporte")
+            .with_details(other.to_string()),
+    }
+}
+
+fn member_credential_contract(record: MemberCredentialRecord) -> MemberCredential {
+    MemberCredential {
+        id: record.id,
+        member_id: record.member_id,
+        member_number: record.member_number,
+        member_name: record.member_name,
+        code: record.code,
+        status: record.status,
+        revision: record.revision,
+        issued_at: record.issued_at,
+        revoked_at: record.revoked_at,
+    }
+}
+
+fn access_snapshot_contract(record: AccessSnapshotRecord) -> AccessSnapshot {
+    AccessSnapshot {
+        revision: record.revision,
+        generated_at: record.generated_at,
+        member_count: record.member_count,
+        credential_count: record.credential_count,
+        checksum: record.checksum,
+        signature: record.signature,
+        payload_json: record.payload_json,
+    }
+}
+
+fn access_event_contract(record: AccessEventRecord) -> AccessEvent {
+    AccessEvent {
+        id: record.id,
+        credential_code: record.credential_code.unwrap_or_default(),
+        member_id: record.member_id,
+        member_number: record.member_number,
+        member_name: record.member_name,
+        device_id: record.device_id,
+        zone: record.zone,
+        allowed: record.allowed,
+        reason: record.reason,
+        snapshot_revision: record.snapshot_revision,
+        idempotency_key: record.idempotency_key,
+        payload_hash: record.payload_hash,
+        reconciliation_status: record.reconciliation_status,
+        occurred_at: record.occurred_at,
+    }
+}
+
+fn attendance_hour_contract(record: gym_data::AttendanceHourRecord) -> AttendanceHour {
+    AttendanceHour {
+        hour: record.hour,
+        visits: record.visits,
+        unique_members: record.unique_members,
+    }
+}
+
+fn attendance_report_contract(record: AttendanceReportRecord) -> AttendanceReport {
+    AttendanceReport {
+        from: record.from,
+        to: record.to,
+        generated_at: Utc::now().to_rfc3339(),
+        total_visits: record.total_visits,
+        unique_members: record.unique_members,
+        peak_hour: record.peak_hour,
+        low_demand_hours: record
+            .low_demand_hours
+            .into_iter()
+            .map(attendance_hour_contract)
+            .collect(),
+        hours: record
+            .hours
+            .into_iter()
+            .map(attendance_hour_contract)
+            .collect(),
+        days: record
+            .days
+            .into_iter()
+            .map(|day| AttendanceDay {
+                date: day.date,
+                visits: day.visits,
+                unique_members: day.unique_members,
+            })
+            .collect(),
+        plans: record
+            .plans
+            .into_iter()
+            .map(|plan| AttendancePlan {
+                plan_id: plan.plan_id,
+                plan_name: Some(plan.plan_name),
+                visits: plan.visits,
+                unique_members: plan.unique_members,
+            })
+            .collect(),
+        zones: record
+            .zones
+            .into_iter()
+            .map(|zone| AttendanceZone {
+                zone: Some(zone.zone),
+                visits: zone.visits,
+                unique_members: zone.unique_members,
+            })
+            .collect(),
+        members: record
+            .members
+            .into_iter()
+            .map(|member| AttendanceMember {
+                member_id: member.member_id,
+                member_number: member.member_number,
+                member_name: member.member_name,
+                visits: member.visits,
+                last_visit_at: member.last_visit_at,
+            })
+            .collect(),
+    }
+}
+
+fn report_schedule_contract(record: ReportScheduleRecord) -> ReportSchedule {
+    ReportSchedule {
+        id: record.id,
+        report_type: record.report_type,
+        cadence: record.cadence,
+        lookback_days: record.lookback_days,
+        enabled: record.enabled,
+        next_run_at: record.next_run_at,
+        last_run_at: record.last_run_at,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn report_run_contract(record: ReportRunRecord) -> ReportRun {
+    ReportRun {
+        id: record.id,
+        schedule_id: record.schedule_id,
+        report_type: record.report_type,
+        period_from: record.period_from,
+        period_to: record.period_to,
+        generated_at: record.generated_at,
+        file_name: record.file_name,
+        checksum: record.checksum,
+        status: record.status,
+        error: record.error,
+    }
+}
+
+fn new_access_event(input: AccessEventInput) -> gym_data::NewAccessEvent {
+    gym_data::NewAccessEvent {
+        credential_code: input.credential_code,
+        device_id: input.device_id,
+        zone: input.zone,
+        allowed: input.allowed,
+        reason: input.reason,
+        snapshot_revision: input.snapshot_revision,
+        occurred_at: input.occurred_at,
+        idempotency_key: input.idempotency_key,
+    }
+}
+
+#[tauri::command]
+fn publish_access_snapshot(state: State<'_, AppState>) -> Result<AccessSnapshot, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.publish_access_snapshot(&session.organization_id, state.key.as_bytes())
+        .map(access_snapshot_contract)
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn latest_access_snapshot(state: State<'_, AppState>) -> Result<Option<AccessSnapshot>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.latest_access_snapshot(&session.organization_id)
+        .map(|snapshot| snapshot.map(access_snapshot_contract))
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn list_member_credentials(
+    member_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<MemberCredential>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_member_credentials(&session.organization_id, &member_id)
+        .map(|records| {
+            records
+                .into_iter()
+                .map(member_credential_contract)
+                .collect()
+        })
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn issue_member_credential(
+    member_id: String,
+    state: State<'_, AppState>,
+) -> Result<MemberCredential, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.issue_member_credential(&session.organization_id, &member_id)
+        .map(member_credential_contract)
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn revoke_member_credential(
+    credential_id: String,
+    state: State<'_, AppState>,
+) -> Result<MemberCredential, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.revoke_member_credential(&session.organization_id, &credential_id)
+        .map(member_credential_contract)
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn record_access_event(
+    input: AccessEventInput,
+    state: State<'_, AppState>,
+) -> Result<AccessEvent, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    match db
+        .record_access_event(&session.organization_id, new_access_event(input))
+        .map_err(access_api_error)?
+    {
+        AccessEventWriteOutcome::Inserted(event) | AccessEventWriteOutcome::Duplicate(event) => {
+            Ok(access_event_contract(event))
+        }
+        AccessEventWriteOutcome::Conflict => Err(ApiError::invalid(
+            "la clave de idempotencia ya se usó con otro contenido",
+        )),
+    }
+}
+
+#[tauri::command]
+fn list_access_event_log(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AccessEvent>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_access_events(&session.organization_id, limit.unwrap_or(50) as usize)
+        .map(|records| records.into_iter().map(access_event_contract).collect())
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn reconcile_access_events(
+    input: AccessReconciliationInput,
+    state: State<'_, AppState>,
+) -> Result<AccessReconciliationSummary, ApiError> {
+    let session = state.authorize(Permission::OperatePos)?;
+    let db = state.db()?;
+    let events = input.events.into_iter().map(new_access_event).collect();
+    let record = db
+        .reconcile_access_events(&session.organization_id, input.snapshot_revision, events)
+        .map_err(access_api_error)?;
+    Ok(AccessReconciliationSummary {
+        snapshot_revision: record.snapshot_revision,
+        inserted: record.applied,
+        duplicates: record.duplicates,
+        stale: record.stale,
+        conflicts: record
+            .conflicts
+            .into_iter()
+            .map(|conflict| AccessConflict {
+                idempotency_key: conflict.idempotency_key,
+                reason: conflict.reason,
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+fn attendance_report(
+    input: AttendanceInput,
+    state: State<'_, AppState>,
+) -> Result<AttendanceReport, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.attendance_report(&session.organization_id, &input.from, &input.to)
+        .map(attendance_report_contract)
+        .map_err(access_api_error)
+}
+
+#[tauri::command]
+fn create_report_schedule(
+    input: NewReportScheduleInput,
+    state: State<'_, AppState>,
+) -> Result<ReportSchedule, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.create_report_schedule(
+        &session.organization_id,
+        NewReportSchedule {
+            cadence: input.cadence,
+            lookback_days: input.lookback_days,
+        },
+    )
+    .map(report_schedule_contract)
+    .map_err(reports_api_error)
+}
+
+#[tauri::command]
+fn list_report_schedules(state: State<'_, AppState>) -> Result<Vec<ReportSchedule>, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.list_report_schedules(&session.organization_id)
+        .map(|records| records.into_iter().map(report_schedule_contract).collect())
+        .map_err(reports_api_error)
+}
+
+#[tauri::command]
+fn set_report_schedule_enabled(
+    input: SetReportScheduleEnabledInput,
+    state: State<'_, AppState>,
+) -> Result<ReportSchedule, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.set_report_schedule_enabled(&session.organization_id, &input.schedule_id, input.enabled)
+        .map(report_schedule_contract)
+        .map_err(reports_api_error)
+}
+
+#[tauri::command]
+fn list_report_runs(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ReportRun>, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    db.list_report_runs(&session.organization_id, limit.unwrap_or(50) as usize)
+        .map(|records| records.into_iter().map(report_run_contract).collect())
+        .map_err(reports_api_error)
+}
+
+fn run_report_schedule(
+    state: &AppState,
+    organization_id: &str,
+    user_id: &str,
+    schedule: ReportScheduleRecord,
+) -> Result<ReportRun, ApiError> {
+    let db = state.db()?;
+    let generated_at = Utc::now();
+    let from = (generated_at - chrono::TimeDelta::days(schedule.lookback_days))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let to = generated_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let report = match db
+        .financial_report(organization_id, &from, &to)
+        .map(financial_report_contract)
+    {
+        Ok(report) => report,
+        Err(error) => {
+            let run = db
+                .record_report_run(
+                    organization_id,
+                    Some(&schedule.id),
+                    &schedule.report_type,
+                    &from,
+                    &to,
+                    &to,
+                    None,
+                    "",
+                    "failed",
+                    Some(&error.to_string()),
+                )
+                .map_err(reports_api_error)?;
+            return Ok(report_run_contract(run));
+        }
+    };
+    let csv = financial_report_csv(&report);
+    let checksum = sha256_hex(csv.as_bytes());
+    let stamp = generated_at.format("%Y%m%dT%H%M%S%3fZ").to_string();
+    let file_name = format!("reporte-programado-{}-{stamp}.csv", schedule.cadence);
+    fs::create_dir_all(&state.paths.exports_dir).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo preparar la carpeta de exportaciones",
+        )
+        .with_details(error.to_string())
+    })?;
+    let path = state.paths.exports_dir.join(&file_name);
+    fs::write(&path, csv.as_bytes()).map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo escribir la exportación")
+            .with_details(error.to_string())
+    })?;
+    let run = db
+        .record_report_run(
+            organization_id,
+            Some(&schedule.id),
+            &schedule.report_type,
+            &from,
+            &to,
+            &to,
+            Some(&file_name),
+            &checksum,
+            "completed",
+            None,
+        )
+        .map_err(reports_api_error)?;
+    let _ = db.record_audit_event(
+        organization_id,
+        Some(user_id),
+        "report.scheduled",
+        "financial_report",
+        "allowed",
+        "tauri",
+        Some(&file_name),
+    );
+    Ok(report_run_contract(run))
+}
+
+#[tauri::command]
+fn run_due_report_schedules(state: State<'_, AppState>) -> Result<Vec<ReportRun>, ApiError> {
+    let session = state.authorize(Permission::ViewFinance)?;
+    let db = state.db()?;
+    let now = Utc::now().to_rfc3339();
+    let schedules = db
+        .due_report_schedules(&session.organization_id, &now)
+        .map_err(reports_api_error)?;
+    let mut runs = Vec::with_capacity(schedules.len());
+    for schedule in schedules {
+        runs.push(run_report_schedule(
+            &state,
+            &session.organization_id,
+            &session.user_id,
+            schedule,
+        )?);
+    }
+    Ok(runs)
 }
 
 #[tauri::command]
@@ -3206,6 +3695,20 @@ pub fn run() {
             current_session,
             simulate_access,
             list_access_events,
+            publish_access_snapshot,
+            latest_access_snapshot,
+            list_member_credentials,
+            issue_member_credential,
+            revoke_member_credential,
+            record_access_event,
+            list_access_event_log,
+            reconcile_access_events,
+            attendance_report,
+            create_report_schedule,
+            list_report_schedules,
+            set_report_schedule_enabled,
+            list_report_runs,
+            run_due_report_schedules,
             create_backup,
             list_backups,
             restore_backup,

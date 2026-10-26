@@ -14,6 +14,65 @@ type AccessEvent = {
   occurredAt: string;
 };
 type AccessEntry = { event: AccessEvent; requestHash: string };
+type StoredCredential = {
+  id: string;
+  memberId: string;
+  memberNumber: string;
+  memberName: string;
+  code: string;
+  status: "active" | "revoked";
+  revision: number;
+  issuedAt: string;
+  revokedAt: string | null;
+};
+type StoredAccessLog = {
+  id: string;
+  credentialCode: string;
+  memberId: string | null;
+  memberNumber: string | null;
+  memberName: string | null;
+  deviceId: string;
+  zone: string | null;
+  allowed: boolean;
+  reason: string;
+  snapshotRevision: number;
+  idempotencyKey: string;
+  payloadHash: string;
+  reconciliationStatus: string;
+  occurredAt: string;
+};
+type StoredSnapshot = {
+  revision: number;
+  generatedAt: string;
+  memberCount: number;
+  credentialCount: number;
+  checksum: string;
+  signature: string;
+  payloadJson: string;
+};
+type StoredReportSchedule = {
+  id: string;
+  reportType: string;
+  cadence: "daily" | "weekly" | "monthly";
+  lookbackDays: number;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredReportRun = {
+  id: string;
+  scheduleId: string | null;
+  reportType: string;
+  periodFrom: string;
+  periodTo: string;
+  generatedAt: string;
+  fileName: string | null;
+  checksum: string;
+  status: string;
+  error: string | null;
+};
 type StaffMember = {
   id: string;
   name: string;
@@ -305,6 +364,11 @@ type StoredMembershipPaymentAttempt = {
     session: Session | null;
     accessEvents: AccessEvent[];
     accessEntries: Map<string, AccessEntry>;
+    credentials: StoredCredential[];
+    accessLog: StoredAccessLog[];
+    snapshots: StoredSnapshot[];
+    reportSchedules: StoredReportSchedule[];
+    reportRuns: StoredReportRun[];
     backups: Backup[];
     secrets: Map<string, string>;
     auditEvents: AuditEvent[];
@@ -335,6 +399,11 @@ type StoredMembershipPaymentAttempt = {
     session: null,
     accessEvents: [],
     accessEntries: new Map(),
+    credentials: [],
+    accessLog: [],
+    snapshots: [],
+    reportSchedules: [],
+    reportRuns: [],
     backups: [],
     secrets: new Map(),
     auditEvents: [],
@@ -689,7 +758,7 @@ type StoredMembershipPaymentAttempt = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.13.0",
+    contractVersion: "2.14.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -700,7 +769,7 @@ type StoredMembershipPaymentAttempt = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 18,
+      schemaVersion: 19,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -3305,9 +3374,29 @@ type StoredMembershipPaymentAttempt = {
             };
           }
 
-          const allowed = credentialId === "CRED-ALLOW";
-          const reason = allowed
-            ? "credencial simulada activa"
+          const credential = state.credentials.find(
+            (item) => item.code === credentialId && item.status === "active",
+          );
+          const member = credential
+            ? state.members.find((item) => item.id === credential.memberId)
+            : undefined;
+          const membership = member
+            ? state.memberships.find(
+                (item) =>
+                  item.memberId === member.id &&
+                  ["active", "scheduled"].includes(item.status) &&
+                  item.startDate <= dateOnly() &&
+                  item.endDate >= dateOnly(),
+              )
+            : undefined;
+          const simulatedAllowed = credentialId === "CRED-ALLOW";
+          const allowed = credential
+            ? Boolean(member && member.status === "active" && membership)
+            : simulatedAllowed;
+          const reason = credential
+            ? allowed
+              ? "credencial válida con membresía vigente"
+              : "credencial sin membresía vigente"
             : credentialId === "CRED-DENY"
               ? "credencial simulada sin acceso"
               : "credencial desconocida";
@@ -3319,6 +3408,24 @@ type StoredMembershipPaymentAttempt = {
           };
           state.accessEvents.unshift(event);
           state.accessEntries.set(idempotencyKey, { event, requestHash });
+          state.accessLog.unshift({
+            id: event.eventId,
+            credentialCode: credentialId,
+            memberId: member?.id ?? null,
+            memberNumber: member?.memberNumber ?? null,
+            memberName: member
+              ? `${member.firstName} ${member.lastName}`
+              : null,
+            deviceId,
+            zone: null,
+            allowed,
+            reason,
+            snapshotRevision: state.snapshots.at(-1)?.revision ?? 0,
+            idempotencyKey,
+            payloadHash: `sha256:${credentialId}:${deviceId}`,
+            reconciliationStatus: "applied",
+            occurredAt: event.occurredAt,
+          });
           recordAudit({
             actor: state.session,
             action: "access.simulated",
@@ -3345,6 +3452,434 @@ type StoredMembershipPaymentAttempt = {
           return state.accessEvents.slice(0, limit);
         }
 
+        case "list_member_credentials": {
+          requirePermission("manageMembers");
+          const memberId = String(args.memberId ?? "");
+          return state.credentials
+            .filter((credential) => credential.memberId === memberId)
+            .map((credential) => ({ ...credential }));
+        }
+
+        case "issue_member_credential": {
+          requirePermission("manageMembers");
+          const memberId = String(args.memberId ?? "");
+          const member = state.members.find((item) => item.id === memberId);
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          const credential: StoredCredential = {
+            id: uuid(),
+            memberId,
+            memberNumber: member.memberNumber,
+            memberName: `${member.firstName} ${member.lastName}`,
+            code: `GYM-${member.memberNumber.replace(/[^A-Z0-9]/g, "").slice(-8)}-${String(
+              state.credentials.length + 1,
+            ).padStart(2, "0")}`,
+            status: "active",
+            revision: 1,
+            issuedAt: now(),
+            revokedAt: null,
+          };
+          state.credentials.push(credential);
+          recordAudit({
+            actor: state.session,
+            action: "credential.issued",
+            resource: "member_credential",
+            correlationId: credential.id,
+          });
+          return { ...credential };
+        }
+
+        case "revoke_member_credential": {
+          requirePermission("manageMembers");
+          const credentialId = String(args.credentialId ?? "");
+          const credential = state.credentials.find(
+            (item) => item.id === credentialId,
+          );
+          if (!credential) {
+            throw apiError("notFound", "La credencial no existe.");
+          }
+          if (credential.status !== "revoked") {
+            credential.status = "revoked";
+            credential.revision += 1;
+            credential.revokedAt = now();
+          }
+          recordAudit({
+            actor: state.session,
+            action: "credential.revoked",
+            resource: "member_credential",
+            correlationId: credential.id,
+          });
+          return { ...credential };
+        }
+
+        case "publish_access_snapshot": {
+          requirePermission("manageMembers");
+          const revision = state.snapshots.length + 1;
+          const members = state.members
+            .filter((member) => member.status === "active")
+            .map((member) => ({
+              memberId: member.id,
+              memberNumber: member.memberNumber,
+              memberName: `${member.firstName} ${member.lastName}`,
+              memberStatus: member.status,
+              credentials: state.credentials
+                .filter((credential) => credential.memberId === member.id)
+                .map((credential) => ({
+                  code: credential.code,
+                  status: credential.status,
+                  revision: credential.revision,
+                })),
+            }));
+          const payloadJson = JSON.stringify({
+            revision,
+            organizationId: state.session?.organizationId ?? null,
+            members,
+          });
+          const snapshot: StoredSnapshot = {
+            revision,
+            generatedAt: now(),
+            memberCount: members.length,
+            credentialCount: members.reduce(
+              (total, member) => total + member.credentials.length,
+              0,
+            ),
+            checksum: `sha256:${payloadJson.length}`,
+            signature: `hmac:${payloadJson.length}`,
+            payloadJson,
+          };
+          state.snapshots.push(snapshot);
+          recordAudit({
+            actor: state.session,
+            action: "snapshot.published",
+            resource: "access_snapshot",
+            correlationId: String(revision),
+          });
+          return { ...snapshot };
+        }
+
+        case "latest_access_snapshot": {
+          requirePermission("manageMembers");
+          const snapshot = state.snapshots.at(-1);
+          return snapshot ? { ...snapshot } : null;
+        }
+
+        case "record_access_event": {
+          requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const idempotencyKey = String(input.idempotencyKey ?? "").trim();
+          const existing = state.accessLog.find(
+            (event) => event.idempotencyKey === idempotencyKey,
+          );
+          if (existing) {
+            if (
+              existing.allowed !== Boolean(input.allowed) ||
+              existing.reason !== String(input.reason ?? "")
+            ) {
+              throw apiError(
+                "invalidRequest",
+                "La clave de idempotencia ya se usó con otro contenido.",
+              );
+            }
+            return { ...existing };
+          }
+          const code = String(input.credentialCode ?? "");
+          const credential = state.credentials.find(
+            (item) => item.code === code,
+          );
+          const member = credential
+            ? state.members.find((item) => item.id === credential.memberId)
+            : undefined;
+          const event: StoredAccessLog = {
+            id: uuid(),
+            credentialCode: code,
+            memberId: member?.id ?? null,
+            memberNumber: member?.memberNumber ?? null,
+            memberName: member ? `${member.firstName} ${member.lastName}` : null,
+            deviceId: String(input.deviceId ?? ""),
+            zone: String(input.zone ?? "").trim() || null,
+            allowed: Boolean(input.allowed),
+            reason: String(input.reason ?? ""),
+            snapshotRevision: Number(input.snapshotRevision ?? 0),
+            idempotencyKey,
+            payloadHash: `sha256:${code}:${String(input.deviceId ?? "")}`,
+            reconciliationStatus:
+              Number(input.snapshotRevision ?? 0) <
+              (state.snapshots.at(-1)?.revision ?? 0)
+                ? "stale"
+                : "applied",
+            occurredAt: String(input.occurredAt ?? now()),
+          };
+          state.accessLog.unshift(event);
+          return { ...event };
+        }
+
+        case "list_access_event_log": {
+          requirePermission("manageMembers");
+          const limit = Math.max(1, Math.min(100, Number(args.limit ?? 50)));
+          return state.accessLog.slice(0, limit).map((event) => ({ ...event }));
+        }
+
+        case "reconcile_access_events": {
+          requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const snapshotRevision = Number(input.snapshotRevision ?? 0);
+          const events = Array.isArray(input.events) ? input.events : [];
+          let inserted = 0;
+          let duplicates = 0;
+          let stale = 0;
+          const conflicts: Array<{ idempotencyKey: string; reason: string }> = [];
+          for (const raw of events) {
+            const event = raw as Record<string, unknown>;
+            const key = String(event.idempotencyKey ?? "");
+            const existing = state.accessLog.find(
+              (item) => item.idempotencyKey === key,
+            );
+            if (existing) {
+              if (
+                existing.allowed !== Boolean(event.allowed) ||
+                existing.reason !== String(event.reason ?? "")
+              ) {
+                conflicts.push({
+                  idempotencyKey: key,
+                  reason:
+                    "la clave de idempotencia ya se usó con otro contenido",
+                });
+              } else {
+                duplicates += 1;
+              }
+              continue;
+            }
+            const code = String(event.credentialCode ?? "");
+            const credential = state.credentials.find(
+              (item) => item.code === code,
+            );
+            const member = credential
+              ? state.members.find((item) => item.id === credential.memberId)
+              : undefined;
+            const isStale =
+              snapshotRevision < (state.snapshots.at(-1)?.revision ?? 0);
+            state.accessLog.unshift({
+              id: uuid(),
+              credentialCode: code,
+              memberId: member?.id ?? null,
+              memberNumber: member?.memberNumber ?? null,
+              memberName: member
+                ? `${member.firstName} ${member.lastName}`
+                : null,
+              deviceId: String(event.deviceId ?? ""),
+              zone: String(event.zone ?? "").trim() || null,
+              allowed: Boolean(event.allowed),
+              reason: String(event.reason ?? ""),
+              snapshotRevision,
+              idempotencyKey: key,
+              payloadHash: `sha256:${code}:${String(event.deviceId ?? "")}`,
+              reconciliationStatus: isStale ? "stale" : "applied",
+              occurredAt: String(event.occurredAt ?? now()),
+            });
+            inserted += 1;
+            if (isStale) {
+              stale += 1;
+            }
+          }
+          return {
+            snapshotRevision,
+            inserted,
+            duplicates,
+            stale,
+            conflicts,
+          };
+        }
+
+        case "attendance_report": {
+          requirePermission("manageMembers");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const from = String(input.from ?? "");
+          const to = String(input.to ?? "");
+          const allowed = state.accessLog.filter(
+            (event) =>
+              event.allowed &&
+              event.reconciliationStatus !== "legacy" &&
+              event.occurredAt >= from &&
+              event.occurredAt < to,
+          );
+          const hours = Array.from({ length: 24 }, (_, hour) => {
+            const visits = allowed.filter(
+              (event) =>
+                new Date(event.occurredAt).getUTCHours() === hour,
+            );
+            return {
+              hour,
+              visits: visits.length,
+              uniqueMembers: new Set(
+                visits.map((event) => event.memberId).filter(Boolean),
+              ).size,
+            };
+          });
+          let peakHour = 0;
+          let peakVisits = -1;
+          for (const hour of hours) {
+            if (hour.visits > peakVisits) {
+              peakVisits = hour.visits;
+              peakHour = hour.hour;
+            }
+          }
+          const lowDemandHours = hours.filter(
+            (hour) => peakVisits > 0 && hour.visits <= peakVisits * 0.5,
+          );
+          const days = Array.from(
+            new Set(allowed.map((event) => event.occurredAt.slice(0, 10))),
+          ).map((date) => {
+            const visits = allowed.filter(
+              (event) => event.occurredAt.slice(0, 10) === date,
+            );
+            return {
+              date,
+              visits: visits.length,
+              uniqueMembers: new Set(
+                visits.map((event) => event.memberId).filter(Boolean),
+              ).size,
+            };
+          });
+          const zones = Array.from(
+            new Set(allowed.map((event) => event.zone ?? "Sin zona")),
+          ).map((zone) => {
+            const visits = allowed.filter(
+              (event) => (event.zone ?? "Sin zona") === zone,
+            );
+            return {
+              zone,
+              visits: visits.length,
+              uniqueMembers: new Set(
+                visits.map((event) => event.memberId).filter(Boolean),
+              ).size,
+            };
+          });
+          const members = Array.from(
+            new Map(
+              allowed
+                .filter((event) => event.memberId)
+                .map((event) => [event.memberId, event]),
+            ).values(),
+          ).map((event) => ({
+            memberId: event.memberId!,
+            memberNumber: event.memberNumber ?? "",
+            memberName: event.memberName ?? "",
+            visits: allowed.filter(
+              (item) => item.memberId === event.memberId,
+            ).length,
+            lastVisitAt: event.occurredAt,
+          }));
+          return {
+            from,
+            to,
+            generatedAt: now(),
+            totalVisits: allowed.length,
+            uniqueMembers: new Set(
+              allowed.map((event) => event.memberId).filter(Boolean),
+            ).size,
+            peakHour,
+            lowDemandHours,
+            hours,
+            days,
+            plans: [],
+            zones,
+            members,
+          };
+        }
+
+        case "create_report_schedule": {
+          requirePermission("viewFinance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const cadence = String(input.cadence ?? "");
+          if (!["daily", "weekly", "monthly"].includes(cadence)) {
+            throw apiError("invalidRequest", "Cadencia inválida.");
+          }
+          const schedule: StoredReportSchedule = {
+            id: uuid(),
+            reportType: "financial",
+            cadence: cadence as StoredReportSchedule["cadence"],
+            lookbackDays: Math.max(
+              1,
+              Math.min(366, Number(input.lookbackDays ?? 7)),
+            ),
+            enabled: true,
+            nextRunAt: now(),
+            lastRunAt: null,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.reportSchedules.push(schedule);
+          return { ...schedule };
+        }
+
+        case "list_report_schedules": {
+          requirePermission("viewFinance");
+          return state.reportSchedules.map((schedule) => ({ ...schedule }));
+        }
+
+        case "set_report_schedule_enabled": {
+          requirePermission("viewFinance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const schedule = state.reportSchedules.find(
+            (item) => item.id === String(input.scheduleId ?? ""),
+          );
+          if (!schedule) {
+            throw apiError("notFound", "La programación no existe.");
+          }
+          schedule.enabled = Boolean(input.enabled);
+          schedule.updatedAt = now();
+          return { ...schedule };
+        }
+
+        case "list_report_runs": {
+          requirePermission("viewFinance");
+          const limit = Math.max(1, Math.min(100, Number(args.limit ?? 50)));
+          return state.reportRuns.slice(0, limit).map((run) => ({ ...run }));
+        }
+
+        case "run_due_report_schedules": {
+          requirePermission("viewFinance");
+          const current = now();
+          const due = state.reportSchedules.filter(
+            (schedule) => schedule.enabled && schedule.nextRunAt <= current,
+          );
+          const generated: StoredReportRun[] = [];
+          for (const schedule of due) {
+            const periodTo = current;
+            const periodFrom = new Date(
+              Date.now() - schedule.lookbackDays * 24 * 60 * 60 * 1_000,
+            ).toISOString();
+            const fileName = `reporte-${periodFrom.slice(0, 10)}-${periodTo.slice(0, 10)}-${Date.now()}.csv`;
+            const run: StoredReportRun = {
+              id: uuid(),
+              scheduleId: schedule.id,
+              reportType: schedule.reportType,
+              periodFrom,
+              periodTo,
+              generatedAt: current,
+              fileName,
+              checksum: `sha256:${fileName.length}`,
+              status: "completed",
+              error: null,
+            };
+            state.reportRuns.unshift(run);
+            generated.push(run);
+            schedule.lastRunAt = current;
+            const days =
+              schedule.cadence === "daily"
+                ? 1
+                : schedule.cadence === "weekly"
+                  ? 7
+                  : 30;
+            schedule.nextRunAt = new Date(
+              Date.now() + days * 24 * 60 * 60 * 1_000,
+            ).toISOString();
+            schedule.updatedAt = current;
+          }
+          return generated.map((run) => ({ ...run }));
+        }
+
         case "list_backups":
           if (!state.session) {
             throw apiError("unauthorized", "Inicia sesión para continuar.");
@@ -3367,7 +3902,7 @@ type StoredMembershipPaymentAttempt = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 18,
+            schemaVersion: 19,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
