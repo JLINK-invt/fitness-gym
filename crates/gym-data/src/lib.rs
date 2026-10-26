@@ -10,20 +10,24 @@ mod key;
 mod migrations;
 
 pub use db::{
-    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CashMovementRecord,
-    CashSessionRecord, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, Db,
+    verify_encrypted_database, AccessConflictRecord, AccessEventRecord, AccessEventWriteOutcome,
+    AccessReconciliationRecord, AccessSnapshotRecord, AttendanceDayRecord, AttendanceHourRecord,
+    AttendanceMemberRecord, AttendancePlanRecord, AttendanceReportRecord, AttendanceZoneRecord,
+    AuditEventRecord, AuditIntegrityRecord, CashMovementRecord, CashSessionRecord,
+    CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, CredentialAccessRuleRecord, Db,
     FinancialReportRecord, InboundSyncEvent, InventoryAdjustmentRecord, InventoryItemRecord,
-    InventoryMovementRecord, LocalDatabaseStatus, MemberAccountRecord, MemberRecord,
-    MembershipChargeRecord, MembershipDashboardRecord, MembershipDashboardTrendRecord,
-    MembershipPaymentReceiptRecord, MembershipPaymentRecord, MembershipPlanRecord,
-    MembershipRecord, ModuleEventRecord, NewCashMovement, NewCatalogItem, NewCatalogPrice,
-    NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewInventoryAdjustment,
-    NewInventoryEntry, NewMember, NewMembershipPayment, NewMembershipPlan, NewProspect, NewSale,
-    NewSaleItem, NewSaleReturn, NewSaleReturnItem, OrganizationRecord, OwnerRecoveryRecord,
-    PaymentChargeRecord, PaymentMethodTotalRecord, ProductSalesRecord, ProspectRecord,
-    RecordedModuleEvent, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
-    StaffRecord, SyncFailureRecord, SyncInboxRecord, SyncOutboxRecord, UpdateMember,
-    UpdateMembershipPlan, UpdateProspect, UserCredentialRecord, UserRecord,
+    InventoryMovementRecord, LocalDatabaseStatus, MemberAccountRecord, MemberCredentialRecord,
+    MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
+    MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord, MembershipPaymentRecord,
+    MembershipPlanRecord, MembershipRecord, ModuleEventRecord, NewAccessEvent, NewCashMovement,
+    NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
+    NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewMember,
+    NewMembershipPayment, NewMembershipPlan, NewProspect, NewReportSchedule, NewSale, NewSaleItem,
+    NewSaleReturn, NewSaleReturnItem, OrganizationRecord, OwnerRecoveryRecord, PaymentChargeRecord,
+    PaymentMethodTotalRecord, ProductSalesRecord, ProspectRecord, RecordedModuleEvent,
+    ReportRunRecord, ReportScheduleRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord,
+    SaleReturnRecord, StaffRecord, SyncFailureRecord, SyncInboxRecord, SyncOutboxRecord,
+    UpdateMember, UpdateMembershipPlan, UpdateProspect, UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

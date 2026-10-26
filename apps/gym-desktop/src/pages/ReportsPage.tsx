@@ -5,6 +5,8 @@ import type {
   PaymentMethod,
   PaymentMethodTotal,
   ProductSalesTotal,
+  ReportRun,
+  ReportSchedule,
 } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -185,6 +187,8 @@ export function ReportsPage() {
           <Adjustments data={data.inventoryAdjustments} currency={data.currency} />
         </>
       ) : null}
+
+      <ScheduledReports />
     </div>
   );
 }
@@ -387,6 +391,215 @@ function Adjustments({
       )}
     </section>
   );
+}
+
+function ScheduledReports() {
+  const queryClient = useQueryClient();
+  const [cadence, setCadence] =
+    useState<"daily" | "weekly" | "monthly">("weekly");
+  const [lookbackDays, setLookbackDays] = useState("7");
+
+  const schedules = useQuery<ReportSchedule[]>({
+    queryKey: ["report-schedules"],
+    queryFn: api.listReportSchedules,
+  });
+  const runs = useQuery<ReportRun[]>({
+    queryKey: ["report-runs"],
+    queryFn: () => api.listReportRuns(20),
+  });
+
+  const invalidate = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["report-schedules"] }),
+      queryClient.invalidateQueries({ queryKey: ["report-runs"] }),
+    ]);
+  };
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createReportSchedule({
+        cadence,
+        lookbackDays: Math.max(1, Number(lookbackDays) || 1),
+      }),
+    onSuccess: invalidate,
+  });
+  const toggle = useMutation({
+    mutationFn: (schedule: ReportSchedule) =>
+      api.setReportScheduleEnabled({
+        scheduleId: schedule.id,
+        enabled: !schedule.enabled,
+      }),
+    onSuccess: invalidate,
+  });
+  const runDue = useMutation({
+    mutationFn: api.runDueReportSchedules,
+    onSuccess: invalidate,
+  });
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Reportes programados</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Genera el CSV financiero automáticamente y conserva el checksum de
+            cada ejecución.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => runDue.mutate()}
+          disabled={runDue.isPending}
+          className={primaryButton}
+        >
+          {runDue.isPending ? "Ejecutando…" : "Ejecutar pendientes"}
+        </button>
+      </div>
+
+      <form
+        className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          create.mutate();
+        }}
+      >
+        <label className="text-sm">
+          <span className="font-medium text-slate-700">Cadencia</span>
+          <select
+            value={cadence}
+            onChange={(event) =>
+              setCadence(event.target.value as typeof cadence)
+            }
+            className={`mt-1 ${fieldClass}`}
+          >
+            <option value="daily">Diaria</option>
+            <option value="weekly">Semanal</option>
+            <option value="monthly">Mensual</option>
+          </select>
+        </label>
+        <label className="text-sm">
+          <span className="font-medium text-slate-700">Días hacia atrás</span>
+          <input
+            type="number"
+            min={1}
+            max={366}
+            value={lookbackDays}
+            onChange={(event) => setLookbackDays(event.target.value)}
+            className={`mt-1 ${fieldClass}`}
+          />
+        </label>
+        <div className="flex items-end">
+          <button
+            type="submit"
+            disabled={create.isPending}
+            className={primaryButton}
+          >
+            {create.isPending ? "Creando…" : "Programar"}
+          </button>
+        </div>
+      </form>
+
+      {(create.isError || toggle.isError || runDue.isError) && (
+        <p className="mt-3 text-sm text-rose-700">
+          {errorMessage(create.error ?? toggle.error ?? runDue.error)}
+        </p>
+      )}
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <h3 className="text-sm font-semibold">Programaciones</h3>
+          {schedules.isLoading ? (
+            <p className="mt-2 text-sm text-slate-500">Cargando…</p>
+          ) : schedules.data && schedules.data.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {schedules.data.map((schedule) => (
+                <div
+                  key={schedule.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                >
+                  <div>
+                    <p className="font-medium">
+                      {cadenceLabels[schedule.cadence] ?? schedule.cadence} ·{" "}
+                      {schedule.lookbackDays} días
+                    </p>
+                    <p className="text-slate-500">
+                      Próxima {formatDateTime(schedule.nextRunAt)}
+                      {schedule.lastRunAt
+                        ? ` · última ${formatDateTime(schedule.lastRunAt)}`
+                        : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggle.mutate(schedule)}
+                    disabled={toggle.isPending}
+                    className="rounded-lg border border-slate-300 px-2.5 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {schedule.enabled ? "Desactivar" : "Activar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-slate-500">
+              No hay programaciones.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <h3 className="text-sm font-semibold">Últimas ejecuciones</h3>
+          {runs.isLoading ? (
+            <p className="mt-2 text-sm text-slate-500">Cargando…</p>
+          ) : runs.data && runs.data.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {runs.data.map((run) => (
+                <div
+                  key={run.id}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {run.periodFrom.slice(0, 10)} →{" "}
+                      {run.periodTo.slice(0, 10)}
+                    </span>
+                    <span
+                      className={
+                        run.status === "completed"
+                          ? "text-emerald-700"
+                          : "text-rose-700"
+                      }
+                    >
+                      {run.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-slate-500">
+                    {run.fileName ?? "Sin archivo"} ·{" "}
+                    {shortChecksum(run.checksum)}
+                  </p>
+                  {run.error && (
+                    <p className="mt-1 text-rose-700">{run.error}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-slate-500">Sin ejecuciones.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const cadenceLabels: Record<string, string> = {
+  daily: "Diaria",
+  weekly: "Semanal",
+  monthly: "Mensual",
+};
+
+function shortChecksum(value: string): string {
+  return value.length > 16 ? `${value.slice(0, 16)}…` : value;
 }
 
 function Summary({

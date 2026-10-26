@@ -14,8 +14,10 @@ Demostrar el flujo de acceso de punta a punta sin integrar el lector real:
 4. Tauri devuelve la decisión y la UI muestra el evento persistido.
 
 El evento sobrevive reinicios y restauraciones porque vive en `module_events`.
-El comando exige una sesión local con permiso `operate_pos`; no hay firmas,
-biometría, membresías ni torniquete.
+El comando exige una sesión local con permiso `operate_pos`; no hay biometría
+ni torniquete. Desde la Fase 4, si la credencial pertenece a un socio, la
+decisión consulta su membresía y reglas de acceso antes de caer al modo
+simulado.
 
 ## Componentes
 
@@ -148,3 +150,35 @@ amplio, pero la medición de la UI completa sigue siendo manual.
 La versión 1.1.0 solo agrega tipos y comandos; los payloads 1.0.0 siguen siendo
 válidos. Un cambio incompatible debe subir `CONTRACT_VERSION` en Rust y
 TypeScript al mismo tiempo.
+
+
+## Evolución Fase 4 · snapshots, credenciales y asistencia
+
+La migración 19 añade `member_credentials`, `access_snapshots`,
+`access_events` y `report_*`. Los snapshots se firman con HMAC-SHA256 usando la
+clave local y llevan revisión por gimnasio; los eventos remotos se reconcilian
+de forma idempotente por `(organization_id, idempotency_key)`.
+
+| Comando | Permiso | Salida |
+| --- | --- | --- |
+| `publish_access_snapshot` | `ManageMembers` | `AccessSnapshot` |
+| `latest_access_snapshot` | `ManageMembers` | `AccessSnapshot \| null` |
+| `list_member_credentials` | `ManageMembers` | `MemberCredential[]` |
+| `issue_member_credential` | `ManageMembers` | `MemberCredential` |
+| `revoke_member_credential` | `ManageMembers` | `MemberCredential` |
+| `record_access_event` | `OperatePos` | `AccessEvent` |
+| `list_access_event_log` | `ManageMembers` | `AccessEvent[]` |
+| `reconcile_access_events` | `OperatePos` | `AccessReconciliationSummary` |
+| `attendance_report` | `ManageMembers` | `AttendanceReport` |
+
+Reglas:
+
+- Una credencial revocada no autoriza accesos.
+- La membresía debe estar `active` o `scheduled`, dentro de `startDate` y
+  `endDate`, y cumplir días, minutos y edad del plan.
+- `record_access_event` y `reconcile_access_events` devuelven duplicados sin
+  insertar; una misma clave con otro contenido produce conflicto.
+- `reconcile_access_events` marca como `stale` un evento con una revisión de
+  snapshot anterior a la última publicada.
+- `attendance_report` solo cuenta eventos `allowed` y no `legacy`, agrupa por
+  hora, día, plan y zona, y calcula horas de baja demanda contra la hora pico.

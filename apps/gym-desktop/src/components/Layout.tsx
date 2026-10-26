@@ -19,6 +19,11 @@ const navigation: NavigationItem[] = [
   { to: "/", label: "Panel" },
   { to: "/cash", label: "Caja", anyPermission: ["operatePos", "viewFinance"] },
   { to: "/members", label: "Socios", permission: "manageMembers" },
+  {
+    to: "/access",
+    label: "Accesos",
+    anyPermission: ["operatePos", "manageMembers"],
+  },
   { to: "/sales", label: "Ventas", permission: "operatePos" },
   { to: "/reports", label: "Reportes", permission: "viewFinance" },
   { to: "/inventory", label: "Inventario", permission: "manageInventory" },

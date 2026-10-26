@@ -131,4 +131,13 @@ pub enum DataError {
 
     #[error("the idempotency key was already used with a different membership payment")]
     MembershipPaymentIdempotencyConflict,
+
+    #[error("the member credential does not exist in this gym")]
+    MemberCredentialNotFound,
+
+    #[error("the idempotency key was already used with a different access event")]
+    AccessIdempotencyConflict,
+
+    #[error("the report schedule does not exist in this gym")]
+    ReportScheduleNotFound,
 }

@@ -1593,6 +1593,7 @@ dependencies = [
  "gym-contracts",
  "gym-core",
  "hex",
+ "hmac",
  "keyring",
  "rand",
  "rusqlite",

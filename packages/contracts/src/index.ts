@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.13.0";
+export const CONTRACT_VERSION = "2.14.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -53,6 +53,127 @@ export interface AccessEventSummary {
   allowed: boolean;
   idempotencyKey: string;
   occurredAt: string;
+}
+
+export interface AccessSnapshot {
+  revision: number;
+  generatedAt: string;
+  memberCount: number;
+  credentialCount: number;
+  checksum: string;
+  signature: string;
+  payloadJson: string;
+}
+
+export interface MemberCredential {
+  id: string;
+  memberId: string;
+  memberNumber: string;
+  memberName: string;
+  code: string;
+  status: string;
+  revision: number;
+  issuedAt: string;
+  revokedAt: string | null;
+}
+
+export interface AccessEventInput {
+  credentialCode: string;
+  deviceId: string;
+  zone: string | null;
+  allowed: boolean;
+  reason: string;
+  snapshotRevision: number;
+  occurredAt: string;
+  idempotencyKey: string;
+}
+
+export interface AccessEvent {
+  id: string;
+  credentialCode: string;
+  memberId: string | null;
+  memberNumber: string | null;
+  memberName: string | null;
+  deviceId: string;
+  zone: string | null;
+  allowed: boolean;
+  reason: string;
+  snapshotRevision: number;
+  idempotencyKey: string;
+  payloadHash: string;
+  reconciliationStatus: string;
+  occurredAt: string;
+}
+
+export interface AccessReconciliationInput {
+  snapshotRevision: number;
+  events: AccessEventInput[];
+}
+
+export interface AccessConflict {
+  idempotencyKey: string;
+  reason: string;
+}
+
+export interface AccessReconciliationSummary {
+  snapshotRevision: number;
+  inserted: number;
+  duplicates: number;
+  stale: number;
+  conflicts: AccessConflict[];
+}
+
+export interface AttendanceInput {
+  from: string;
+  to: string;
+}
+
+export interface AttendanceHour {
+  hour: number;
+  visits: number;
+  uniqueMembers: number;
+}
+
+export interface AttendanceDay {
+  date: string;
+  visits: number;
+  uniqueMembers: number;
+}
+
+export interface AttendancePlan {
+  planId: string | null;
+  planName: string | null;
+  visits: number;
+  uniqueMembers: number;
+}
+
+export interface AttendanceZone {
+  zone: string | null;
+  visits: number;
+  uniqueMembers: number;
+}
+
+export interface AttendanceMember {
+  memberId: string;
+  memberNumber: string;
+  memberName: string;
+  visits: number;
+  lastVisitAt: string;
+}
+
+export interface AttendanceReport {
+  from: string;
+  to: string;
+  generatedAt: string;
+  totalVisits: number;
+  uniqueMembers: number;
+  peakHour: number;
+  lowDemandHours: AttendanceHour[];
+  hours: AttendanceHour[];
+  days: AttendanceDay[];
+  plans: AttendancePlan[];
+  zones: AttendanceZone[];
+  members: AttendanceMember[];
 }
 
 export type StaffRole = "owner" | "manager" | "cashier" | "accounting";
@@ -595,6 +716,41 @@ export interface FinancialReport {
   cashDifferenceAbsMinor: number;
   productSales: ProductSalesTotal[];
   inventoryAdjustments: InventoryAdjustmentTotal[];
+}
+
+export interface NewReportScheduleInput {
+  cadence: "daily" | "weekly" | "monthly";
+  lookbackDays: number;
+}
+
+export interface ReportSchedule {
+  id: string;
+  reportType: string;
+  cadence: string;
+  lookbackDays: number;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SetReportScheduleEnabledInput {
+  scheduleId: string;
+  enabled: boolean;
+}
+
+export interface ReportRun {
+  id: string;
+  scheduleId: string | null;
+  reportType: string;
+  periodFrom: string;
+  periodTo: string;
+  generatedAt: string;
+  fileName: string | null;
+  checksum: string;
+  status: string;
+  error: string | null;
 }
 
 export interface FinancialReportExport {

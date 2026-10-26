@@ -2,6 +2,7 @@ import type {
   CreateMembershipPlanInput,
   Member,
   MemberAccount,
+  MemberCredential,
   MemberStatus,
   Membership,
   MembershipCharge,
@@ -490,6 +491,7 @@ function MembersTab() {
               onResume={(membershipId) => resume.mutate(membershipId)}
               onCancel={(membershipId, reason) => cancel.mutate({ membershipId, reason })}
             />
+            <CredentialsPanel member={selected} />
           </div>
 
           <AccountPanel
@@ -501,6 +503,113 @@ function MembersTab() {
             }
           />
         </section>
+      )}
+    </div>
+  );
+}
+
+function CredentialsPanel({ member }: { member: Member }) {
+  const queryClient = useQueryClient();
+  const credentials = useQuery<MemberCredential[]>({
+    queryKey: ["member-credentials", member.id],
+    queryFn: () => api.listMemberCredentials(member.id),
+  });
+  const issue = useMutation({
+    mutationFn: () => api.issueMemberCredential(member.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["member-credentials", member.id],
+      });
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (credentialId: string) =>
+      api.revokeMemberCredential(credentialId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["member-credentials", member.id],
+      });
+    },
+  });
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold">Credenciales de acceso</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Cada emisión o revocación actualiza la revisión del socio.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => issue.mutate()}
+          disabled={issue.isPending}
+          className={primaryButton}
+        >
+          {issue.isPending ? "Emitiendo…" : "Emitir credencial"}
+        </button>
+      </div>
+
+      {credentials.isLoading ? (
+        <p className="mt-3 text-sm text-slate-500">Cargando credenciales…</p>
+      ) : credentials.isError ? (
+        <p className="mt-3 text-sm text-rose-700">
+          {errorMessage(credentials.error)}
+        </p>
+      ) : credentials.data && credentials.data.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {credentials.data.map((credential) => (
+            <div
+              key={credential.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2"
+            >
+              <div>
+                <p className="font-mono text-sm font-medium">
+                  {credential.code}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Rev. {credential.revision} · emitida{" "}
+                  {formatDateTime(credential.issuedAt)}
+                  {credential.revokedAt
+                    ? ` · revocada ${formatDateTime(credential.revokedAt)}`
+                    : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={[
+                    "rounded-full px-2 py-0.5 text-xs font-medium",
+                    credential.status === "active"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-slate-100 text-slate-600",
+                  ].join(" ")}
+                >
+                  {credential.status === "active" ? "Activa" : "Revocada"}
+                </span>
+                {credential.status === "active" && (
+                  <button
+                    type="button"
+                    onClick={() => revoke.mutate(credential.id)}
+                    disabled={revoke.isPending}
+                    className={dangerButton}
+                  >
+                    Revocar
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">
+          Este socio aún no tiene credenciales.
+        </p>
+      )}
+      {(issue.isError || revoke.isError) && (
+        <p className="mt-3 text-sm text-rose-700">
+          {errorMessage(issue.error ?? revoke.error)}
+        </p>
       )}
     </div>
   );

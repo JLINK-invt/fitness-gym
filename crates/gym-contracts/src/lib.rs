@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.13.0";
+pub const CONTRACT_VERSION: &str = "2.14.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +101,161 @@ pub struct AccessEventSummary {
     pub allowed: bool,
     pub idempotency_key: String,
     pub occurred_at: String,
+}
+
+/// Signed snapshot published to the access app. `payload_json` is the exact
+/// bytes covered by `checksum` and `signature`; consumers must verify both
+/// before applying the revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessSnapshot {
+    pub revision: i64,
+    pub generated_at: String,
+    pub member_count: i64,
+    pub credential_count: i64,
+    pub checksum: String,
+    pub signature: String,
+    pub payload_json: String,
+}
+
+/// Credential exposed to reception. It is a public badge code, never a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberCredential {
+    pub id: String,
+    pub member_id: String,
+    pub member_number: String,
+    pub member_name: String,
+    pub code: String,
+    pub status: String,
+    pub revision: i64,
+    pub issued_at: String,
+    pub revoked_at: Option<String>,
+}
+
+/// Event produced by a reader. The same idempotency key with different content
+/// is rejected instead of overwriting the original decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessEventInput {
+    pub credential_code: String,
+    pub device_id: String,
+    pub zone: Option<String>,
+    pub allowed: bool,
+    pub reason: String,
+    pub snapshot_revision: i64,
+    pub occurred_at: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessEvent {
+    pub id: String,
+    pub credential_code: String,
+    pub member_id: Option<String>,
+    pub member_number: Option<String>,
+    pub member_name: Option<String>,
+    pub device_id: String,
+    pub zone: Option<String>,
+    pub allowed: bool,
+    pub reason: String,
+    pub snapshot_revision: i64,
+    pub idempotency_key: String,
+    pub payload_hash: String,
+    pub reconciliation_status: String,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessReconciliationInput {
+    pub snapshot_revision: i64,
+    pub events: Vec<AccessEventInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessConflict {
+    pub idempotency_key: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessReconciliationSummary {
+    pub snapshot_revision: i64,
+    pub inserted: i64,
+    pub duplicates: i64,
+    pub stale: i64,
+    pub conflicts: Vec<AccessConflict>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceInput {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceHour {
+    pub hour: i64,
+    pub visits: i64,
+    pub unique_members: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceDay {
+    pub date: String,
+    pub visits: i64,
+    pub unique_members: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendancePlan {
+    pub plan_id: Option<String>,
+    pub plan_name: Option<String>,
+    pub visits: i64,
+    pub unique_members: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceZone {
+    pub zone: Option<String>,
+    pub visits: i64,
+    pub unique_members: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceMember {
+    pub member_id: String,
+    pub member_number: String,
+    pub member_name: String,
+    pub visits: i64,
+    pub last_visit_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceReport {
+    pub from: String,
+    pub to: String,
+    pub generated_at: String,
+    pub total_visits: i64,
+    pub unique_members: i64,
+    pub peak_hour: i64,
+    pub low_demand_hours: Vec<AttendanceHour>,
+    pub hours: Vec<AttendanceHour>,
+    pub days: Vec<AttendanceDay>,
+    pub plans: Vec<AttendancePlan>,
+    pub zones: Vec<AttendanceZone>,
+    pub members: Vec<AttendanceMember>,
 }
 
 /// Roles enabled for local staff in V1.
@@ -882,6 +1037,49 @@ pub struct FinancialReportExport {
     pub file_name: String,
     pub path: String,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewReportScheduleInput {
+    pub cadence: String,
+    pub lookback_days: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSchedule {
+    pub id: String,
+    pub report_type: String,
+    pub cadence: String,
+    pub lookback_days: i64,
+    pub enabled: bool,
+    pub next_run_at: String,
+    pub last_run_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetReportScheduleEnabledInput {
+    pub schedule_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportRun {
+    pub id: String,
+    pub schedule_id: Option<String>,
+    pub report_type: String,
+    pub period_from: String,
+    pub period_to: String,
+    pub generated_at: String,
+    pub file_name: Option<String>,
+    pub checksum: String,
+    pub status: String,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

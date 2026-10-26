@@ -1,7 +1,14 @@
 import type {
   AccessDecision,
+  AccessEvent,
+  AccessEventInput,
   AccessEventSummary,
+  AccessReconciliationInput,
+  AccessReconciliationSummary,
   AccessRequest,
+  AccessSnapshot,
+  AttendanceInput,
+  AttendanceReport,
   AuditEventSummary,
   AddCatalogPriceInput,
   AddCatalogVariantInput,
@@ -23,6 +30,7 @@ import type {
   InventoryMovement,
   ListPaymentChargesInput,
   Member,
+  MemberCredential,
   MemberAccount,
   Membership,
   MembershipDashboard,
@@ -34,8 +42,11 @@ import type {
   Prospect,
   RecordCashMovementInput,
   RecordInventoryEntryInput,
+  NewReportScheduleInput,
   RecordMembershipPaymentInput,
   RecoveryCode,
+  ReportRun,
+  ReportSchedule,
   RecoveryKit,
   RenewMembershipInput,
   RestoreOutcome,
@@ -43,6 +54,7 @@ import type {
   Sale,
   SaleReturn,
   SessionSummary,
+  SetReportScheduleEnabledInput,
   SetupState,
   StaffRole,
   StaffStatus,
@@ -129,6 +141,34 @@ export const api = {
     invoke<AccessDecision>("simulate_access", { request }),
   listAccessEvents: (limit = 20) =>
     invoke<AccessEventSummary[]>("list_access_events", { limit }),
+  publishAccessSnapshot: () =>
+    invoke<AccessSnapshot>("publish_access_snapshot"),
+  latestAccessSnapshot: () =>
+    invoke<AccessSnapshot | null>("latest_access_snapshot"),
+  listMemberCredentials: (memberId: string) =>
+    invoke<MemberCredential[]>("list_member_credentials", { memberId }),
+  issueMemberCredential: (memberId: string) =>
+    invoke<MemberCredential>("issue_member_credential", { memberId }),
+  revokeMemberCredential: (credentialId: string) =>
+    invoke<MemberCredential>("revoke_member_credential", { credentialId }),
+  recordAccessEvent: (input: AccessEventInput) =>
+    invoke<AccessEvent>("record_access_event", { input }),
+  listAccessEventLog: (limit = 50) =>
+    invoke<AccessEvent[]>("list_access_event_log", { limit }),
+  reconcileAccessEvents: (input: AccessReconciliationInput) =>
+    invoke<AccessReconciliationSummary>("reconcile_access_events", { input }),
+  attendanceReport: (input: AttendanceInput) =>
+    invoke<AttendanceReport>("attendance_report", { input }),
+  createReportSchedule: (input: NewReportScheduleInput) =>
+    invoke<ReportSchedule>("create_report_schedule", { input }),
+  listReportSchedules: () =>
+    invoke<ReportSchedule[]>("list_report_schedules"),
+  setReportScheduleEnabled: (input: SetReportScheduleEnabledInput) =>
+    invoke<ReportSchedule>("set_report_schedule_enabled", { input }),
+  listReportRuns: (limit = 50) =>
+    invoke<ReportRun[]>("list_report_runs", { limit }),
+  runDueReportSchedules: () =>
+    invoke<ReportRun[]>("run_due_report_schedules"),
   listBackups: () => invoke<BackupSummary[]>("list_backups"),
   createBackup: (passphrase: string) =>
     invoke<BackupSummary>("create_backup", { passphrase }),

@@ -5,6 +5,7 @@ import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "./components/Layout";
 import { Layout } from "./components/Layout";
+import { AccessPage } from "./pages/AccessPage";
 import { AuditPage } from "./pages/AuditPage";
 import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
@@ -105,6 +106,14 @@ export function App() {
           element={
             <Guarded permission="manageMembers">
               <MembersPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="access"
+          element={
+            <Guarded anyPermission={["operatePos", "manageMembers"]}>
+              <AccessPage />
             </Guarded>
           }
         />

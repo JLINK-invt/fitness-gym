@@ -185,6 +185,24 @@ async (page) => {
   await page.getByText(/Recibo REC-00001/).waitFor();
   pass("cobrar el cargo de la membresía y generar recibo");
 
+  await page.getByRole("button", { name: "Emitir credencial" }).click();
+  await page.getByText("GYM-SOC00001-01", { exact: true }).waitFor();
+  pass("emitir credencial de acceso para el socio");
+
+  await page.getByRole("link", { name: "Accesos" }).click();
+  await page.getByRole("heading", { name: "Accesos y asistencia" }).waitFor();
+  await page.getByRole("button", { name: "Publicar snapshot" }).click();
+  await page.getByText("Checksum").waitFor();
+  await page.getByLabel("Credencial").fill("GYM-SOC00001-01");
+  await page.getByRole("button", { name: "Simular acceso" }).click();
+  await page.getByText("Acceso permitido").waitFor();
+  await page.getByText("Luisa Socia").first().waitFor();
+  await page.getByText("GYM-SOC00001-01").first().waitFor();
+  await page.getByRole("heading", { name: "Asistencia y ocupación" }).waitFor();
+  pass("publicar snapshot y validar acceso con la credencial emitida");
+
+  await page.getByRole("link", { name: "Socios" }).click();
+  await page.getByRole("heading", { name: "Socios y membresías" }).waitFor();
   await page.getByRole("button", { name: "Prospectos" }).click();
   await page.getByLabel("Nombre").fill("Pedro Prospecto");
   await page.getByLabel("Teléfono").fill("555-0202");
@@ -222,10 +240,11 @@ async (page) => {
   if ((await page.getByRole("link", { name: "Auditoría" }).count()) > 0) {
     throw new Error("El cajero no debería ver Auditoría.");
   }
-  if ((await page.getByRole("link", { name: "Acceso" }).count()) > 0) {
-    throw new Error("El módulo Acceso simulado ya no debería mostrarse.");
-  }
-  pass("cajero no ve módulos administrativos");
+  await page.getByRole("link", { name: "Accesos" }).click();
+  await page.getByRole("heading", { name: "Accesos y asistencia" }).waitFor();
+  await page.getByRole("link", { name: "Panel" }).click();
+  await page.getByRole("heading", { name: "Panel", exact: true }).waitFor();
+  pass("cajero ve accesos pero no módulos administrativos");
 
   await page.getByRole("link", { name: "Ventas" }).click();
   await page
@@ -352,6 +371,12 @@ async (page) => {
   await page.getByRole("button", { name: "Exportar CSV" }).click();
   await page.getByText(/Exportado reporte-.*\.csv/).waitFor();
   pass("exportar CSV genera archivo auditado");
+
+  await page.getByRole("button", { name: "Programar" }).click();
+  await page.getByText("Semanal · 7 días").waitFor();
+  await page.getByRole("button", { name: "Ejecutar pendientes" }).click();
+  await page.getByText("completed", { exact: true }).waitFor();
+  pass("programar y ejecutar reporte financiero");
 
   await page.getByRole("link", { name: "Auditoría" }).click();
   await page.getByRole("heading", { name: "Auditoría" }).waitFor();

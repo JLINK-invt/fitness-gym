@@ -252,4 +252,27 @@ pub const MIGRATIONS: &[Migration] = &[
                ALTER TABLE membership_plans DROP COLUMN access_days; \
                ALTER TABLE membership_plans DROP COLUMN current_version;",
     },
+    Migration {
+        version: 19,
+        name: "access_attendance_reports",
+        up: include_str!("../migrations/0019_access_attendance_reports.sql"),
+        down: "DROP TRIGGER IF EXISTS report_runs_no_delete; \
+               DROP TRIGGER IF EXISTS report_runs_no_update; \
+               DROP INDEX IF EXISTS idx_report_runs_organization_generated; \
+               DROP TABLE IF EXISTS report_runs; \
+               DROP INDEX IF EXISTS idx_report_schedules_due; \
+               DROP TABLE IF EXISTS report_schedules; \
+               DROP TRIGGER IF EXISTS access_events_no_delete; \
+               DROP TRIGGER IF EXISTS access_events_no_update; \
+               DROP INDEX IF EXISTS idx_access_events_member_occurred; \
+               DROP INDEX IF EXISTS idx_access_events_organization_occurred; \
+               DROP TABLE IF EXISTS access_events; \
+               DROP TRIGGER IF EXISTS access_snapshots_no_delete; \
+               DROP TRIGGER IF EXISTS access_snapshots_no_update; \
+               DROP INDEX IF EXISTS idx_access_snapshots_organization_revision; \
+               DROP TABLE IF EXISTS access_snapshots; \
+               DROP TRIGGER IF EXISTS member_credentials_no_delete; \
+               DROP INDEX IF EXISTS idx_member_credentials_member; \
+               DROP TABLE IF EXISTS member_credentials;",
+    },
 ];
