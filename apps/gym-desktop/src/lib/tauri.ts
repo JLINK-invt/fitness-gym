@@ -9,12 +9,14 @@ import type {
   BackupSummary,
   CatalogProduct,
   CreateCatalogItemInput,
+  CreateSaleInput,
   HealthReport,
+  RecoveryCode,
+  RecoveryKit,
   RestoreOutcome,
+  Sale,
   SessionSummary,
   SetupState,
-  SiteStatus,
-  SiteSummary,
   StaffRole,
   StaffStatus,
   StaffSummary,
@@ -31,20 +33,19 @@ export const api = {
   health: () => invoke<HealthReport>("health"),
   setupState: () => invoke<SetupState>("get_setup_state"),
   bootstrapOwner: (name: string, password: string, gymName?: string) =>
-    invoke<SessionSummary>("bootstrap_owner", { name, password, gymName }),
+    invoke<RecoveryKit>("bootstrap_owner", { name, password, gymName }),
+  generateOwnerRecovery: () => invoke<RecoveryCode>("generate_owner_recovery"),
+  recoverOwner: (recoveryCode: string, newPassword: string) =>
+    invoke<RecoveryKit>("recover_owner", { recoveryCode, newPassword }),
   login: (name: string, password: string) =>
     invoke<SessionSummary>("login", { name, password }),
   logout: () => invoke<void>("logout"),
   currentSession: () => invoke<SessionSummary | null>("current_session"),
-  listSites: () => invoke<SiteSummary[]>("list_sites"),
-  createSite: (name: string) => invoke<SiteSummary>("create_site", { name }),
-  updateSite: (siteId: string, name: string, status: SiteStatus) =>
-    invoke<SiteSummary>("update_site", { siteId, name, status }),
   listStaff: () => invoke<StaffSummary[]>("list_staff"),
-  createStaff: (name: string, role: StaffRole, siteId: string, password: string) =>
-    invoke<StaffSummary>("create_staff", { name, role, siteId, password }),
-  updateStaff: (userId: string, role: StaffRole, siteId: string, status: StaffStatus) =>
-    invoke<StaffSummary>("update_staff", { userId, role, siteId, status }),
+  createStaff: (name: string, role: StaffRole, password: string) =>
+    invoke<StaffSummary>("create_staff", { name, role, password }),
+  updateStaff: (userId: string, role: StaffRole, status: StaffStatus) =>
+    invoke<StaffSummary>("update_staff", { userId, role, status }),
   simulateAccess: (request: AccessRequest) =>
     invoke<AccessDecision>("simulate_access", { request }),
   listAccessEvents: (limit = 20) =>
@@ -65,6 +66,8 @@ export const api = {
     invoke<CatalogProduct>("update_catalog_variant", { input }),
   addCatalogPrice: (input: AddCatalogPriceInput) =>
     invoke<CatalogProduct>("add_catalog_price", { input }),
+  listSales: () => invoke<Sale[]>("list_sales"),
+  createSale: (input: CreateSaleInput) => invoke<Sale>("create_sale", { input }),
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),

@@ -1,14 +1,17 @@
-import type { SessionSummary, SetupState } from "@gym/contracts";
+import type { RecoveryKit, SessionSummary, SetupState } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 
+import { RecoveryCodePanel } from "../components/RecoveryCodePanel";
 import { api } from "../lib/tauri";
 
 export function AuthPage({
   onAuthenticated,
+  onRecoveryPendingChange,
 }: {
   onAuthenticated: (session: SessionSummary) => void;
+  onRecoveryPendingChange: (pending: boolean) => void;
 }) {
   const setup = useQuery<SetupState>({
     queryKey: ["setup"],
@@ -40,25 +43,35 @@ export function AuthPage({
       <OwnerSetup
         state={setup.data}
         onAuthenticated={onAuthenticated}
+        onRecoveryPendingChange={onRecoveryPendingChange}
       />
     );
   }
 
-  return <LoginForm gymName={setup.data.gymName} onAuthenticated={onAuthenticated} />;
+  return (
+    <LoginForm
+      gymName={setup.data.gymName}
+      onAuthenticated={onAuthenticated}
+      onRecoveryPendingChange={onRecoveryPendingChange}
+    />
+  );
 }
 
 function OwnerSetup({
   state,
   onAuthenticated,
+  onRecoveryPendingChange,
 }: {
   state: SetupState;
   onAuthenticated: (session: SessionSummary) => void;
+  onRecoveryPendingChange: (pending: boolean) => void;
 }) {
   const [gymName, setGymName] = useState(state.gymName ?? "");
   const [ownerName, setOwnerName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [recoveryKit, setRecoveryKit] = useState<RecoveryKit | null>(null);
 
   const createOwner = useMutation({
     mutationFn: () =>
@@ -67,7 +80,10 @@ function OwnerSetup({
         password,
         state.configured ? undefined : gymName.trim(),
       ),
-    onSuccess: onAuthenticated,
+    onSuccess: (kit) => {
+      setRecoveryKit(kit);
+      onRecoveryPendingChange(true);
+    },
   });
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -94,6 +110,22 @@ function OwnerSetup({
 
   const error = localError ?? (createOwner.isError ? errorMessage(createOwner.error) : null);
 
+  if (recoveryKit) {
+    return (
+      <AuthShell>
+        <RecoveryCodePanel
+          code={recoveryKit.recoveryCode}
+          title="Guarda tu código de recuperación"
+          description="Es la única forma de volver a entrar si olvidas la contraseña del dueño. No hay recuperación por correo ni por teléfono."
+          onContinue={() => {
+            onRecoveryPendingChange(false);
+            onAuthenticated(recoveryKit.session);
+          }}
+        />
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell>
       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-700">
@@ -104,7 +136,8 @@ function OwnerSetup({
       </h1>
       <p className="mt-2 text-sm leading-6 text-slate-600">
         Esta cuenta administra el equipo, las finanzas y los respaldos. No hay
-        usuario por defecto ni recuperación por correo.
+        usuario por defecto ni recuperación por correo. Al terminar recibirás un
+        código de recuperación de un solo uso.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4">
@@ -163,12 +196,15 @@ function OwnerSetup({
 function LoginForm({
   gymName,
   onAuthenticated,
+  onRecoveryPendingChange,
 }: {
   gymName?: string;
   onAuthenticated: (session: SessionSummary) => void;
+  onRecoveryPendingChange: (pending: boolean) => void;
 }) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [recovering, setRecovering] = useState(false);
 
   const login = useMutation({
     mutationFn: () => api.login(name.trim(), password),
@@ -180,6 +216,17 @@ function LoginForm({
     if (name.trim() && password) {
       login.mutate();
     }
+  }
+
+  if (recovering) {
+    return (
+      <RecoveryForm
+        gymName={gymName}
+        onBack={() => setRecovering(false)}
+        onAuthenticated={onAuthenticated}
+        onRecoveryPendingChange={onRecoveryPendingChange}
+      />
+    );
   }
 
   return (
@@ -225,6 +272,143 @@ function LoginForm({
           {login.isPending ? "Entrando…" : "Entrar"}
         </button>
       </form>
+
+      <button
+        type="button"
+        onClick={() => setRecovering(true)}
+        className="mt-4 w-full text-center text-sm font-medium text-brand-700 hover:text-brand-900"
+      >
+        ¿Olvidaste la contraseña del dueño?
+      </button>
+    </AuthShell>
+  );
+}
+
+function RecoveryForm({
+  gymName,
+  onBack,
+  onAuthenticated,
+  onRecoveryPendingChange,
+}: {
+  gymName?: string;
+  onBack: () => void;
+  onAuthenticated: (session: SessionSummary) => void;
+  onRecoveryPendingChange: (pending: boolean) => void;
+}) {
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [recoveryKit, setRecoveryKit] = useState<RecoveryKit | null>(null);
+
+  const recover = useMutation({
+    mutationFn: () => api.recoverOwner(recoveryCode.trim(), password),
+    onSuccess: (kit) => {
+      setRecoveryKit(kit);
+      onRecoveryPendingChange(true);
+    },
+  });
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLocalError(null);
+    if (!recoveryCode.trim()) {
+      setLocalError("Escribe el código de recuperación.");
+      return;
+    }
+    if (password.length < 12) {
+      setLocalError("La contraseña nueva debe tener al menos 12 caracteres.");
+      return;
+    }
+    if (password !== confirmation) {
+      setLocalError("Las contraseñas no coinciden.");
+      return;
+    }
+    recover.mutate();
+  }
+
+  if (recoveryKit) {
+    return (
+      <AuthShell>
+        <RecoveryCodePanel
+          code={recoveryKit.recoveryCode}
+          title="Tu nuevo código de recuperación"
+          description="La contraseña anterior ya no funciona. Sustituye el código guardado por este; el anterior quedó invalidado."
+          onContinue={() => {
+            onRecoveryPendingChange(false);
+            onAuthenticated(recoveryKit.session);
+          }}
+        />
+      </AuthShell>
+    );
+  }
+
+  const error = localError ?? (recover.isError ? errorMessage(recover.error) : null);
+
+  return (
+    <AuthShell>
+      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-700">
+        {gymName ?? "Fitness Gym"}
+      </p>
+      <h1 className="mt-3 text-2xl font-semibold tracking-tight">Recupera la cuenta</h1>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Solo funciona con el código de recuperación de la cuenta del dueño. Al
+        usarlo se invalida y se genera uno nuevo.
+      </p>
+
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <Field
+          label="Código de recuperación"
+          hint="Formato XXXXX-XXXXX-XXXXX-XXXXX; no distingue mayúsculas."
+        >
+          <input
+            value={recoveryCode}
+            onChange={(event) => setRecoveryCode(event.target.value)}
+            autoComplete="one-time-code"
+            className={`${inputClass} font-mono uppercase tracking-wider`}
+            placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+            autoFocus
+          />
+        </Field>
+
+        <Field label="Contraseña nueva" hint="Mínimo 12 caracteres.">
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            className={inputClass}
+          />
+        </Field>
+
+        <Field label="Repetir contraseña nueva">
+          <input
+            type="password"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            autoComplete="new-password"
+            className={inputClass}
+          />
+        </Field>
+
+        {error && <ErrorNotice message={error} />}
+
+        <button
+          type="submit"
+          disabled={recover.isPending || !recoveryCode.trim() || !password}
+          className={buttonClass}
+        >
+          {recover.isPending ? "Recuperando…" : "Fijar contraseña y entrar"}
+        </button>
+      </form>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="mt-4 w-full text-center text-sm font-medium text-slate-600 hover:text-slate-900"
+      >
+        Volver al inicio de sesión
+      </button>
     </AuthShell>
   );
 }

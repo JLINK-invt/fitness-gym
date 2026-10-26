@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "1.5.0";
+export const CONTRACT_VERSION = "2.2.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -76,29 +76,26 @@ export interface SetupState {
 export interface SessionSummary {
   userId: string;
   organizationId: string;
-  siteId?: string;
   name: string;
   role: StaffRole;
   permissions: Permission[];
 }
 
-export type SiteStatus = "active" | "closed";
+export interface RecoveryKit {
+  session: SessionSummary;
+  recoveryCode: string;
+}
+
+export interface RecoveryCode {
+  recoveryCode: string;
+}
 
 export type StaffStatus = "active" | "revoked";
-
-export interface SiteSummary {
-  id: string;
-  name: string;
-  status: SiteStatus;
-  createdAt: string;
-}
 
 export interface StaffSummary {
   userId: string;
   name: string;
   role: StaffRole;
-  siteId: string | null;
-  siteName: string | null;
   status: StaffStatus;
   lastLoginAt: string | null;
   createdAt: string;
@@ -190,6 +187,51 @@ export interface AddCatalogPriceInput {
   price: CatalogPriceInput;
 }
 
+export type PaymentMethod = "cash" | "transfer" | "point";
+
+export interface SaleItemInput {
+  variantId: string;
+  quantity: number;
+}
+
+export interface CreateSaleInput {
+  items: SaleItemInput[];
+  paymentMethod: PaymentMethod;
+  cashReceivedMinor?: number;
+}
+
+export interface SaleItem {
+  id: string;
+  variantId: string;
+  priceVersionId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  unit: CatalogUnit;
+  quantity: number;
+  unitAmountMinor: number;
+  taxRateBps: number;
+  priceIncludesTax: boolean;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+}
+
+export interface Sale {
+  id: string;
+  currency: string;
+  subtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paymentMethod: PaymentMethod;
+  cashReceivedMinor: number | null;
+  changeMinor: number | null;
+  soldBy: string | null;
+  soldByName: string | null;
+  items: SaleItem[];
+  createdAt: string;
+}
+
 export type AuditResult = "allowed" | "denied" | "failed";
 
 export interface AuditEventSummary {
@@ -197,7 +239,6 @@ export interface AuditEventSummary {
   sequence: number;
   actorId: string | null;
   actorName: string | null;
-  siteId: string | null;
   action: string;
   resource: string;
   result: AuditResult;

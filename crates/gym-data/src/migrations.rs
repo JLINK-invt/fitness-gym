@@ -65,4 +65,30 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_catalog_products_organization_name; \
                DROP TABLE IF EXISTS catalog_products;",
     },
+    Migration {
+        version: 6,
+        name: "single_site",
+        up: include_str!("../migrations/0006_single_site.sql"),
+        down: "-- irreversible: restore a snapshot created before schema v6",
+    },
+    Migration {
+        version: 7,
+        name: "sales",
+        up: include_str!("../migrations/0007_sales.sql"),
+        down: "DROP TRIGGER IF EXISTS sale_items_no_delete; \
+               DROP TRIGGER IF EXISTS sale_items_no_update; \
+               DROP TRIGGER IF EXISTS sales_no_delete; \
+               DROP TRIGGER IF EXISTS sales_no_update; \
+               DROP INDEX IF EXISTS idx_sale_items_variant; \
+               DROP INDEX IF EXISTS idx_sale_items_sale; \
+               DROP TABLE IF EXISTS sale_items; \
+               DROP INDEX IF EXISTS idx_sales_organization_created; \
+               DROP TABLE IF EXISTS sales;",
+    },
+    Migration {
+        version: 8,
+        name: "owner_recovery",
+        up: include_str!("../migrations/0008_owner_recovery.sql"),
+        down: "ALTER TABLE users DROP COLUMN recovery_code_hash;",
+    },
 ];

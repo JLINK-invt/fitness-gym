@@ -3,6 +3,7 @@
 - **Estado:** Accepted
 - **Fecha:** 2026-10-22
 - **Supersede:** riesgo residual de ADR-0002 sobre auditoría manipulable
+- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin sede y cadena v2)
 
 ## Contexto
 
@@ -17,11 +18,12 @@ marcaba la manipulación de auditoría como pendiente y la UI no ofrecía consul
 2. Cada evento lleva un `sequence` por gimnasio, el hash del evento anterior y su
    propio hash SHA-256 sobre campos canónicos.
 3. La escritura calcula consecutivo y hash dentro de la misma transacción.
-4. La UI expone una pantalla de solo lectura con `ViewAudit`; el dueño ve todo el
-   gimnasio y los roles con sede solo ven sus eventos.
+4. La UI expone una pantalla de solo lectura con `ViewAudit`; todos los roles con
+   el permiso ven los eventos de la instalación.
 5. `verify_audit_chain` recalcula la cadena y reporta el primer `sequence` roto.
 6. Los eventos heredados de esquema 3 se conservan sin hash; la cadena empieza en
-   el primer evento posterior a la migración 4.
+   el primer evento posterior a la migración 4. La migración 6 limpia los hashes
+   y reinicia la cadena con `fitness-gym-audit-v2`.
 
 ## Consecuencias
 
