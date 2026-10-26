@@ -179,9 +179,11 @@ async (page) => {
   pass("asignar membresía y generar cargo");
 
   await page.getByRole("button", { name: /Membresía Mensual E2E/ }).click();
+  await page.getByLabel("Método de pago").selectOption("transfer");
   await page.getByRole("button", { name: /Registrar pago de/ }).click();
   await page.getByText("Sin cargos pendientes.").waitFor();
-  pass("cobrar el cargo de la membresía");
+  await page.getByText(/Recibo REC-00001/).waitFor();
+  pass("cobrar el cargo de la membresía y generar recibo");
 
   await page.getByRole("button", { name: "Prospectos" }).click();
   await page.getByLabel("Nombre").fill("Pedro Prospecto");

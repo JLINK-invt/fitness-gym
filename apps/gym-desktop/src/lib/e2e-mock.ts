@@ -205,6 +205,12 @@ type StoredMembershipPlan = {
   priceMinor: number;
   currency: string;
   graceDays: number;
+  version: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -240,12 +246,19 @@ type StoredMembership = {
   memberId: string;
   planId: string;
   planName: string;
+  planVersion: number;
+  planVersionId: string;
   status: "scheduled" | "active" | "paused" | "expired" | "cancelled";
   startDate: string;
   endDate: string;
   priceMinor: number;
   currency: string;
   graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
   pausedAt: string | null;
   pauseUntil: string | null;
   cancellationReason: string | null;
@@ -273,6 +286,8 @@ type StoredMembershipPayment = {
   amountMinor: number;
   paymentMethod: "cash" | "transfer" | "point";
   reference: string | null;
+  receiptNumber: string;
+  cashSessionId: string | null;
   receivedBy: string | null;
   receivedByName: string | null;
   createdAt: string;
@@ -311,6 +326,7 @@ type StoredMembershipPaymentAttempt = {
     membershipCharges: StoredMembershipCharge[];
     membershipPayments: StoredMembershipPayment[];
     membershipPaymentIdempotency: Map<string, StoredMembershipPaymentAttempt>;
+    membershipReceiptSequence: number;
     memberSequence: number;
   } = {
     organizations: [],
@@ -340,6 +356,7 @@ type StoredMembershipPaymentAttempt = {
     membershipCharges: [],
     membershipPayments: [],
     membershipPaymentIdempotency: new Map(),
+    membershipReceiptSequence: 0,
     memberSequence: 0,
   };
 
@@ -482,11 +499,54 @@ type StoredMembershipPaymentAttempt = {
         .reduce((total, charge) => total + charge.amountMinor - charge.paidMinor, 0),
     };
   };
+  const receiptSnapshot = (payment: StoredMembershipPayment) => {
+    const charge = state.membershipCharges.find((item) => item.id === payment.chargeId);
+    const member = state.members.find((item) => item.id === payment.memberId);
+    return {
+      paymentId: payment.id,
+      receiptNumber: payment.receiptNumber,
+      gymName: state.organizations[0]?.name ?? "Fitness Gym",
+      memberNumber: member?.memberNumber ?? "",
+      memberName: member ? `${member.firstName} ${member.lastName}`.trim() : "Socio",
+      chargeDescription: charge?.description ?? "Membresía",
+      amountMinor: payment.amountMinor,
+      currency: charge?.currency ?? "MXN",
+      paymentMethod: payment.paymentMethod,
+      reference: payment.reference,
+      receivedByName: payment.receivedByName,
+      createdAt: payment.createdAt,
+    };
+  };
   const dashboardSnapshot = () => {
     const today = dateOnly();
     const monthStart = `${today.slice(0, 7)}-01`;
+    const nextMonth = new Date(`${monthStart}T00:00:00.000Z`);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+    const nextMonthStart = dateOnly(nextMonth);
     const soon = addDays(today, 7);
+    const inMonth = (value: string) => value >= monthStart && value < nextMonthStart;
+    const trend = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(`${monthStart}T00:00:00.000Z`);
+      date.setUTCMonth(date.getUTCMonth() - (5 - index));
+      const month = date.toISOString().slice(0, 7);
+      const start = `${month}-01`;
+      const endDate = new Date(`${start}T00:00:00.000Z`);
+      endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+      const end = dateOnly(endDate);
+      return {
+        month,
+        newMembers: state.members.filter((member) => member.joinedAt >= start && member.joinedAt < end).length,
+        renewals: 0,
+        cancellations: 0,
+        incomeMinor: state.membershipPayments
+          .filter((payment) => payment.createdAt >= start && payment.createdAt < end)
+          .reduce((total, payment) => total + payment.amountMinor, 0),
+      };
+    });
     return {
+      periodStart: monthStart,
+      periodEnd: addDays(nextMonthStart, -1),
+      timezone: "UTC",
       activeMembers: state.members.filter((member) => member.status === "active").length,
       activeMemberships: state.memberships.filter((membership) => membership.status === "active").length,
       expiringSoon: state.memberships.filter(
@@ -503,8 +563,102 @@ type StoredMembershipPaymentAttempt = {
       debtMinor: state.membershipCharges
         .filter((charge) => charge.status === "pending")
         .reduce((total, charge) => total + charge.amountMinor - charge.paidMinor, 0),
-      newMembersThisMonth: state.members.filter((member) => member.joinedAt >= monthStart).length,
+      newMembersThisMonth: state.members.filter((member) => inMonth(member.joinedAt)).length,
+      incomeThisMonthMinor: state.membershipPayments
+        .filter((payment) => inMonth(payment.createdAt))
+        .reduce((total, payment) => total + payment.amountMinor, 0),
+      renewalsThisMonth: 0,
+      cancellationsThisMonth: state.memberships.filter(
+        (membership) => membership.status === "cancelled" && inMonth(membership.updatedAt),
+      ).length,
+      trend,
+      recentPayments: state.membershipPayments
+        .slice()
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, 5)
+        .map(receiptSnapshot),
+      expiringMemberships: state.memberships
+        .filter(
+          (membership) =>
+            membership.status === "active" &&
+            membership.endDate >= today &&
+            membership.endDate <= soon,
+        )
+        .sort((left, right) => left.endDate.localeCompare(right.endDate))
+        .slice(0, 5)
+        .map(membershipSnapshot),
     };
+  };
+  const normalizeAccessDays = (value: string) => {
+    const allowed = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const days = value
+      .split(",")
+      .map((day) => day.trim().toLowerCase())
+      .filter((day) => allowed.includes(day));
+    if (days.length === 0) {
+      throw apiError("invalidRequest", "El plan debe permitir al menos un día.");
+    }
+    return [...new Set(days)].join(",");
+  };
+  const optionalAge = (value: unknown) => {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+    const age = Number(value);
+    if (!Number.isInteger(age) || age < 0 || age > 120) {
+      throw apiError("invalidRequest", "La edad debe estar entre 0 y 120.");
+    }
+    return age;
+  };
+  const validatePlanAccess = (
+    _accessDays: string,
+    startMinute: number,
+    endMinute: number,
+    minAge: number | null,
+    maxAge: number | null,
+  ) => {
+    if (!Number.isInteger(startMinute) || startMinute < 0 || startMinute > 1439) {
+      throw apiError("invalidRequest", "La hora de inicio no es válida.");
+    }
+    if (!Number.isInteger(endMinute) || endMinute < 1 || endMinute > 1440) {
+      throw apiError("invalidRequest", "La hora de fin no es válida.");
+    }
+    if (startMinute >= endMinute) {
+      throw apiError("invalidRequest", "La hora de inicio debe ser anterior a la de fin.");
+    }
+    if (minAge !== null && maxAge !== null && maxAge < minAge) {
+      throw apiError("invalidRequest", "La edad máxima no puede ser menor a la mínima.");
+    }
+  };
+  const memberAgeOn = (birthDate: string, at: string) => {
+    const birth = new Date(`${birthDate}T00:00:00.000Z`);
+    const date = new Date(`${at}T00:00:00.000Z`);
+    if (Number.isNaN(birth.getTime()) || birth > date) {
+      throw apiError("invalidRequest", "La fecha de nacimiento no es válida.");
+    }
+    let age = date.getUTCFullYear() - birth.getUTCFullYear();
+    if (
+      date.getUTCMonth() < birth.getUTCMonth() ||
+      (date.getUTCMonth() === birth.getUTCMonth() && date.getUTCDate() < birth.getUTCDate())
+    ) {
+      age -= 1;
+    }
+    return age;
+  };
+  const ensurePlanEligibility = (plan: StoredMembershipPlan, member: StoredMember, start: string) => {
+    if (plan.minAge === null && plan.maxAge === null) {
+      return;
+    }
+    if (!member.birthDate) {
+      throw apiError("invalidRequest", "El socio necesita fecha de nacimiento para este plan.");
+    }
+    const age = memberAgeOn(member.birthDate, start);
+    if (plan.minAge !== null && age < plan.minAge) {
+      throw apiError("invalidRequest", "El socio no cumple la edad mínima del plan.");
+    }
+    if (plan.maxAge !== null && age > plan.maxAge) {
+      throw apiError("invalidRequest", "El socio supera la edad máxima del plan.");
+    }
   };
   const requireManageMembers = () => requirePermission("manageMembers");
 
@@ -535,7 +689,7 @@ type StoredMembershipPaymentAttempt = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.12.0",
+    contractVersion: "2.13.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -546,7 +700,7 @@ type StoredMembershipPaymentAttempt = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 17,
+      schemaVersion: 18,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -1384,6 +1538,11 @@ type StoredMembershipPaymentAttempt = {
           const durationDays = Number(input.durationDays);
           const priceMinor = Number(input.priceMinor);
           const graceDays = Number(input.graceDays);
+          const accessDays = normalizeAccessDays(String(input.accessDays ?? ""));
+          const accessStartMinute = Number(input.accessStartMinute);
+          const accessEndMinute = Number(input.accessEndMinute);
+          const minAge = optionalAge(input.minAge);
+          const maxAge = optionalAge(input.maxAge);
           if (!name) {
             throw apiError("invalidRequest", "El nombre del plan es obligatorio.");
           }
@@ -1396,6 +1555,7 @@ type StoredMembershipPaymentAttempt = {
           if (!Number.isInteger(graceDays) || graceDays < 0) {
             throw apiError("invalidRequest", "Los días de gracia deben ser cero o mayor.");
           }
+          validatePlanAccess(accessDays, accessStartMinute, accessEndMinute, minAge, maxAge);
           if (
             state.membershipPlans.some(
               (plan) => plan.name.toLowerCase() === name.toLowerCase(),
@@ -1411,6 +1571,12 @@ type StoredMembershipPaymentAttempt = {
             priceMinor,
             currency: "MXN",
             graceDays,
+            version: 1,
+            accessDays,
+            accessStartMinute,
+            accessEndMinute,
+            minAge,
+            maxAge,
             active: true,
             createdAt: now(),
             updatedAt: now(),
@@ -1437,6 +1603,11 @@ type StoredMembershipPaymentAttempt = {
           const durationDays = Number(input.durationDays);
           const priceMinor = Number(input.priceMinor);
           const graceDays = Number(input.graceDays);
+          const accessDays = normalizeAccessDays(String(input.accessDays ?? ""));
+          const accessStartMinute = Number(input.accessStartMinute);
+          const accessEndMinute = Number(input.accessEndMinute);
+          const minAge = optionalAge(input.minAge);
+          const maxAge = optionalAge(input.maxAge);
           if (!name) {
             throw apiError("invalidRequest", "El nombre del plan es obligatorio.");
           }
@@ -1449,6 +1620,7 @@ type StoredMembershipPaymentAttempt = {
           if (!Number.isInteger(graceDays) || graceDays < 0) {
             throw apiError("invalidRequest", "Los días de gracia deben ser cero o mayor.");
           }
+          validatePlanAccess(accessDays, accessStartMinute, accessEndMinute, minAge, maxAge);
           if (
             state.membershipPlans.some(
               (item) =>
@@ -1463,6 +1635,12 @@ type StoredMembershipPaymentAttempt = {
           plan.durationDays = durationDays;
           plan.priceMinor = priceMinor;
           plan.graceDays = graceDays;
+          plan.version += 1;
+          plan.accessDays = accessDays;
+          plan.accessStartMinute = accessStartMinute;
+          plan.accessEndMinute = accessEndMinute;
+          plan.minAge = minAge;
+          plan.maxAge = maxAge;
           plan.active = Boolean(input.active);
           plan.updatedAt = now();
           recordAudit({
@@ -1735,18 +1913,26 @@ type StoredMembershipPaymentAttempt = {
             throw apiError("invalidRequest", "El socio ya tiene una membresía vigente.");
           }
           const startDate = String(input.startDate ?? "").trim() || dateOnly();
+          ensurePlanEligibility(plan, member, startDate);
           const endDate = addDays(startDate, plan.durationDays - 1);
           const membership: StoredMembership = {
             id: uuid(),
             memberId: member.id,
             planId: plan.id,
             planName: plan.name,
+            planVersion: plan.version,
+            planVersionId: uuid(),
             status: startDate > dateOnly() ? "scheduled" : "active",
             startDate,
             endDate,
             priceMinor: plan.priceMinor,
             currency: plan.currency,
             graceDays: plan.graceDays,
+            accessDays: plan.accessDays,
+            accessStartMinute: plan.accessStartMinute,
+            accessEndMinute: plan.accessEndMinute,
+            minAge: plan.minAge,
+            maxAge: plan.maxAge,
             pausedAt: null,
             pauseUntil: null,
             cancellationReason: null,
@@ -1799,14 +1985,26 @@ type StoredMembershipPaymentAttempt = {
           }
           const periodStart =
             membership.endDate >= dateOnly() ? addDays(membership.endDate, 1) : dateOnly();
+          const member = state.members.find((item) => item.id === membership.memberId);
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          ensurePlanEligibility(plan, member, periodStart);
           const endDate = addDays(periodStart, plan.durationDays - 1);
           membership.planId = plan.id;
           membership.planName = plan.name;
+          membership.planVersion = plan.version;
+          membership.planVersionId = uuid();
           membership.status = membership.startDate > dateOnly() ? "scheduled" : "active";
           membership.endDate = endDate;
           membership.priceMinor = plan.priceMinor;
           membership.currency = plan.currency;
           membership.graceDays = plan.graceDays;
+          membership.accessDays = plan.accessDays;
+          membership.accessStartMinute = plan.accessStartMinute;
+          membership.accessEndMinute = plan.accessEndMinute;
+          membership.minAge = plan.minAge;
+          membership.maxAge = plan.maxAge;
           membership.pausedAt = null;
           membership.pauseUntil = null;
           membership.cancellationReason = null;
@@ -1978,6 +2176,12 @@ type StoredMembershipPaymentAttempt = {
               return paymentSnapshot(existing);
             }
           }
+          const cashSession = paymentMethod === "cash" ? openCashSession() : null;
+          if (paymentMethod === "cash" && !cashSession) {
+            throw apiError("invalidRequest", "Abre la caja antes de cobrar en efectivo.");
+          }
+          state.membershipReceiptSequence += 1;
+          const receiptNumber = `REC-${String(state.membershipReceiptSequence).padStart(5, "0")}`;
           const payment: StoredMembershipPayment = {
             id: uuid(),
             chargeId: charge.id,
@@ -1986,6 +2190,8 @@ type StoredMembershipPaymentAttempt = {
             amountMinor,
             paymentMethod: paymentMethod as StoredMembershipPayment["paymentMethod"],
             reference,
+            receiptNumber,
+            cashSessionId: cashSession?.id ?? null,
             receivedBy: session.userId,
             receivedByName: session.name,
             createdAt: now(),
@@ -1994,6 +2200,20 @@ type StoredMembershipPaymentAttempt = {
           charge.status = charge.paidMinor >= charge.amountMinor ? "paid" : "pending";
           charge.updatedAt = now();
           state.membershipPayments.push(payment);
+          if (cashSession) {
+            state.cashMovements.unshift({
+              id: uuid(),
+              cashSessionId: cashSession.id,
+              movementType: "income",
+              category: "membership_payment",
+              amountMinor,
+              paymentMethod: "cash",
+              evidence: `Pago membresía ${receiptNumber}`,
+              authorizedBy: session.userId,
+              authorizedByName: session.name,
+              createdAt: payment.createdAt,
+            });
+          }
           state.membershipPaymentIdempotency.set(idempotencyKey, {
             requestHash,
             paymentId: payment.id,
@@ -2004,6 +2224,17 @@ type StoredMembershipPaymentAttempt = {
             resource: "membership_payment",
           });
           return paymentSnapshot(payment);
+        }
+
+        case "membership_payment_receipt": {
+          requireManageMembers();
+          const payment = state.membershipPayments.find(
+            (item) => item.id === String(args.paymentId ?? ""),
+          );
+          if (!payment) {
+            throw apiError("notFound", "El pago no existe.");
+          }
+          return receiptSnapshot(payment);
         }
 
         case "list_catalog": {
@@ -3136,7 +3367,7 @@ type StoredMembershipPaymentAttempt = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 17,
+            schemaVersion: 18,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
