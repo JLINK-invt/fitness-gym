@@ -91,4 +91,109 @@ pub const MIGRATIONS: &[Migration] = &[
         up: include_str!("../migrations/0008_owner_recovery.sql"),
         down: "ALTER TABLE users DROP COLUMN recovery_code_hash;",
     },
+    Migration {
+        version: 9,
+        name: "cash_sessions",
+        up: include_str!("../migrations/0009_cash_sessions.sql"),
+        down: "DROP TRIGGER IF EXISTS cash_sessions_no_reopen; \
+               DROP TRIGGER IF EXISTS cash_sessions_immutable_fields; \
+               DROP TRIGGER IF EXISTS cash_sessions_no_delete; \
+               DROP INDEX IF EXISTS idx_sales_cash_session; \
+               ALTER TABLE sales DROP COLUMN cash_session_id; \
+               DROP INDEX IF EXISTS idx_cash_sessions_organization_opened; \
+               DROP INDEX IF EXISTS idx_cash_sessions_one_open; \
+               DROP TABLE IF EXISTS cash_sessions;",
+    },
+    Migration {
+        version: 10,
+        name: "cash_movements",
+        up: include_str!("../migrations/0010_cash_movements.sql"),
+        down: "DROP TRIGGER IF EXISTS cash_movements_no_update; \
+               DROP TRIGGER IF EXISTS cash_movements_no_delete; \
+               DROP TRIGGER IF EXISTS cash_sessions_require_difference_reason; \
+               DROP INDEX IF EXISTS idx_cash_movements_organization_created; \
+               DROP INDEX IF EXISTS idx_cash_movements_session; \
+               DROP TABLE IF EXISTS cash_movements; \
+               ALTER TABLE cash_sessions DROP COLUMN difference_reason;",
+    },
+    Migration {
+        version: 11,
+        name: "sale_returns",
+        up: include_str!("../migrations/0011_sale_returns.sql"),
+        down: "DROP TRIGGER IF EXISTS ledger_entries_no_delete; \
+               DROP TRIGGER IF EXISTS ledger_entries_no_update; \
+               DROP TRIGGER IF EXISTS sale_return_items_no_delete; \
+               DROP TRIGGER IF EXISTS sale_return_items_no_update; \
+               DROP TRIGGER IF EXISTS sale_returns_no_delete; \
+               DROP TRIGGER IF EXISTS sale_returns_no_update; \
+               DROP INDEX IF EXISTS idx_ledger_entries_sale; \
+               DROP INDEX IF EXISTS idx_ledger_entries_organization_occurred; \
+               DROP TABLE IF EXISTS ledger_entries; \
+               DROP INDEX IF EXISTS idx_sale_return_items_sale_item; \
+               DROP INDEX IF EXISTS idx_sale_return_items_return; \
+               DROP TABLE IF EXISTS sale_return_items; \
+               DROP INDEX IF EXISTS idx_sale_returns_organization_created; \
+               DROP INDEX IF EXISTS idx_sale_returns_session; \
+               DROP INDEX IF EXISTS idx_sale_returns_sale; \
+               DROP TABLE IF EXISTS sale_returns;",
+    },
+    Migration {
+        version: 12,
+        name: "inventory",
+        up: include_str!("../migrations/0012_inventory.sql"),
+        down: "DROP TRIGGER IF EXISTS inventory_movements_no_delete; \
+               DROP TRIGGER IF EXISTS inventory_movements_no_update; \
+               DROP INDEX IF EXISTS idx_inventory_movements_transfer_group; \
+               DROP INDEX IF EXISTS idx_inventory_movements_source; \
+               DROP INDEX IF EXISTS idx_inventory_movements_organization_created; \
+               DROP INDEX IF EXISTS idx_inventory_movements_location_created; \
+               DROP INDEX IF EXISTS idx_inventory_movements_variant_created; \
+               DROP VIEW IF EXISTS inventory_balances; \
+               DROP TABLE IF EXISTS inventory_policies; \
+               DROP TABLE IF EXISTS inventory_movements; \
+               DROP INDEX IF EXISTS idx_inventory_locations_default; \
+               DROP INDEX IF EXISTS idx_inventory_locations_organization_name; \
+               DROP TABLE IF EXISTS inventory_locations;",
+    },
+    Migration {
+        version: 13,
+        name: "single_location",
+        up: include_str!("../migrations/0013_single_location.sql"),
+        down: "Restore a pre-v13 backup; the multi-location tables were removed.",
+    },
+    Migration {
+        version: 14,
+        name: "sale_idempotency",
+        up: include_str!("../migrations/0014_sale_idempotency.sql"),
+        down: "DROP INDEX IF EXISTS idx_sales_organization_idempotency; \
+               ALTER TABLE sales DROP COLUMN request_hash; \
+               ALTER TABLE sales DROP COLUMN idempotency_key;",
+    },
+    Migration {
+        version: 15,
+        name: "payment_charges",
+        up: include_str!("../migrations/0015_payment_charges.sql"),
+        down: "DROP TRIGGER IF EXISTS payment_charges_no_delete; \
+               DROP TRIGGER IF EXISTS payment_charges_no_update; \
+               DROP INDEX IF EXISTS idx_payment_charges_organization_idempotency; \
+               DROP INDEX IF EXISTS idx_payment_charges_organization_reference; \
+               DROP INDEX IF EXISTS idx_payment_charges_return; \
+               DROP INDEX IF EXISTS idx_payment_charges_sale; \
+               DROP INDEX IF EXISTS idx_payment_charges_organization_created; \
+               DROP TABLE IF EXISTS payment_charges; \
+               DROP INDEX IF EXISTS idx_sale_returns_organization_idempotency; \
+               ALTER TABLE sale_returns DROP COLUMN request_hash; \
+               ALTER TABLE sale_returns DROP COLUMN idempotency_key;",
+    },
+    Migration {
+        version: 16,
+        name: "sync_journal",
+        up: include_str!("../migrations/0016_sync_journal.sql"),
+        down: "DROP INDEX IF EXISTS idx_sync_inbox_organization_sequence; \
+               DROP TABLE IF EXISTS sync_state; \
+               DROP TABLE IF EXISTS sync_inbox; \
+               DROP INDEX IF EXISTS idx_sync_outbox_aggregate; \
+               DROP INDEX IF EXISTS idx_sync_outbox_pending; \
+               DROP TABLE IF EXISTS sync_outbox;",
+    },
 ];

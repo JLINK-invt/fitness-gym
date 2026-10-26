@@ -5,37 +5,44 @@ backend Rust modular y SQLite cifrada con SQLCipher.
 
 Las **Fases 1 y 2** están cerradas: fundación desktop Rust/SQLite, identidad
 local, sesiones, tenancy, RBAC y auditoría inmutable. La **Fase 3** añade POS,
-caja, inventario y suscripciones para usuarios comunes. El catálogo con precios
-versionados y las ventas con cobro ya están operativos. CRM, socios, membresías
-y clases forman parte de la misma versión desktop. Mobile queda para próximamente.
+caja e inventario. El catálogo con precios versionados, las ventas con cobro, la
+caja por turnos y el control de inventario ya están operativos. CRM básico,
+socios y membresías forman parte de la misma versión desktop. Mobile, growth y
+suscripciones separadas quedan fuera de la V1.
 
 ## Estado actual
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v8 |
-| Acceso simulado con evento idempotente | Operativo como herramienta interna de prueba |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v16 |
+| Acceso simulado con evento idempotente | Oculto en la UI; el backend se conserva para Phase 4 |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
 | Recuperación del dueño | Operativo: código de un solo uso, sin correo ni autenticador |
-| RBAC por rol en comandos Tauri | Operativo para auth, personal, catálogo y ventas |
+| RBAC por rol en comandos Tauri | Operativo para auth, personal, catálogo, ventas, caja e inventario |
 | Personal | Operativo: crear accesos, cambiar rol y desactivar/reactivar con auditoría |
 | Auditoría inmutable | Operativo: append-only, hash chain y verificación de integridad |
 | Catálogo, precios e impuestos | Operativo: productos, variantes, precios versionados y archivo lógico |
-| Ventas y cobro | Operativo: carrito, impuestos, efectivo/transferencia/Point y ticket no fiscal |
-| Suscripciones | Siguiente en Fase 3: planes, altas, renovaciones y vencimientos |
-| CRM, socios y membresías | Misma versión desktop, Fase 4 |
+| Ventas y cobro | Operativo: carrito, impuestos, efectivo/transferencia/Point, devoluciones parciales y ticket no fiscal |
+| Caja y turnos | Operativo: fondo inicial, ingresos/gastos con evidencia, cierre con diferencia auditada e historial |
+| Inventario y valoración | Operativo: entradas, ajustes, umbrales y valoración por costo promedio |
+| Panel operativo | Operativo: existencias, valor, alertas de mínimo y rotación básica |
+| Journal de sincronización | Operativo en local: outbox transaccional, inbox idempotente y motor con fake server; transporte real pendiente |
+| Suscripciones V1 | Diferidas; se unifican con membresías de socios en Phase 4 |
+| CRM básico, socios y membresías | Misma versión desktop, Fase 4 |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 20 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 30 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 entrega un código de recuperación, exige login, administra accesos del equipo con
 permisos revalidados en Rust,
 registra auditoría append-only con hash chain, administra el catálogo con precios
-versionados, cobra ventas con snapshot de precio, simula accesos y crea
-snapshots cifrados. Funciona sin Internet. Solo se admite un gimnasio por
-instalación; la pantalla no expone conceptos de multi-organización ni
-multi-sede.
+versionados, abre y cierra turnos de caja, registra ingresos y gastos con evidencia, cobra ventas con snapshot de precio,
+registra devoluciones parciales contra el ledger inmutable, controla inventario por
+movimientos append-only, muestra un panel con alertas de mínimo y rotación básica,
+y crea snapshots cifrados. Funciona sin Internet. Solo se admite un gimnasio por
+instalación y opera con una sola ubicación lógica de inventario; no existen
+conceptos de multi-organización, multi-sede ni transferencias.
 
 ## Requisitos
 
@@ -113,13 +120,13 @@ npx -y @playwright/cli@latest open "http://localhost:1420/?e2e=1#/" --headed
 npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 ```
 
-El script cubre primer arranque con dueño, health, acceso permitido/denegado con
-idempotencia, validación de frase, creación de backup, rechazo de frase
-incorrecta, restauración y cierre de sesión. También crea un producto con precio
+El script cubre primer arranque con dueño, health, validación de frase, creación
+de backup, rechazo de frase incorrecta, restauración y cierre de sesión. También crea un producto con precio
 inicial, una nueva versión de precio y una segunda variante, además de un cajero.
-Comprueba que el cajero no ve módulos administrativos, verifica la cadena de
-auditoría, confirma que una cuenta desactivada ya no puede iniciar sesión y que
-el código de recuperación permite fijar una contraseña nueva.
+Comprueba que el cajero no ve módulos administrativos, registra un gasto de caja,
+cobra una venta, cierra el turno con una diferencia justificada, verifica la
+cadena de auditoría, confirma que una cuenta desactivada ya no puede iniciar
+sesión y que el código de recuperación permite fijar una contraseña nueva.
 
 ## Estructura
 
@@ -131,6 +138,7 @@ crates/
   gym-contracts/           DTOs versionados (camelCase)
   gym-data/                SQLCipher, migraciones y key providers
   gym-backup/              snapshots cifrados y restauración
+  gym-sync/                journal outbox/inbox y motor de sincronización
 packages/
   contracts/               espejo TypeScript + JSON Schema
   config/                  tsconfig compartido
@@ -145,6 +153,10 @@ docs/
 - [Threat model](docs/threat-model.md): STRIDE, activos, fronteras y riesgos residuales.
 - [Matriz de permisos](docs/security/permission-matrix.md): roles y acciones.
 - [Contrato de personal](docs/contracts/staff.md): comandos y reglas.
+- [Contrato de ventas](docs/contracts/sales.md): cobro, impuestos y ticket.
+- [Contrato de caja](docs/contracts/cash.md): turnos, arqueo y diferencias.
+- [Contrato de inventario](docs/contracts/inventory.md): stock, valoración y movimientos.
+- [Contrato de sincronización](docs/contracts/sync.md): outbox, inbox y cursor local.
 - [Contrato de auditoría](docs/contracts/audit.md): append-only, hash chain y consulta.
 - [Runbook de migraciones](docs/runbooks/migrations.md).
 
@@ -163,20 +175,32 @@ docs/
 - CSP estricta en producción y `core:default` como única capability; sin shell
   genérico ni filesystem amplio.
 - Migraciones con checksum y `user_version`; drift detectado al abrir.
-- Acceso simulado protegido por sesión y permiso de operación, sin guardar la
-  credencial y con deduplicación durable por `idempotency_key`.
+- El backend de acceso simulado conserva validación de sesión, permiso y
+  deduplicación durable por `idempotency_key`, pero no se expone en la UI de V1.
+- El journal de sincronización encola eventos en la misma transacción del cambio
+  de negocio, deduplica por `idempotency_key`, reintenta con backoff y pasa a
+  `dead_letter` tras cinco fallos. El inbox deduplica por `event_id` y avanza un
+  cursor por secuencia de servidor. No hay transporte de red habilitado.
 - Auditoría append-only con triggers anti `UPDATE`/`DELETE`, hash chain SHA-256 y
   verificación de integridad desde la UI.
 - Logs sin claves ni passphrases.
 
 ## Siguientes pasos
 
-1. Phase 3: POS, caja, inventario y suscripciones para usuarios comunes.
-2. Phase 4: CRM, socios, membresías, clases, snapshots y analítica.
-3. Phase 5: hardening, piloto y validación/empaquetado en Windows/macOS.
-4. Mobile: próximamente, fuera de la versión desktop.
+1. Phase 3: integración real de Point y aceptación de impresión en hardware.
+2. Phase 4: CRM básico, socios, membresías, accesos y analítica operativa.
+3. Phase 5: servidor de sincronización con mTLS, hardening, piloto y
+   validación/empaquetado en Windows/macOS.
+4. Fuera de la V1: mobile, growth (leads, campañas, referidos, churn), suscripciones
+   V1, escáner de productos y multi-sede.
 
 Contratos: [acceso simulado](docs/contracts/access-simulated.md),
 [auth local](docs/contracts/auth-local.md),
-[personal](docs/contracts/staff.md) y
+[personal](docs/contracts/staff.md),
+[catálogo](docs/contracts/catalog.md),
+[ventas](docs/contracts/sales.md),
+[caja](docs/contracts/cash.md),
+[inventario](docs/contracts/inventory.md),
+[reportes](docs/contracts/reports.md),
+[sincronización](docs/contracts/sync.md) y
 [auditoría](docs/contracts/audit.md).

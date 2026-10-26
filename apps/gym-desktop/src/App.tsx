@@ -5,12 +5,15 @@ import { Navigate, Route, Routes, useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "./components/Layout";
 import { Layout } from "./components/Layout";
-import { AccessPage } from "./pages/AccessPage";
 import { AuditPage } from "./pages/AuditPage";
 import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
+import { CashPage } from "./pages/CashPage";
 import { CatalogPage } from "./pages/CatalogPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
+import { InventoryPage } from "./pages/InventoryPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { SalesPage } from "./pages/SalesPage";
 import { StaffPage } from "./pages/StaffPage";
 import { api, isTauriRuntime } from "./lib/tauri";
@@ -70,12 +73,13 @@ export function App() {
           />
         }
       >
-        <Route index element={<DiagnosticsPage />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="diagnostics" element={<DiagnosticsPage />} />
         <Route
-          path="access"
+          path="cash"
           element={
-            <Guarded permission="operatePos">
-              <AccessPage />
+            <Guarded anyPermission={["operatePos", "viewFinance"]}>
+              <CashPage />
             </Guarded>
           }
         />
@@ -88,10 +92,26 @@ export function App() {
           }
         />
         <Route
+          path="inventory"
+          element={
+            <Guarded permission="manageInventory">
+              <InventoryPage />
+            </Guarded>
+          }
+        />
+        <Route
           path="catalog"
           element={
             <Guarded permission="manageCatalog">
               <CatalogPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="reports"
+          element={
+            <Guarded permission="viewFinance">
+              <ReportsPage />
             </Guarded>
           }
         />
@@ -127,17 +147,18 @@ export function App() {
 
 function Guarded({
   permission,
+  anyPermission,
   children,
 }: {
-  permission: Permission;
+  permission?: Permission;
+  anyPermission?: Permission[];
   children: ReactNode;
 }) {
   const { session } = useOutletContext<LayoutContext>();
-  return session.permissions.includes(permission) ? (
-    children
-  ) : (
-    <Navigate to="/" replace />
-  );
+  const allowed = permission
+    ? session.permissions.includes(permission)
+    : (anyPermission ?? []).some((value) => session.permissions.includes(value));
+  return allowed ? children : <Navigate to="/" replace />;
 }
 
 function WebPreview() {

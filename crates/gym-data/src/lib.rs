@@ -10,11 +10,16 @@ mod key;
 mod migrations;
 
 pub use db::{
-    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CatalogPriceRecord,
-    CatalogProductRecord, CatalogVariantRecord, Db, LocalDatabaseStatus, ModuleEventRecord,
+    verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CashMovementRecord,
+    CashSessionRecord, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, Db,
+    FinancialReportRecord, InboundSyncEvent, InventoryAdjustmentRecord, InventoryItemRecord,
+    InventoryMovementRecord, LocalDatabaseStatus, ModuleEventRecord, NewCashMovement,
     NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
-    NewCatalogVariantUpdate, NewSale, NewSaleItem, OrganizationRecord, OwnerRecoveryRecord,
-    RecordedModuleEvent, SaleItemRecord, SaleRecord, StaffRecord, UserCredentialRecord, UserRecord,
+    NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewSale, NewSaleItem,
+    NewSaleReturn, NewSaleReturnItem, OrganizationRecord, OwnerRecoveryRecord, PaymentChargeRecord,
+    PaymentMethodTotalRecord, ProductSalesRecord, RecordedModuleEvent, SaleItemRecord, SaleRecord,
+    SaleReturnItemRecord, SaleReturnRecord, StaffRecord, SyncFailureRecord, SyncInboxRecord,
+    SyncOutboxRecord, UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

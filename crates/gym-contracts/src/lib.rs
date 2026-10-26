@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.2.0";
+pub const CONTRACT_VERSION: &str = "2.11.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,6 +318,9 @@ pub struct CreateSaleInput {
     pub payment_method: PaymentMethod,
     #[serde(default)]
     pub cash_received_minor: Option<i64>,
+    #[serde(default)]
+    pub payment_reference: Option<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +340,8 @@ pub struct SaleItem {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
     pub total_minor: i64,
+    pub refunded_quantity: i64,
+    pub refunded_minor: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,13 +352,321 @@ pub struct Sale {
     pub subtotal_minor: i64,
     pub tax_minor: i64,
     pub total_minor: i64,
+    pub refunded_minor: i64,
     pub payment_method: PaymentMethod,
     pub cash_received_minor: Option<i64>,
     pub change_minor: Option<i64>,
     pub sold_by: Option<String>,
     pub sold_by_name: Option<String>,
+    pub cash_session_id: Option<String>,
+    pub payment_reference: Option<String>,
     pub items: Vec<SaleItem>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleReturnItemInput {
+    pub sale_item_id: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSaleReturnInput {
+    pub sale_id: String,
+    pub reason: String,
+    pub items: Vec<SaleReturnItemInput>,
+    #[serde(default)]
+    pub payment_reference: Option<String>,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleReturnItem {
+    pub id: String,
+    pub sale_item_id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub quantity: i64,
+    pub amount_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleReturn {
+    pub id: String,
+    pub sale_id: String,
+    pub cash_session_id: String,
+    pub currency: String,
+    pub refund_method: PaymentMethod,
+    pub total_minor: i64,
+    pub reason: String,
+    pub authorized_by: Option<String>,
+    pub authorized_by_name: Option<String>,
+    pub payment_reference: Option<String>,
+    pub created_at: String,
+    pub items: Vec<SaleReturnItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentCharge {
+    pub id: String,
+    pub sale_id: String,
+    pub sale_return_id: Option<String>,
+    pub kind: String,
+    pub method: PaymentMethod,
+    pub provider: String,
+    pub status: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub external_reference: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListPaymentChargesInput {
+    #[serde(default)]
+    pub sale_id: Option<String>,
+    #[serde(default)]
+    pub external_reference: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinancialReportInput {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentMethodTotal {
+    pub payment_method: PaymentMethod,
+    pub sales_count: i64,
+    pub gross_sales_minor: i64,
+    pub refunds_count: i64,
+    pub refunded_minor: i64,
+    pub net_sales_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductSalesTotal {
+    pub variant_id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub unit: String,
+    pub sold_units: i64,
+    pub refunded_units: i64,
+    pub net_units: i64,
+    pub gross_sales_minor: i64,
+    pub refunded_minor: i64,
+    pub net_sales_minor: i64,
+    pub cost_minor: i64,
+    pub margin_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryAdjustmentTotal {
+    pub variant_id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub units_delta: i64,
+    pub cost_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinancialReport {
+    pub from: String,
+    pub to: String,
+    pub generated_at: String,
+    pub currency: String,
+    pub sales_count: i64,
+    pub gross_sales_minor: i64,
+    pub tax_minor: i64,
+    pub refunds_count: i64,
+    pub refunded_minor: i64,
+    pub net_sales_minor: i64,
+    pub average_sale_minor: i64,
+    pub attach_rate_bps: i64,
+    pub items_per_sale_milli: i64,
+    pub cost_of_goods_minor: i64,
+    pub margin_minor: i64,
+    pub margin_bps: i64,
+    pub inventory_value_start_minor: i64,
+    pub inventory_value_end_minor: i64,
+    pub inventory_turnover_bps: i64,
+    pub adjustments_units: i64,
+    pub adjustments_cost_minor: i64,
+    pub payment_methods: Vec<PaymentMethodTotal>,
+    pub cash_sessions_count: i64,
+    pub open_cash_sessions: i64,
+    pub closed_cash_sessions: i64,
+    pub cash_difference_minor: i64,
+    pub cash_difference_abs_minor: i64,
+    pub product_sales: Vec<ProductSalesTotal>,
+    pub inventory_adjustments: Vec<InventoryAdjustmentTotal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinancialReportExport {
+    pub file_name: String,
+    pub path: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryItem {
+    pub variant_id: String,
+    pub product_name: String,
+    pub variant_name: String,
+    pub sku: String,
+    pub unit: String,
+    pub stock: i64,
+    pub value_minor: i64,
+    pub avg_unit_cost_minor: i64,
+    pub min_stock: i64,
+    pub low_stock: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryMovement {
+    pub id: String,
+    pub variant_id: String,
+    pub movement_type: String,
+    pub quantity_delta: i64,
+    pub unit_cost_minor: i64,
+    pub total_cost_minor: i64,
+    pub source_type: String,
+    pub source_id: Option<String>,
+    pub reference: Option<String>,
+    pub note: Option<String>,
+    pub authorized_by: Option<String>,
+    pub authorized_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordInventoryEntryInput {
+    pub variant_id: String,
+    pub quantity: i64,
+    pub unit_cost_minor: i64,
+    pub reference: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdjustInventoryInput {
+    pub variant_id: String,
+    pub quantity_delta: i64,
+    pub unit_cost_minor: Option<i64>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInventoryThresholdInput {
+    pub variant_id: String,
+    pub min_stock: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CashSessionStatus {
+    Open,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashSession {
+    pub id: String,
+    pub status: CashSessionStatus,
+    pub currency: String,
+    pub opening_amount_minor: i64,
+    pub expected_cash_minor: i64,
+    pub cash_sales_minor: i64,
+    pub sales_count: i64,
+    pub cash_income_minor: i64,
+    pub income_minor: i64,
+    pub cash_expense_minor: i64,
+    pub expense_minor: i64,
+    pub cash_refunds_minor: i64,
+    pub refunded_minor: i64,
+    pub refunds_count: i64,
+    pub movements_count: i64,
+    pub counted_amount_minor: Option<i64>,
+    pub difference_minor: Option<i64>,
+    pub difference_reason: Option<String>,
+    pub opened_by: Option<String>,
+    pub opened_by_name: Option<String>,
+    pub opened_at: String,
+    pub closed_by: Option<String>,
+    pub closed_by_name: Option<String>,
+    pub closed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CashMovementType {
+    Income,
+    Expense,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashMovement {
+    pub id: String,
+    pub cash_session_id: String,
+    pub movement_type: CashMovementType,
+    pub category: String,
+    pub amount_minor: i64,
+    pub payment_method: PaymentMethod,
+    pub evidence: String,
+    pub authorized_by: Option<String>,
+    pub authorized_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCashSessionInput {
+    pub opening_amount_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseCashSessionInput {
+    pub session_id: String,
+    pub counted_amount_minor: i64,
+    pub difference_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordCashMovementInput {
+    pub session_id: String,
+    pub movement_type: CashMovementType,
+    pub category: String,
+    pub amount_minor: i64,
+    pub payment_method: PaymentMethod,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

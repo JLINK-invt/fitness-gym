@@ -12,16 +12,20 @@ type NavigationItem = {
   to: string;
   label: string;
   permission?: Permission;
+  anyPermission?: Permission[];
 };
 
 const navigation: NavigationItem[] = [
-  { to: "/", label: "Diagnóstico" },
-  { to: "/access", label: "Acceso", permission: "operatePos" },
+  { to: "/", label: "Panel" },
+  { to: "/cash", label: "Caja", anyPermission: ["operatePos", "viewFinance"] },
   { to: "/sales", label: "Ventas", permission: "operatePos" },
+  { to: "/reports", label: "Reportes", permission: "viewFinance" },
+  { to: "/inventory", label: "Inventario", permission: "manageInventory" },
   { to: "/catalog", label: "Catálogo", permission: "manageCatalog" },
   { to: "/staff", label: "Equipo", permission: "manageStaff" },
   { to: "/backups", label: "Backups", permission: "manageBackups" },
   { to: "/audit", label: "Auditoría", permission: "viewAudit" },
+  { to: "/diagnostics", label: "Diagnóstico" },
 ];
 
 const roleLabels: Record<StaffRole, string> = {
@@ -40,9 +44,17 @@ export function Layout({
   onLogout: () => void;
   signingOut: boolean;
 }) {
-  const visibleNavigation = navigation.filter(
-    (item) => !item.permission || session.permissions.includes(item.permission),
-  );
+  const visibleNavigation = navigation.filter((item) => {
+    if (item.permission) {
+      return session.permissions.includes(item.permission);
+    }
+    if (item.anyPermission) {
+      return item.anyPermission.some((permission) =>
+        session.permissions.includes(permission),
+      );
+    }
+    return true;
+  });
 
   return (
     <div className="flex min-h-full flex-col">
@@ -58,7 +70,7 @@ export function Layout({
             </div>
           </div>
 
-          <nav className="order-3 flex w-full items-center gap-1 overflow-x-auto sm:order-none sm:w-auto sm:flex-1 sm:justify-center">
+          <nav className="order-3 flex w-full min-w-0 items-center gap-1 overflow-x-auto sm:order-none sm:w-auto sm:flex-1 sm:justify-start">
             {visibleNavigation.map((item) => (
               <NavLink
                 key={item.to}

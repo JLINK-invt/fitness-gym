@@ -89,20 +89,112 @@ type StoredSaleItem = {
   subtotalMinor: number;
   taxMinor: number;
   totalMinor: number;
+  refundedQuantity: number;
+  refundedMinor: number;
 };
+type StoredSaleAttempt = {
+  requestHash: string;
+  saleId: string;
+};
+type StoredReturnAttempt = {
+  requestHash: string;
+  returnId: string;
+};
+type StoredPaymentCharge = {
+  id: string;
+  saleId: string;
+  saleReturnId: string | null;
+  kind: "charge" | "refund";
+  method: "cash" | "transfer" | "point";
+  provider: "manual" | "point";
+  status: "approved";
+  amountMinor: number;
+  currency: string;
+  externalReference: string | null;
+  createdAt: string;
+};
+
 type StoredSale = {
   id: string;
   currency: string;
   subtotalMinor: number;
   taxMinor: number;
   totalMinor: number;
+  refundedMinor: number;
   paymentMethod: "cash" | "transfer" | "point";
   cashReceivedMinor: number | null;
   changeMinor: number | null;
   soldBy: string | null;
   soldByName: string | null;
+  cashSessionId: string | null;
+  paymentReference: string | null;
   items: StoredSaleItem[];
   createdAt: string;
+};
+type StoredSaleReturnItem = {
+  id: string;
+  saleItemId: string;
+  productName: string;
+  variantName: string;
+  sku: string;
+  quantity: number;
+  amountMinor: number;
+};
+type StoredSaleReturn = {
+  id: string;
+  saleId: string;
+  cashSessionId: string;
+  currency: string;
+  refundMethod: "cash" | "transfer" | "point";
+  totalMinor: number;
+  reason: string;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  paymentReference: string | null;
+  createdAt: string;
+  items: StoredSaleReturnItem[];
+};
+type StoredInventoryMovement = {
+  id: string;
+  variantId: string;
+  movementType: "entry" | "sale" | "return" | "adjustment";
+  quantityDelta: number;
+  unitCostMinor: number;
+  totalCostMinor: number;
+  sourceType: "manual" | "sale" | "sale_return" | "adjustment";
+  sourceId: string | null;
+  reference: string | null;
+  note: string | null;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  createdAt: string;
+};
+type StoredCashMovement = {
+  id: string;
+  cashSessionId: string;
+  movementType: "income" | "expense";
+  category: string;
+  amountMinor: number;
+  paymentMethod: "cash" | "transfer" | "point";
+  evidence: string;
+  authorizedBy: string | null;
+  authorizedByName: string | null;
+  createdAt: string;
+};
+type StoredCashSession = {
+  id: string;
+  status: "open" | "closed";
+  currency: string;
+  openingAmountMinor: number;
+  countedAmountMinor: number | null;
+  differenceMinor: number | null;
+  differenceReason: string | null;
+  openedBy: string | null;
+  openedByName: string | null;
+  openedAt: string;
+  closedBy: string | null;
+  closedByName: string | null;
+  closedAt: string | null;
 };
 
 (() => {
@@ -119,6 +211,14 @@ type StoredSale = {
     catalog: StoredProduct[];
     catalogPrices: StoredPrice[];
     sales: StoredSale[];
+    saleIdempotency: Map<string, StoredSaleAttempt>;
+    saleReturns: StoredSaleReturn[];
+    saleReturnIdempotency: Map<string, StoredReturnAttempt>;
+    paymentCharges: StoredPaymentCharge[];
+    cashSessions: StoredCashSession[];
+    cashMovements: StoredCashMovement[];
+    inventoryMovements: StoredInventoryMovement[];
+    inventoryThresholds: Map<string, number>;
   } = {
     organizations: [],
     owner: null,
@@ -132,6 +232,14 @@ type StoredSale = {
     catalog: [],
     catalogPrices: [],
     sales: [],
+    saleIdempotency: new Map(),
+    saleReturns: [],
+    saleReturnIdempotency: new Map(),
+    paymentCharges: [],
+    cashSessions: [],
+    cashMovements: [],
+    inventoryMovements: [],
+    inventoryThresholds: new Map(),
   };
 
   const now = () => new Date().toISOString();
@@ -187,6 +295,13 @@ type StoredSale = {
     }
     return session;
   };
+  const requireAnyPermission = (permissions: string[]) => {
+    const session = requireSession();
+    if (!permissions.some((permission) => session.permissions.includes(permission))) {
+      throw apiError("unauthorized", "Tu rol no permite realizar esta acción.");
+    }
+    return session;
+  };
   const ownerStaff = () =>
     state.owner
       ? {
@@ -234,7 +349,7 @@ type StoredSale = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.2.0",
+    contractVersion: "2.11.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -245,12 +360,432 @@ type StoredSale = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 6,
+      schemaVersion: 15,
       integrityOk: true,
       organizations: state.organizations.length,
     },
     checkedAt: now(),
   });
+
+  const cashSessionSnapshot = (session: StoredCashSession) => {
+    const sales = state.sales.filter((sale) => sale.cashSessionId === session.id);
+    const movements = state.cashMovements.filter(
+      (movement) => movement.cashSessionId === session.id,
+    );
+    const refunds = state.saleReturns.filter(
+      (saleReturn) => saleReturn.cashSessionId === session.id,
+    );
+    const cashSalesMinor = sales
+      .filter((sale) => sale.paymentMethod === "cash")
+      .reduce((total, sale) => total + sale.totalMinor, 0);
+    const cashIncomeMinor = movements
+      .filter(
+        (movement) =>
+          movement.movementType === "income" && movement.paymentMethod === "cash",
+      )
+      .reduce((total, movement) => total + movement.amountMinor, 0);
+    const incomeMinor = movements
+      .filter((movement) => movement.movementType === "income")
+      .reduce((total, movement) => total + movement.amountMinor, 0);
+    const cashExpenseMinor = movements
+      .filter(
+        (movement) =>
+          movement.movementType === "expense" && movement.paymentMethod === "cash",
+      )
+      .reduce((total, movement) => total + movement.amountMinor, 0);
+    const expenseMinor = movements
+      .filter((movement) => movement.movementType === "expense")
+      .reduce((total, movement) => total + movement.amountMinor, 0);
+    const cashRefundsMinor = refunds
+      .filter((saleReturn) => saleReturn.refundMethod === "cash")
+      .reduce((total, saleReturn) => total + saleReturn.totalMinor, 0);
+    const refundedMinor = refunds.reduce(
+      (total, saleReturn) => total + saleReturn.totalMinor,
+      0,
+    );
+    return {
+      ...session,
+      expectedCashMinor:
+        session.openingAmountMinor +
+        cashSalesMinor +
+        cashIncomeMinor -
+        cashExpenseMinor -
+        cashRefundsMinor,
+      cashSalesMinor,
+      salesCount: sales.length,
+      cashIncomeMinor,
+      incomeMinor,
+      cashExpenseMinor,
+      expenseMinor,
+      cashRefundsMinor,
+      refundedMinor,
+      refundsCount: refunds.length,
+      movementsCount: movements.length,
+    };
+  };
+  const openCashSession = () =>
+    state.cashSessions.find((session) => session.status === "open") ?? null;
+
+  const averageCostFor = (variantId: string) => {
+    const movements = state.inventoryMovements.filter(
+      (movement) => movement.variantId === variantId,
+    );
+    const quantity = movements.reduce(
+      (total, movement) => total + movement.quantityDelta,
+      0,
+    );
+    const value = movements.reduce(
+      (total, movement) => total + movement.totalCostMinor,
+      0,
+    );
+    return quantity > 0 ? Math.round(value / quantity) : 0;
+  };
+  const inventorySnapshot = () =>
+    allVariants()
+      .filter(({ variant }) => variant.unit === "piece")
+      .map(({ product, variant }) => {
+        const movements = state.inventoryMovements.filter(
+          (movement) => movement.variantId === variant.id,
+        );
+        const stock = movements.reduce(
+          (total, movement) => total + movement.quantityDelta,
+          0,
+        );
+        const valueMinor = movements.reduce(
+          (total, movement) => total + movement.totalCostMinor,
+          0,
+        );
+        const minStock = state.inventoryThresholds.get(variant.id) ?? 0;
+        return {
+          variantId: variant.id,
+          productName: product.name,
+          variantName: variant.name,
+          sku: variant.sku,
+          unit: variant.unit,
+          stock,
+          valueMinor,
+          avgUnitCostMinor: stock > 0 ? Math.round(valueMinor / stock) : 0,
+          minStock,
+          lowStock: stock <= minStock,
+        };
+      })
+      .sort((left, right) => left.productName.localeCompare(right.productName));
+  const inventoryMovementSnapshot = (movement: StoredInventoryMovement) => ({
+    id: movement.id,
+    variantId: movement.variantId,
+    movementType: movement.movementType,
+    quantityDelta: movement.quantityDelta,
+    unitCostMinor: movement.unitCostMinor,
+    totalCostMinor: movement.totalCostMinor,
+    sourceType: movement.sourceType,
+    sourceId: movement.sourceId,
+    reference: movement.reference,
+    note: movement.note,
+    authorizedBy: movement.authorizedBy,
+    authorizedByName: movement.authorizedByName,
+    createdAt: movement.createdAt,
+  });
+  const postInventoryMovement = (input: {
+    variantId: string;
+    movementType: StoredInventoryMovement["movementType"];
+    quantityDelta: number;
+    unitCostMinor: number;
+    sourceType: StoredInventoryMovement["sourceType"];
+    sourceId?: string | null;
+    reference?: string | null;
+    note?: string | null;
+    authorizedBy?: string | null;
+    authorizedByName?: string | null;
+  }) => {
+    const movement: StoredInventoryMovement = {
+      id: uuid(),
+      variantId: input.variantId,
+      movementType: input.movementType,
+      quantityDelta: input.quantityDelta,
+      unitCostMinor: input.unitCostMinor,
+      totalCostMinor: input.quantityDelta * input.unitCostMinor,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId ?? null,
+      reference: input.reference ?? null,
+      note: input.note ?? null,
+      authorizedBy: input.authorizedBy ?? null,
+      authorizedByName: input.authorizedByName ?? null,
+      createdAt: now(),
+    };
+    state.inventoryMovements.unshift(movement);
+    return movement;
+  };
+
+  const normalizeReportRange = (from: string, to: string) => {
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+      throw apiError("invalidRequest", "El rango del reporte no es válido.");
+    }
+    if (fromMs >= toMs) {
+      throw apiError(
+        "invalidRequest",
+        "La fecha inicial debe ser anterior a la fecha final.",
+      );
+    }
+    if (toMs - fromMs > 366 * 24 * 60 * 60 * 1_000) {
+      throw apiError("invalidRequest", "El reporte admite como máximo 366 días.");
+    }
+    return { fromMs, toMs };
+  };
+
+  const financialReportSnapshot = (from: string, to: string) => {
+    const { fromMs, toMs } = normalizeReportRange(from, to);
+    const inRange = (value: string) => {
+      const timestamp = Date.parse(value);
+      return timestamp >= fromMs && timestamp < toMs;
+    };
+    const sales = state.sales.filter((sale) => inRange(sale.createdAt));
+    const returns = state.saleReturns.filter((saleReturn) =>
+      inRange(saleReturn.createdAt),
+    );
+    const grossSalesMinor = sales.reduce((total, sale) => total + sale.totalMinor, 0);
+    const taxMinor = sales.reduce((total, sale) => total + sale.taxMinor, 0);
+    const refundedMinor = returns.reduce(
+      (total, saleReturn) => total + saleReturn.totalMinor,
+      0,
+    );
+    const paymentMethods = (["cash", "transfer", "point"] as const).map((method) => {
+      const methodSales = sales.filter((sale) => sale.paymentMethod === method);
+      const methodReturns = returns.filter(
+        (saleReturn) => saleReturn.refundMethod === method,
+      );
+      const gross = methodSales.reduce((total, sale) => total + sale.totalMinor, 0);
+      const refunded = methodReturns.reduce(
+        (total, saleReturn) => total + saleReturn.totalMinor,
+        0,
+      );
+      return {
+        paymentMethod: method,
+        salesCount: methodSales.length,
+        grossSalesMinor: gross,
+        refundsCount: methodReturns.length,
+        refundedMinor: refunded,
+        netSalesMinor: gross - refunded,
+      };
+    });
+
+    const saleItemLookup = new Map(
+      state.sales.flatMap((sale) =>
+        sale.items.map((item) => [item.id, item] as const),
+      ),
+    );
+    const products = new Map<
+      string,
+      {
+        variantId: string;
+        productName: string;
+        variantName: string;
+        sku: string;
+        unit: StoredVariant["unit"];
+        soldUnits: number;
+        refundedUnits: number;
+        grossSalesMinor: number;
+        refundedMinor: number;
+        costMinor: number;
+      }
+    >();
+    for (const sale of sales) {
+      for (const item of sale.items) {
+        const entry = products.get(item.variantId) ?? {
+          variantId: item.variantId,
+          productName: item.productName,
+          variantName: item.variantName,
+          sku: item.sku,
+          unit: item.unit,
+          soldUnits: 0,
+          refundedUnits: 0,
+          grossSalesMinor: 0,
+          refundedMinor: 0,
+          costMinor: 0,
+        };
+        entry.soldUnits += item.quantity;
+        entry.grossSalesMinor += item.totalMinor;
+        products.set(item.variantId, entry);
+      }
+    }
+    for (const saleReturn of returns) {
+      for (const returned of saleReturn.items) {
+        const original = saleItemLookup.get(returned.saleItemId);
+        if (!original) {
+          continue;
+        }
+        const entry = products.get(original.variantId) ?? {
+          variantId: original.variantId,
+          productName: original.productName,
+          variantName: original.variantName,
+          sku: original.sku,
+          unit: original.unit,
+          soldUnits: 0,
+          refundedUnits: 0,
+          grossSalesMinor: 0,
+          refundedMinor: 0,
+          costMinor: 0,
+        };
+        entry.refundedUnits += returned.quantity;
+        entry.refundedMinor += returned.amountMinor;
+        products.set(original.variantId, entry);
+      }
+    }
+    for (const [variantId, entry] of products) {
+      const movements = state.inventoryMovements.filter(
+        (movement) =>
+          movement.variantId === variantId &&
+          (movement.movementType === "sale" || movement.movementType === "return") &&
+          inRange(movement.createdAt),
+      );
+      entry.costMinor = -movements.reduce(
+        (total, movement) => total + movement.totalCostMinor,
+        0,
+      );
+    }
+    const productSales = [...products.values()]
+      .map((entry) => ({
+        ...entry,
+        netUnits: entry.soldUnits - entry.refundedUnits,
+        netSalesMinor: entry.grossSalesMinor - entry.refundedMinor,
+        marginMinor:
+          entry.grossSalesMinor - entry.refundedMinor - entry.costMinor,
+      }))
+      .sort(
+        (left, right) =>
+          right.netSalesMinor - left.netSalesMinor ||
+          right.netUnits - left.netUnits ||
+          left.productName.localeCompare(right.productName),
+      );
+
+    const variants = allVariants();
+    const adjustments = new Map<
+      string,
+      {
+        variantId: string;
+        productName: string;
+        variantName: string;
+        sku: string;
+        unitsDelta: number;
+        costMinor: number;
+      }
+    >();
+    for (const movement of state.inventoryMovements) {
+      if (movement.movementType !== "adjustment" || !inRange(movement.createdAt)) {
+        continue;
+      }
+      const match = variants.find((entry) => entry.variant.id === movement.variantId);
+      if (!match) {
+        continue;
+      }
+      const entry = adjustments.get(movement.variantId) ?? {
+        variantId: movement.variantId,
+        productName: match.product.name,
+        variantName: match.variant.name,
+        sku: match.variant.sku,
+        unitsDelta: 0,
+        costMinor: 0,
+      };
+      entry.unitsDelta += movement.quantityDelta;
+      entry.costMinor += movement.totalCostMinor;
+      adjustments.set(movement.variantId, entry);
+    }
+    const inventoryAdjustments = [...adjustments.values()].sort((left, right) =>
+      left.productName.localeCompare(right.productName),
+    );
+
+    const cashSessions = state.cashSessions.filter((session) =>
+      inRange(session.openedAt),
+    );
+    const closedCashSessions = cashSessions.filter(
+      (session) => session.status === "closed",
+    );
+    const cashDifferenceMinor = closedCashSessions.reduce(
+      (total, session) => total + (session.differenceMinor ?? 0),
+      0,
+    );
+    const multiItemSales = sales.filter((sale) => sale.items.length >= 2).length;
+    const soldUnits = sales.reduce(
+      (total, sale) =>
+        total + sale.items.reduce((units, item) => units + item.quantity, 0),
+      0,
+    );
+    const costOfGoodsMinor = productSales.reduce(
+      (total, product) => total + product.costMinor,
+      0,
+    );
+    const netSalesMinor = grossSalesMinor - refundedMinor;
+    const marginMinor = netSalesMinor - costOfGoodsMinor;
+    const marginBps =
+      netSalesMinor === 0
+        ? 0
+        : Math.trunc((marginMinor * 10_000) / netSalesMinor);
+    const attachRateBps =
+      sales.length === 0
+        ? 0
+        : Math.round((multiItemSales * 10_000) / sales.length);
+    const itemsPerSaleMilli =
+      sales.length === 0 ? 0 : Math.round((soldUnits * 1_000) / sales.length);
+    const inventoryValueAt = (boundaryMs: number) =>
+      state.inventoryMovements
+        .filter((movement) => Date.parse(movement.createdAt) < boundaryMs)
+        .reduce((total, movement) => total + movement.totalCostMinor, 0);
+    const inventoryValueStartMinor = inventoryValueAt(fromMs);
+    const inventoryValueEndMinor = inventoryValueAt(toMs);
+    const inventoryValueAverageMinor =
+      (inventoryValueStartMinor + inventoryValueEndMinor) / 2;
+    const inventoryTurnoverBps =
+      inventoryValueAverageMinor > 0
+        ? Math.trunc(
+            (costOfGoodsMinor * 10_000) / inventoryValueAverageMinor,
+          )
+        : 0;
+    const adjustmentsUnits = inventoryAdjustments.reduce(
+      (total, adjustment) => total + adjustment.unitsDelta,
+      0,
+    );
+    const adjustmentsCostMinor = inventoryAdjustments.reduce(
+      (total, adjustment) => total + adjustment.costMinor,
+      0,
+    );
+
+    return {
+      from,
+      to,
+      generatedAt: now(),
+      currency: "MXN",
+      salesCount: sales.length,
+      grossSalesMinor,
+      taxMinor,
+      refundsCount: returns.length,
+      refundedMinor,
+      netSalesMinor,
+      averageSaleMinor:
+        sales.length > 0 ? Math.round(grossSalesMinor / sales.length) : 0,
+      attachRateBps,
+      itemsPerSaleMilli,
+      costOfGoodsMinor,
+      marginMinor,
+      marginBps,
+      inventoryValueStartMinor,
+      inventoryValueEndMinor,
+      inventoryTurnoverBps,
+      adjustmentsUnits,
+      adjustmentsCostMinor,
+      paymentMethods,
+      cashSessionsCount: cashSessions.length,
+      openCashSessions: cashSessions.length - closedCashSessions.length,
+      closedCashSessions: closedCashSessions.length,
+      cashDifferenceMinor,
+      cashDifferenceAbsMinor: closedCashSessions.reduce(
+        (total, session) => total + Math.abs(session.differenceMinor ?? 0),
+        0,
+      ),
+      productSales,
+      inventoryAdjustments,
+    };
+  };
 
   const currentPriceFor = (variantId: string) => {
     const now = nowTime();
@@ -295,6 +830,30 @@ type StoredSale = {
     }
     const tax = roundDiv(gross * taxRateBps, 10_000);
     return { subtotal: gross, tax, total: gross + tax };
+  };
+  const saleRequestHash = (
+    items: StoredSaleItem[],
+    paymentMethod: string,
+    cashReceivedMinor: number | null,
+    paymentReference: string | null,
+  ) =>
+    JSON.stringify([
+      paymentMethod,
+      cashReceivedMinor,
+      paymentReference,
+      items
+        .map((item) => [item.variantId, item.quantity])
+        .sort(([left], [right]) => String(left).localeCompare(String(right))),
+    ]);
+  const paymentReferenceFrom = (value: unknown) => {
+    const reference = String(value ?? "").trim();
+    if (reference.length > 120) {
+      throw apiError(
+        "invalidRequest",
+        "La referencia de pago debe tener como máximo 120 caracteres.",
+      );
+    }
+    return reference || null;
   };
   const parseCatalogPrice = (input: Record<string, unknown>) => {
     const amountMinor = Number(input.amountMinor);
@@ -631,8 +1190,376 @@ type StoredSale = {
           return state.sales.slice(0, 50);
         }
 
+        case "list_payment_charges": {
+          requirePermission("viewFinance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const saleId = input.saleId ? String(input.saleId) : null;
+          const reference = input.externalReference
+            ? String(input.externalReference)
+            : null;
+          const limit = Math.min(Math.max(Number(input.limit ?? 50), 1), 100);
+          return state.paymentCharges
+            .filter((charge) => !saleId || charge.saleId === saleId)
+            .filter(
+              (charge) =>
+                !reference || charge.externalReference === reference,
+            )
+            .slice(0, limit)
+            .map((charge) => ({ ...charge }));
+        }
+
+        case "financial_report": {
+          requirePermission("viewFinance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          return financialReportSnapshot(
+            String(input.from ?? ""),
+            String(input.to ?? ""),
+          );
+        }
+
+        case "export_financial_report_csv": {
+          requirePermission("viewFinance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const report = financialReportSnapshot(
+            String(input.from ?? ""),
+            String(input.to ?? ""),
+          );
+          const fileName = `reporte-${report.from.slice(0, 10)}-${report.to.slice(0, 10)}-${Date.now()}.csv`;
+          recordAudit({
+            actor: state.session,
+            action: "report.exported",
+            resource: "financial_report",
+            correlationId: fileName,
+          });
+          return {
+            fileName,
+            path: `/tmp/fitness-gym-e2e/exports/${fileName}`,
+            bytes: 2_048,
+          };
+        }
+
+        case "list_inventory": {
+          requirePermission("manageInventory");
+          return inventorySnapshot();
+        }
+
+        case "list_inventory_movements": {
+          requirePermission("manageInventory");
+          const variantId = args.variantId ? String(args.variantId) : null;
+          const limit = Number(args.limit ?? 50);
+          return state.inventoryMovements
+            .filter((movement) => !variantId || movement.variantId === variantId)
+            .slice(0, Math.min(Math.max(limit, 1), 200))
+            .map(inventoryMovementSnapshot);
+        }
+
+        case "record_inventory_entry": {
+          const session = requirePermission("manageInventory");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const variantId = String(input.variantId ?? "");
+          const match = allVariants().find((entry) => entry.variant.id === variantId);
+          if (!match) {
+            throw apiError("notFound", "La variante no existe.");
+          }
+          if (match.variant.unit !== "piece") {
+            throw apiError("invalidRequest", "El inventario solo aplica a piezas.");
+          }
+          const quantity = Number(input.quantity);
+          if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999_999) {
+            throw apiError("invalidRequest", "La cantidad debe estar entre 1 y 999999.");
+          }
+          const unitCostMinor = Number(input.unitCostMinor);
+          if (
+            !Number.isInteger(unitCostMinor) ||
+            unitCostMinor < 0 ||
+            unitCostMinor > 1_000_000_000
+          ) {
+            throw apiError("invalidRequest", "El costo unitario no es válido.");
+          }
+          const reference = String(input.reference ?? "").trim() || null;
+          const note = String(input.note ?? "").trim() || null;
+          if (reference && reference.length > 120) {
+            throw apiError("invalidRequest", "La referencia es demasiado larga.");
+          }
+          if (note && note.length > 300) {
+            throw apiError("invalidRequest", "La nota es demasiado larga.");
+          }
+          const movement = postInventoryMovement({
+            variantId,
+            movementType: "entry",
+            quantityDelta: quantity,
+            unitCostMinor,
+            sourceType: "manual",
+            reference,
+            note,
+            authorizedBy: session.userId,
+            authorizedByName: session.name,
+          });
+          recordAudit({
+            actor: state.session,
+            action: "inventory.entry",
+            resource: "inventory_movement",
+            correlationId: movement.id,
+          });
+          return inventoryMovementSnapshot(movement);
+        }
+
+        case "adjust_inventory": {
+          const session = requirePermission("manageInventory");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const variantId = String(input.variantId ?? "");
+          const match = allVariants().find((entry) => entry.variant.id === variantId);
+          if (!match) {
+            throw apiError("notFound", "La variante no existe.");
+          }
+          if (match.variant.unit !== "piece") {
+            throw apiError("invalidRequest", "El inventario solo aplica a piezas.");
+          }
+          const quantityDelta = Number(input.quantityDelta);
+          if (
+            !Number.isInteger(quantityDelta) ||
+            quantityDelta === 0 ||
+            Math.abs(quantityDelta) > 999_999
+          ) {
+            throw apiError(
+              "invalidRequest",
+              "El ajuste debe estar entre -999999 y 999999 y no ser cero.",
+            );
+          }
+          const reason = String(input.reason ?? "").trim();
+          if (reason.length < 1 || reason.length > 300) {
+            throw apiError(
+              "invalidRequest",
+              "El motivo del ajuste debe tener entre 1 y 300 caracteres.",
+            );
+          }
+          const providedCost =
+            input.unitCostMinor == null ? null : Number(input.unitCostMinor);
+          if (
+            providedCost != null &&
+            (!Number.isInteger(providedCost) ||
+              providedCost < 0 ||
+              providedCost > 1_000_000_000)
+          ) {
+            throw apiError("invalidRequest", "El costo unitario no es válido.");
+          }
+          const unitCostMinor = providedCost ?? averageCostFor(variantId);
+          const movement = postInventoryMovement({
+            variantId,
+            movementType: "adjustment",
+            quantityDelta,
+            unitCostMinor,
+            sourceType: "adjustment",
+            note: reason,
+            authorizedBy: session.userId,
+            authorizedByName: session.name,
+          });
+          recordAudit({
+            actor: state.session,
+            action: "inventory.adjusted",
+            resource: "inventory_movement",
+            correlationId: movement.id,
+          });
+          return inventoryMovementSnapshot(movement);
+        }
+
+        case "update_inventory_threshold": {
+          requirePermission("manageInventory");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const variantId = String(input.variantId ?? "");
+          const match = allVariants().find((entry) => entry.variant.id === variantId);
+          if (!match) {
+            throw apiError("notFound", "La variante no existe.");
+          }
+          if (match.variant.unit !== "piece") {
+            throw apiError("invalidRequest", "El inventario solo aplica a piezas.");
+          }
+          const minStock = Number(input.minStock);
+          if (!Number.isInteger(minStock) || minStock < 0 || minStock > 999_999) {
+            throw apiError("invalidRequest", "El mínimo debe estar entre 0 y 999999.");
+          }
+          state.inventoryThresholds.set(variantId, minStock);
+          recordAudit({
+            actor: state.session,
+            action: "inventory.threshold.updated",
+            resource: "inventory_policy",
+            correlationId: variantId,
+          });
+          return inventorySnapshot().find((item) => item.variantId === variantId);
+        }
+
+        case "current_cash_session": {
+          requirePermission("operatePos");
+          const active = openCashSession();
+          return active ? cashSessionSnapshot(active) : null;
+        }
+
+        case "list_cash_sessions": {
+          requirePermission("viewFinance");
+          return state.cashSessions.map(cashSessionSnapshot);
+        }
+
+        case "open_cash_session": {
+          const session = requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const openingAmountMinor = Number(input.openingAmountMinor);
+          if (
+            !Number.isInteger(openingAmountMinor) ||
+            openingAmountMinor < 0 ||
+            openingAmountMinor > 1_000_000_000
+          ) {
+            throw apiError("invalidRequest", "El monto inicial no es válido.");
+          }
+          if (openCashSession()) {
+            throw apiError("invalidRequest", "Ya hay un turno de caja abierto.");
+          }
+          const openedAt = now();
+          const cashSession: StoredCashSession = {
+            id: uuid(),
+            status: "open",
+            currency: "MXN",
+            openingAmountMinor,
+            countedAmountMinor: null,
+            differenceMinor: null,
+            differenceReason: null,
+            openedBy: session.userId,
+            openedByName: session.name,
+            openedAt,
+            closedBy: null,
+            closedByName: null,
+            closedAt: null,
+          };
+          state.cashSessions.unshift(cashSession);
+          recordAudit({
+            actor: state.session,
+            action: "cash.opened",
+            resource: "cash_session",
+            correlationId: cashSession.id,
+          });
+          return cashSessionSnapshot(cashSession);
+        }
+
+        case "close_cash_session": {
+          const session = requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const sessionId = String(input.sessionId ?? "");
+          const countedAmountMinor = Number(input.countedAmountMinor);
+          const cashSession = state.cashSessions.find((item) => item.id === sessionId);
+          if (!cashSession) {
+            throw apiError("notFound", "El turno de caja no existe.");
+          }
+          if (cashSession.status !== "open") {
+            throw apiError("invalidRequest", "El turno de caja ya está cerrado.");
+          }
+          if (
+            !Number.isInteger(countedAmountMinor) ||
+            countedAmountMinor < 0 ||
+            countedAmountMinor > 1_000_000_000
+          ) {
+            throw apiError("invalidRequest", "El efectivo contado no es válido.");
+          }
+          const snapshot = cashSessionSnapshot(cashSession);
+          const differenceMinor = countedAmountMinor - snapshot.expectedCashMinor;
+          const reason =
+            typeof input.differenceReason === "string"
+              ? input.differenceReason.trim()
+              : "";
+          if (differenceMinor !== 0 && reason.length === 0) {
+            throw apiError(
+              "invalidRequest",
+              "Registra el motivo de la diferencia para cerrar la caja.",
+            );
+          }
+          if (reason.length > 300) {
+            throw apiError("invalidRequest", "El motivo de la diferencia es demasiado largo.");
+          }
+          cashSession.status = "closed";
+          cashSession.countedAmountMinor = countedAmountMinor;
+          cashSession.differenceMinor = differenceMinor;
+          cashSession.differenceReason = differenceMinor === 0 ? null : reason;
+          cashSession.closedBy = session.userId;
+          cashSession.closedByName = session.name;
+          cashSession.closedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "cash.closed",
+            resource: "cash_session",
+            correlationId: cashSession.id,
+          });
+          return cashSessionSnapshot(cashSession);
+        }
+
+        case "list_cash_movements": {
+          requireAnyPermission(["operatePos", "viewFinance"]);
+          const sessionId = String(args.sessionId ?? "");
+          return state.cashMovements.filter(
+            (movement) => movement.cashSessionId === sessionId,
+          );
+        }
+
+        case "record_cash_movement": {
+          const session = requirePermission("operatePos");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const sessionId = String(input.sessionId ?? "");
+          const movementType = String(input.movementType ?? "");
+          const category = String(input.category ?? "").trim();
+          const amountMinor = Number(input.amountMinor);
+          const paymentMethod = String(input.paymentMethod ?? "");
+          const evidence = String(input.evidence ?? "").trim();
+          const cashSession = state.cashSessions.find((item) => item.id === sessionId);
+          if (!cashSession) {
+            throw apiError("notFound", "El turno de caja no existe.");
+          }
+          if (cashSession.status !== "open") {
+            throw apiError("invalidRequest", "El turno de caja ya está cerrado.");
+          }
+          if (!["income", "expense"].includes(movementType)) {
+            throw apiError("invalidRequest", "El tipo de movimiento no es válido.");
+          }
+          if (!["cash", "transfer", "point"].includes(paymentMethod)) {
+            throw apiError("invalidRequest", "El método de pago no es válido.");
+          }
+          if (
+            !Number.isInteger(amountMinor) ||
+            amountMinor < 1 ||
+            amountMinor > 1_000_000_000
+          ) {
+            throw apiError("invalidRequest", "El monto del movimiento no es válido.");
+          }
+          if (category.length === 0 || category.length > 80) {
+            throw apiError("invalidRequest", "La categoría no es válida.");
+          }
+          if (evidence.length === 0 || evidence.length > 200) {
+            throw apiError("invalidRequest", "La evidencia no es válida.");
+          }
+          const movement: StoredCashMovement = {
+            id: uuid(),
+            cashSessionId: sessionId,
+            movementType: movementType as StoredCashMovement["movementType"],
+            category,
+            amountMinor,
+            paymentMethod: paymentMethod as StoredCashMovement["paymentMethod"],
+            evidence,
+            authorizedBy: session.userId,
+            authorizedByName: session.name,
+            createdAt: now(),
+          };
+          state.cashMovements.unshift(movement);
+          recordAudit({
+            actor: state.session,
+            action: "cash.movement_recorded",
+            resource: "cash_movement",
+            correlationId: movement.id,
+          });
+          return movement;
+        }
+
         case "create_sale": {
           const session = requirePermission("operatePos");
+          const activeCashSession = openCashSession();
+          if (!activeCashSession) {
+            throw apiError("invalidRequest", "Abre la caja antes de registrar una venta.");
+          }
           const input = (args.input ?? {}) as Record<string, unknown>;
           const rawItems = Array.isArray(input.items) ? input.items : [];
           if (rawItems.length === 0) {
@@ -644,6 +1571,13 @@ type StoredSale = {
           const paymentMethod = String(input.paymentMethod ?? "");
           if (!["cash", "transfer", "point"].includes(paymentMethod)) {
             throw apiError("invalidRequest", "Método de pago inválido.");
+          }
+          const idempotencyKey = String(input.idempotencyKey ?? "").trim();
+          if (idempotencyKey.length < 1 || idempotencyKey.length > 128) {
+            throw apiError(
+              "invalidRequest",
+              "La clave de idempotencia debe tener entre 1 y 128 caracteres.",
+            );
           }
           const seen = new Set<string>();
           const items: StoredSaleItem[] = rawItems.map((rawItem) => {
@@ -695,6 +1629,8 @@ type StoredSale = {
               subtotalMinor: totals.subtotal,
               taxMinor: totals.tax,
               totalMinor: totals.total,
+              refundedQuantity: 0,
+              refundedMinor: 0,
             };
           });
           const subtotalMinor = items.reduce((total, item) => total + item.subtotalMinor, 0);
@@ -724,21 +1660,78 @@ type StoredSale = {
               "El efectivo recibido solo aplica a pagos en efectivo.",
             );
           }
+          const paymentReference = paymentReferenceFrom(input.paymentReference);
+          const requestHash = saleRequestHash(
+            items,
+            paymentMethod,
+            cashReceivedMinor,
+            paymentReference,
+          );
+          const previousAttempt = state.saleIdempotency.get(idempotencyKey);
+          if (previousAttempt) {
+            if (previousAttempt.requestHash !== requestHash) {
+              throw apiError(
+                "invalidRequest",
+                "La clave de idempotencia ya se usó con otra operación.",
+              );
+            }
+            const previousSale = state.sales.find(
+              (entry) => entry.id === previousAttempt.saleId,
+            );
+            if (previousSale) {
+              return previousSale;
+            }
+          }
           const sale: StoredSale = {
             id: uuid(),
             currency: "MXN",
             subtotalMinor,
             taxMinor,
             totalMinor,
+            refundedMinor: 0,
             paymentMethod: paymentMethod as StoredSale["paymentMethod"],
             cashReceivedMinor,
             changeMinor,
             soldBy: session.userId,
             soldByName: session.name,
+            cashSessionId: activeCashSession.id,
+            paymentReference,
             items,
             createdAt: now(),
           };
           state.sales.unshift(sale);
+          state.paymentCharges.unshift({
+            id: uuid(),
+            saleId: sale.id,
+            saleReturnId: null,
+            kind: "charge",
+            method: sale.paymentMethod,
+            provider: sale.paymentMethod === "point" ? "point" : "manual",
+            status: "approved",
+            amountMinor: sale.totalMinor,
+            currency: sale.currency,
+            externalReference: paymentReference,
+            createdAt: sale.createdAt,
+          });
+          state.saleIdempotency.set(idempotencyKey, {
+            requestHash,
+            saleId: sale.id,
+          });
+          for (const item of sale.items) {
+            if (item.unit === "piece") {
+              postInventoryMovement({
+                variantId: item.variantId,
+                movementType: "sale",
+                quantityDelta: -item.quantity,
+                unitCostMinor: averageCostFor(item.variantId),
+                sourceType: "sale",
+                sourceId: item.id,
+                reference: sale.id,
+                authorizedBy: session.userId,
+                authorizedByName: session.name,
+              });
+            }
+          }
           recordAudit({
             actor: state.session,
             action: "sale.completed",
@@ -746,6 +1739,236 @@ type StoredSale = {
             correlationId: sale.id,
           });
           return sale;
+        }
+
+        case "list_sale_returns": {
+          requirePermission("operatePos");
+          const saleId = args.saleId ? String(args.saleId) : null;
+          return state.saleReturns
+            .filter((saleReturn) => !saleId || saleReturn.saleId === saleId)
+            .slice(0, 50)
+            .map((saleReturn) => ({
+              ...saleReturn,
+              items: saleReturn.items.map((item) => ({ ...item })),
+            }));
+        }
+
+        case "create_sale_return": {
+          const session = requirePermission("operatePos");
+          const activeCashSession = openCashSession();
+          if (!activeCashSession) {
+            throw apiError(
+              "invalidRequest",
+              "Abre la caja antes de registrar una devolución.",
+            );
+          }
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const saleId = String(input.saleId ?? "");
+          const sale = state.sales.find((entry) => entry.id === saleId);
+          if (!sale) {
+            throw apiError("notFound", "La venta no existe.");
+          }
+          const reason = String(input.reason ?? "").trim();
+          if (reason.length < 1 || reason.length > 300) {
+            throw apiError(
+              "invalidRequest",
+              "El motivo de la devolución debe tener entre 1 y 300 caracteres.",
+            );
+          }
+          const rawItems = Array.isArray(input.items) ? input.items : [];
+          if (rawItems.length === 0) {
+            throw apiError(
+              "invalidRequest",
+              "La devolución necesita al menos un artículo.",
+            );
+          }
+          if (rawItems.length > 50) {
+            throw apiError(
+              "invalidRequest",
+              "La devolución admite como máximo 50 artículos.",
+            );
+          }
+          const idempotencyKey = String(input.idempotencyKey ?? "").trim();
+          if (idempotencyKey.length < 1 || idempotencyKey.length > 128) {
+            throw apiError(
+              "invalidRequest",
+              "La clave de idempotencia debe tener entre 1 y 128 caracteres.",
+            );
+          }
+          const paymentReference = paymentReferenceFrom(input.paymentReference);
+          const requestHash = JSON.stringify([
+            saleId,
+            reason,
+            paymentReference,
+            rawItems
+              .map((rawItem) => {
+                const item = (rawItem ?? {}) as Record<string, unknown>;
+                return [String(item.saleItemId ?? ""), Number(item.quantity)];
+              })
+              .sort(([left], [right]) => String(left).localeCompare(String(right))),
+          ]);
+          const previousAttempt = state.saleReturnIdempotency.get(idempotencyKey);
+          if (previousAttempt) {
+            if (previousAttempt.requestHash !== requestHash) {
+              throw apiError(
+                "invalidRequest",
+                "La clave de idempotencia ya se usó con otra operación.",
+              );
+            }
+            const previousReturn = state.saleReturns.find(
+              (entry) => entry.id === previousAttempt.returnId,
+            );
+            if (previousReturn) {
+              return {
+                ...previousReturn,
+                items: previousReturn.items.map((item) => ({ ...item })),
+              };
+            }
+          }
+          const seen = new Set<string>();
+          let totalMinor = 0;
+          const returnItems: StoredSaleReturnItem[] = [];
+          for (const rawItem of rawItems) {
+            const item = (rawItem ?? {}) as Record<string, unknown>;
+            const saleItemId = String(item.saleItemId ?? "");
+            const quantity = Number(item.quantity);
+            if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
+              throw apiError(
+                "invalidRequest",
+                "La cantidad a devolver debe estar entre 1 y 999.",
+              );
+            }
+            if (seen.has(saleItemId)) {
+              throw apiError(
+                "invalidRequest",
+                "El mismo artículo no puede repetirse en la devolución.",
+              );
+            }
+            seen.add(saleItemId);
+            const saleItem = sale.items.find((entry) => entry.id === saleItemId);
+            if (!saleItem) {
+              throw apiError(
+                "invalidRequest",
+                "El artículo no pertenece a esta venta.",
+              );
+            }
+            const remainingQuantity =
+              saleItem.quantity - saleItem.refundedQuantity;
+            if (remainingQuantity <= 0) {
+              throw apiError(
+                "invalidRequest",
+                "El artículo ya fue devuelto por completo.",
+              );
+            }
+            if (quantity > remainingQuantity) {
+              throw apiError(
+                "invalidRequest",
+                "La cantidad excede lo disponible por devolver.",
+              );
+            }
+            const remainingAmount = saleItem.totalMinor - saleItem.refundedMinor;
+            const amountMinor =
+              quantity === remainingQuantity
+                ? remainingAmount
+                : Math.floor((remainingAmount * quantity) / remainingQuantity);
+            if (amountMinor < 0) {
+              throw apiError("invalidRequest", "El importe de devolución no es válido.");
+            }
+            totalMinor += amountMinor;
+            returnItems.push({
+              id: uuid(),
+              saleItemId,
+              productName: saleItem.productName,
+              variantName: saleItem.variantName,
+              sku: saleItem.sku,
+              quantity,
+              amountMinor,
+            });
+          }
+          if (totalMinor <= 0) {
+            throw apiError(
+              "invalidRequest",
+              "La devolución debe tener un importe mayor que cero.",
+            );
+          }
+          if (totalMinor > 1_000_000_000) {
+            throw apiError(
+              "invalidRequest",
+              "El importe de la devolución es demasiado grande.",
+            );
+          }
+          const saleReturn: StoredSaleReturn = {
+            id: uuid(),
+            saleId: sale.id,
+            cashSessionId: activeCashSession.id,
+            currency: sale.currency,
+            refundMethod: sale.paymentMethod,
+            totalMinor,
+            reason,
+            authorizedBy: session.userId,
+            authorizedByName: session.name,
+            paymentReference,
+            createdAt: now(),
+            items: returnItems,
+          };
+          state.saleReturns.unshift(saleReturn);
+          state.saleReturnIdempotency.set(idempotencyKey, {
+            requestHash,
+            returnId: saleReturn.id,
+          });
+          state.paymentCharges.unshift({
+            id: uuid(),
+            saleId: sale.id,
+            saleReturnId: saleReturn.id,
+            kind: "refund",
+            method: saleReturn.refundMethod,
+            provider: saleReturn.refundMethod === "point" ? "point" : "manual",
+            status: "approved",
+            amountMinor: saleReturn.totalMinor,
+            currency: saleReturn.currency,
+            externalReference: paymentReference,
+            createdAt: saleReturn.createdAt,
+          });
+          for (const item of returnItems) {
+            const saleItem = sale.items.find((entry) => entry.id === item.saleItemId);
+            if (!saleItem || saleItem.unit !== "piece") {
+              continue;
+            }
+            const original = state.inventoryMovements.find(
+              (movement) =>
+                movement.sourceType === "sale" && movement.sourceId === item.saleItemId,
+            );
+            postInventoryMovement({
+              variantId: saleItem.variantId,
+              movementType: "return",
+              quantityDelta: item.quantity,
+              unitCostMinor: original?.unitCostMinor ?? averageCostFor(saleItem.variantId),
+              sourceType: "sale_return",
+              sourceId: saleReturn.id,
+              reference: sale.id,
+              note: reason,
+              authorizedBy: session.userId,
+              authorizedByName: session.name,
+            });
+          }
+          sale.refundedMinor += totalMinor;
+          for (const item of returnItems) {
+            const saleItem = sale.items.find((entry) => entry.id === item.saleItemId);
+            if (saleItem) {
+              saleItem.refundedQuantity += item.quantity;
+              saleItem.refundedMinor += item.amountMinor;
+            }
+          }
+          recordAudit({
+            actor: state.session,
+            action: "sale.returned",
+            resource: "sale_return",
+            correlationId: saleReturn.id,
+          });
+          return {
+            ...saleReturn,
+            items: saleReturn.items.map((item) => ({ ...item })),
+          };
         }
 
         case "create_catalog_item": {
@@ -1087,7 +2310,7 @@ type StoredSale = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-      schemaVersion: 7,
+            schemaVersion: 15,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);

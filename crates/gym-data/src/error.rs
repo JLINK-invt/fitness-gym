@@ -8,6 +8,9 @@ pub enum DataError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("invalid database key: {0}")]
     InvalidKey(String),
 
@@ -62,4 +65,31 @@ pub enum DataError {
 
     #[error("the catalog variant does not exist in this gym")]
     CatalogVariantNotFound,
+
+    #[error("a cash session is already open")]
+    CashSessionAlreadyOpen,
+
+    #[error("the cash session does not exist in this gym")]
+    CashSessionNotFound,
+
+    #[error("open a cash session before selling")]
+    CashSessionRequired,
+
+    #[error("the cash session is not open")]
+    CashSessionNotOpen,
+
+    #[error("the cash movement does not exist in this gym")]
+    CashMovementNotFound,
+
+    #[error("the idempotency key was already used with a different sale")]
+    SaleIdempotencyConflict,
+
+    #[error("the sale does not exist in this gym")]
+    SaleNotFound,
+
+    #[error("the sale return does not exist in this gym")]
+    SaleReturnNotFound,
+
+    #[error("the inventory movement does not exist in this gym")]
+    InventoryMovementNotFound,
 }

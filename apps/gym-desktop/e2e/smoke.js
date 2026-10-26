@@ -36,6 +36,8 @@ async (page) => {
     .getByLabel("Ya guardé el código de recuperación en un lugar seguro.")
     .check();
   await page.getByRole("button", { name: "Continuar" }).click();
+  await page.getByRole("heading", { name: "Panel" }).waitFor();
+  await page.getByRole("link", { name: "Diagnóstico" }).click();
   await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
   await page.getByText("Ana E2E").waitFor();
   await page.getByText("Dueño", { exact: true }).waitFor();
@@ -57,27 +59,6 @@ async (page) => {
     );
   }
   pass("diagnóstico carga health y estado cifrado");
-
-  await page.getByRole("link", { name: "Acceso" }).click();
-  await page.getByRole("heading", { name: "Acceso simulado" }).waitFor();
-  await page.getByRole("button", { name: "Simular acceso" }).click();
-  await page.getByText("Acceso permitido").waitFor();
-  const accessRows = page.locator("tbody tr");
-  if ((await accessRows.count()) !== 1) {
-    throw new Error(`Se esperaba 1 evento de acceso, hay ${await accessRows.count()}.`);
-  }
-  await page.getByRole("button", { name: "Repetir última solicitud" }).click();
-  await page.getByText("evento ya existente").waitFor();
-  if ((await accessRows.count()) !== 1) {
-    throw new Error("La repetición duplicó el evento de acceso.");
-  }
-  await page.getByRole("combobox", { name: "Credencial" }).selectOption("CRED-DENY");
-  await page.getByRole("button", { name: "Simular acceso" }).click();
-  await page.getByText("Acceso denegado").waitFor();
-  if ((await accessRows.count()) !== 2) {
-    throw new Error("El acceso denegado no se reflejó en la tabla.");
-  }
-  pass("vertical slice de acceso con evento idempotente");
 
   await page.getByRole("link", { name: "Backups" }).click();
   await page.getByText("Aún no hay snapshots.").waitFor();
@@ -162,6 +143,17 @@ async (page) => {
   await page.getByText("$550.00").waitFor();
   pass("agregar una segunda variante");
 
+  await page.getByLabel("Nombre del producto").fill("Playera");
+  await page.getByLabel("Categoría", { exact: true }).fill("Ropa");
+  await page.getByLabel("Nombre de la variante").fill("M");
+  await page.getByLabel("SKU").fill("PLAY-M");
+  await page.getByLabel("Unidad").selectOption("piece");
+  await page.getByLabel("Costo", { exact: true }).fill("100");
+  await page.getByLabel("Precio", { exact: true }).fill("250");
+  await page.getByRole("button", { name: "Crear producto" }).click();
+  await page.getByLabel("Nombre de Playera").waitFor();
+  pass("crear producto rastreado por inventario");
+
   await page.getByRole("link", { name: "Equipo" }).click();
   await page.getByRole("heading", { name: "Equipo" }).waitFor();
   await page.getByLabel("Nombre del empleado").fill("Carlos Caja");
@@ -176,7 +168,7 @@ async (page) => {
   await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
   await page.getByLabel("Contraseña").fill("clave-carlos-123");
   await page.getByRole("button", { name: "Entrar" }).click();
-  await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  await page.getByRole("heading", { name: "Panel" }).waitFor();
   await page.getByText("Cajero", { exact: true }).waitFor();
   if ((await page.getByRole("link", { name: "Backups" }).count()) > 0) {
     throw new Error("El cajero no debería ver Backups.");
@@ -190,8 +182,60 @@ async (page) => {
   if ((await page.getByRole("link", { name: "Auditoría" }).count()) > 0) {
     throw new Error("El cajero no debería ver Auditoría.");
   }
-  await page.getByRole("link", { name: "Acceso" }).waitFor();
+  if ((await page.getByRole("link", { name: "Acceso" }).count()) > 0) {
+    throw new Error("El módulo Acceso simulado ya no debería mostrarse.");
+  }
   pass("cajero no ve módulos administrativos");
+
+  await page.getByRole("link", { name: "Ventas" }).click();
+  await page
+    .getByText("Abre la caja y registra el fondo inicial antes de cobrar.")
+    .waitFor();
+  pass("venta exige un turno de caja abierto");
+
+  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await page.getByRole("heading", { name: "Caja y turnos" }).waitFor();
+  await page.getByLabel("Monto inicial").fill("500");
+  await page.getByRole("button", { name: "Abrir caja" }).click();
+  await page.getByText("Turno abierto", { exact: true }).waitFor();
+  await page.getByText("Esperado en caja").waitFor();
+  pass("cajero abre la caja con fondo inicial");
+
+  await page.getByLabel("Tipo").selectOption("expense");
+  await page.getByLabel("Monto").fill("50");
+  await page.getByLabel("Categoría").fill("Limpieza");
+  await page.getByLabel("Método").selectOption("cash");
+  await page.getByLabel("Evidencia").fill("Nota 42");
+  await page.getByRole("button", { name: "Registrar movimiento" }).click();
+  await page.getByText("Limpieza").waitFor();
+  await page.getByText("$50.00").first().waitFor();
+  pass("cajero registra un gasto de caja con evidencia");
+
+  await page.getByRole("link", { name: "Inventario" }).click();
+  await page.getByRole("heading", { name: "Inventario", exact: true }).waitFor();
+  await page.getByLabel("Producto").selectOption({ label: "Playera · M · PLAY-M" });
+  await page.getByLabel("Cantidad").fill("5");
+  await page.getByLabel("Costo unitario").fill("100");
+  await page.getByLabel("Referencia").fill("OC-E2E");
+  await page.getByLabel("Nota").fill("Compra E2E");
+  await page.getByRole("button", { name: "Registrar entrada" }).click();
+  await page.getByText("Compra E2E").waitFor();
+  await page.getByText("$500.00").first().waitFor();
+  pass("cajero registra una entrada y el valor del inventario");
+
+  const threshold = page
+    .locator("tbody tr", { hasText: "Playera" })
+    .getByRole("spinbutton");
+  await threshold.fill("5");
+  await threshold.press("Tab");
+
+  await page.getByRole("link", { name: "Panel" }).click();
+  await page.getByRole("heading", { name: "Panel", exact: true }).waitFor();
+  await page.getByText("1 SKU en o bajo mínimo").waitFor();
+  await page.locator("tbody").getByText("Playera").waitFor();
+  await page.getByText("5 u", { exact: true }).waitFor();
+  await page.getByText("$500.00").first().waitFor();
+  pass("panel refleja existencias y alerta de mínimo");
 
   await page.getByRole("link", { name: "Ventas" }).click();
   await page.getByRole("heading", { name: "Ventas", exact: true }).waitFor();
@@ -201,14 +245,77 @@ async (page) => {
   await page.getByRole("button", { name: "Completar venta" }).click();
   await page.getByRole("heading", { name: "Ticket de venta" }).waitFor();
   await page.getByText("Ticket no fiscal").waitFor();
-  pass("cajero cobra una venta en efectivo");
+  await page.evaluate(() => {
+    window.__e2ePrintCount = 0;
+    window.print = () => {
+      window.__e2ePrintCount += 1;
+    };
+  });
+  await page.getByRole("button", { name: "Imprimir", exact: true }).click();
+  if ((await page.evaluate(() => window.__e2ePrintCount)) !== 1) {
+    throw new Error("El ticket no invocó el diálogo de impresión del sistema.");
+  }
+  pass("cajero cobra una venta en efectivo e imprime el ticket no fiscal");
+
+  await page.getByRole("button", { name: "Devolver" }).first().click();
+  await page
+    .getByLabel("Cantidad a devolver Membresía mensual")
+    .fill("1");
+  await page
+    .getByLabel("Motivo de la devolución")
+    .fill("Cliente canceló la membresía");
+  await page.getByRole("button", { name: "Registrar devolución" }).click();
+  await page.getByText("Devolución registrada").waitFor();
+  pass("cajero devuelve una venta con motivo");
+
+  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await page.getByText("Devoluciones efectivo").waitFor();
+  await page.getByText("$450.00").first().waitFor();
+  await page.getByLabel("Efectivo contado").fill("440");
+  await page.getByText("-$10.00").waitFor();
+  if (
+    !(await page.getByRole("button", { name: "Cerrar caja" }).isDisabled())
+  ) {
+    throw new Error("La caja permitió cerrar con diferencia sin motivo.");
+  }
+  await page.getByLabel("Motivo de la diferencia").fill("Faltante de cambio");
+  await page.getByRole("button", { name: "Cerrar caja" }).click();
+  await page.getByRole("heading", { name: "Turno cerrado" }).waitFor();
+  await page.getByText("Faltante de cambio").waitFor();
+  pass("cajero cierra caja y audita la diferencia");
 
   await page.getByRole("button", { name: "Salir" }).click();
   await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-segura-123");
   await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await page.getByRole("heading", { name: "Caja y turnos" }).waitFor();
+  await page.getByRole("heading", { name: "Turnos recientes" }).waitFor();
+  const shiftRows = page.locator("tbody tr");
+  if ((await shiftRows.count()) !== 1) {
+    throw new Error(`Se esperaba 1 turno, hay ${await shiftRows.count()}.`);
+  }
+  await page.getByText("$440.00").first().waitFor();
+  pass("dueño consulta el historial de turnos");
+  await page.getByRole("link", { name: "Reportes" }).click();
+  await page.getByRole("heading", { name: "Reportes", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Analítica de ventas e inventario" }).waitFor();
+  await page.getByText("Attach rate", { exact: true }).waitFor();
+  await page.getByText("Rotación", { exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Métodos de pago" }).waitFor();
+  await page.getByRole("heading", { name: "Ventas por producto" }).waitFor();
+  await page.getByText("Membresía mensual").first().waitFor();
+  await page.getByText("$400.00").first().waitFor();
+  await page.getByText("-$10.00").waitFor();
+  pass("reporte de caja, ventas, margen y analítica reconcilia el rango");
+
+  await page.getByRole("button", { name: "Exportar CSV" }).click();
+  await page.getByText(/Exportado reporte-.*\.csv/).waitFor();
+  pass("exportar CSV genera archivo auditado");
+
   await page.getByRole("link", { name: "Auditoría" }).click();
   await page.getByRole("heading", { name: "Auditoría" }).waitFor();
+  await page.getByText("report.exported").waitFor();
   await page.getByText(/Cadena íntegra:/).waitFor();
   if ((await page.locator("tbody tr").count()) === 0) {
     throw new Error("La auditoría no mostró eventos.");
