@@ -5,6 +5,8 @@ import type {
   MemberStatus,
   Membership,
   MembershipCharge,
+  MembershipPayment,
+  MembershipPaymentReceipt,
   MembershipPlan,
   PaymentMethod,
   Prospect,
@@ -90,22 +92,96 @@ export function MembersPage() {
           {errorMessage(dashboard.error)}
         </div>
       ) : (
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard label="Socios activos" value={dashboard.data?.activeMembers ?? "—"} />
-          <SummaryCard label="Membresías vigentes" value={dashboard.data?.activeMemberships ?? "—"} />
-          <SummaryCard
-            label="Por vencer"
-            value={dashboard.data?.expiringSoon ?? "—"}
-            hint="Próximos 7 días"
-            warning={(dashboard.data?.expiringSoon ?? 0) > 0}
-          />
-          <SummaryCard
-            label="Deuda pendiente"
-            value={dashboard.data ? money(dashboard.data.debtMinor) : "—"}
-            hint={dashboard.data ? `${dashboard.data.pastDue} socios con cargos vencidos` : undefined}
-            warning={(dashboard.data?.pastDue ?? 0) > 0}
-          />
-        </section>
+        <div className="space-y-4">
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <SummaryCard label="Socios activos" value={dashboard.data?.activeMembers ?? "—"} />
+            <SummaryCard label="Membresías vigentes" value={dashboard.data?.activeMemberships ?? "—"} />
+            <SummaryCard
+              label="Por vencer"
+              value={dashboard.data?.expiringSoon ?? "—"}
+              hint="Próximos 7 días"
+              warning={(dashboard.data?.expiringSoon ?? 0) > 0}
+            />
+            <SummaryCard
+              label="Deuda pendiente"
+              value={dashboard.data ? money(dashboard.data.debtMinor) : "—"}
+              hint={dashboard.data ? `${dashboard.data.pastDue} socios con cargos vencidos` : undefined}
+              warning={(dashboard.data?.pastDue ?? 0) > 0}
+            />
+            <SummaryCard
+              label="Ingresos del mes"
+              value={dashboard.data ? money(dashboard.data.incomeThisMonthMinor) : "—"}
+              hint={dashboard.data ? `${dashboard.data.newMembersThisMonth} altas nuevas` : undefined}
+            />
+            <SummaryCard
+              label="Renovaciones"
+              value={dashboard.data?.renewalsThisMonth ?? "—"}
+              hint={dashboard.data ? `${dashboard.data.cancellationsThisMonth} cancelaciones` : undefined}
+            />
+          </section>
+          {dashboard.data && (
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-base font-semibold">Tendencia 6 meses</h2>
+                  <span className="text-xs text-slate-500">
+                    {dashboard.data.periodStart} a {dashboard.data.periodEnd} · {dashboard.data.timezone}
+                  </span>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {dashboard.data.trend.map((point) => {
+                    const maxIncome = Math.max(...dashboard.data!.trend.map((item) => item.incomeMinor), 1);
+                    return (
+                      <div key={point.month} className="grid grid-cols-[4rem_1fr_auto] items-center gap-3 text-xs">
+                        <span className="font-medium text-slate-600">{point.month}</span>
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.max((point.incomeMinor / maxIncome) * 100, 2)}%` }} />
+                        </div>
+                        <span className="text-right text-slate-600">
+                          {money(point.incomeMinor)} · {point.newMembers} altas · {point.renewals} ren.
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-base font-semibold">Pagos recientes</h2>
+                  <div className="mt-3 space-y-2">
+                    {dashboard.data.recentPayments.length === 0 ? (
+                      <p className="text-sm text-slate-500">Sin pagos registrados.</p>
+                    ) : dashboard.data.recentPayments.map((receipt) => (
+                      <div key={receipt.paymentId} className="flex items-start justify-between gap-2 text-xs text-slate-600">
+                        <div>
+                          <p className="font-medium text-slate-800">{receipt.memberName}</p>
+                          <p>{receipt.receiptNumber} · {receipt.chargeDescription}</p>
+                        </div>
+                        <span className="whitespace-nowrap font-medium">{money(receipt.amountMinor, receipt.currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-base font-semibold">Próximos vencimientos</h2>
+                  <div className="mt-3 space-y-2">
+                    {dashboard.data.expiringMemberships.length === 0 ? (
+                      <p className="text-sm text-slate-500">Sin vencimientos próximos.</p>
+                    ) : dashboard.data.expiringMemberships.map((membership) => (
+                      <div key={membership.id} className="flex items-start justify-between gap-2 text-xs text-slate-600">
+                        <div>
+                          <p className="font-medium text-slate-800">{membership.memberName}</p>
+                          <p>{membership.planName}</p>
+                        </div>
+                        <span className="whitespace-nowrap">{membership.endDate}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+        </div>
       )}
 
       {tab === "members" ? (
@@ -421,7 +497,7 @@ function MembersTab() {
             loading={account.isLoading}
             busy={pay.isPending}
             onPay={(charge, amountMinor, method, reference) =>
-              pay.mutate({ charge, amountMinor, method, reference })
+              pay.mutateAsync({ charge, amountMinor, method, reference })
             }
           />
         </section>
@@ -560,16 +636,26 @@ function AccountPanel({
   account: MemberAccount | null;
   loading: boolean;
   busy: boolean;
-  onPay: (charge: MembershipCharge, amountMinor: number, method: PaymentMethod, reference?: string) => void;
+  onPay: (charge: MembershipCharge, amountMinor: number, method: PaymentMethod, reference?: string) => Promise<MembershipPayment>;
 }) {
   const [chargeId, setChargeId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [reference, setReference] = useState("");
+  const [receipt, setReceipt] = useState<MembershipPaymentReceipt | null>(null);
+  const [receiptBusy, setReceiptBusy] = useState(false);
   const pending = (account?.charges ?? []).filter((charge) => charge.status === "pending");
   const selectedCharge = pending.find((charge) => charge.id === chargeId) ?? null;
   const remaining = selectedCharge ? selectedCharge.amountMinor - selectedCharge.paidMinor : 0;
   const amountMinor = toMinor(amount);
+  const loadReceipt = async (paymentId: string) => {
+    setReceiptBusy(true);
+    try {
+      setReceipt(await api.membershipPaymentReceipt(paymentId));
+    } finally {
+      setReceiptBusy(false);
+    }
+  };
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -619,16 +705,18 @@ function AccountPanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (amountMinor > 0 && amountMinor <= remaining) {
-              onPay(selectedCharge, amountMinor, method, reference.trim() || undefined);
-              setChargeId(null);
-              setAmount("");
-              setReference("");
+              void onPay(selectedCharge, amountMinor, method, reference.trim() || undefined).then((payment) => {
+                setChargeId(null);
+                setAmount("");
+                setReference("");
+                void loadReceipt(payment.id);
+              });
             }
           }}
         >
           <div className="grid gap-2 sm:grid-cols-2">
             <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" aria-label="Monto" className={fieldClass} />
-            <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)} className={fieldClass}>
+            <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)} aria-label="Método de pago" className={fieldClass}>
               <option value="cash">Efectivo</option>
               <option value="transfer">Transferencia</option>
               <option value="point">Point</option>
@@ -650,10 +738,43 @@ function AccountPanel({
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Pagos recientes</p>
           {account.payments.slice(0, 5).map((payment) => (
             <div key={payment.id} className="flex items-center justify-between gap-2 text-xs text-slate-600">
-              <span>{formatDateTime(payment.createdAt)} · {payment.paymentMethod}</span>
-              <span>{money(payment.amountMinor, account.currency)}</span>
+              <span>{formatDateTime(payment.createdAt)} · {payment.paymentMethod} · {payment.receiptNumber}</span>
+              <div className="flex items-center gap-2">
+                <span>{money(payment.amountMinor, account.currency)}</span>
+                <button
+                  type="button"
+                  disabled={receiptBusy}
+                  onClick={() => void loadReceipt(payment.id)}
+                  className="rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Recibo
+                </button>
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {receipt && (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-900">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Recibo {receipt.receiptNumber}</p>
+              <p>{receipt.gymName} · {formatDateTime(receipt.createdAt)}</p>
+              <p className="mt-2">{receipt.memberName} ({receipt.memberNumber})</p>
+              <p>{receipt.chargeDescription}</p>
+              <p className="mt-1 font-semibold">{money(receipt.amountMinor, receipt.currency)} · {receipt.paymentMethod}</p>
+              {receipt.receivedByName && <p>Recibido por {receipt.receivedByName}</p>}
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => printReceipt(receipt)} className={secondaryButton}>
+                Imprimir
+              </button>
+              <button type="button" onClick={() => setReceipt(null)} className="text-xs text-emerald-800 hover:underline">
+                Cerrar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -830,6 +951,16 @@ function ProspectsTab() {
   );
 }
 
+const weekDays = [
+  ["mon", "Lun"],
+  ["tue", "Mar"],
+  ["wed", "Mié"],
+  ["thu", "Jue"],
+  ["fri", "Vie"],
+  ["sat", "Sáb"],
+  ["sun", "Dom"],
+] as const;
+
 function PlansTab() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<MembershipPlan | null>(null);
@@ -838,6 +969,11 @@ function PlansTab() {
   const [durationDays, setDurationDays] = useState("30");
   const [price, setPrice] = useState("");
   const [graceDays, setGraceDays] = useState("0");
+  const [accessDays, setAccessDays] = useState<string[]>(weekDays.map(([value]) => value));
+  const [accessStart, setAccessStart] = useState("06:00");
+  const [accessEnd, setAccessEnd] = useState("22:00");
+  const [minAge, setMinAge] = useState("");
+  const [maxAge, setMaxAge] = useState("");
 
   const plans = useQuery({
     queryKey: ["membership-plans"],
@@ -851,6 +987,11 @@ function PlansTab() {
     setDurationDays("30");
     setPrice("");
     setGraceDays("0");
+    setAccessDays(weekDays.map(([value]) => value));
+    setAccessStart("06:00");
+    setAccessEnd("22:00");
+    setMinAge("");
+    setMaxAge("");
   };
 
   const save = useMutation({
@@ -861,6 +1002,11 @@ function PlansTab() {
         durationDays: Number(durationDays),
         priceMinor: toMinor(price),
         graceDays: Number(graceDays),
+        accessDays: accessDays.join(","),
+        accessStartMinute: timeToMinute(accessStart),
+        accessEndMinute: timeToMinute(accessEnd),
+        minAge: minAge.trim() ? Number(minAge) : undefined,
+        maxAge: maxAge.trim() ? Number(maxAge) : undefined,
       };
       return editing
         ? api.updateMembershipPlan({ ...input, planId: editing.id, active: editing.active })
@@ -881,6 +1027,11 @@ function PlansTab() {
         durationDays: plan.durationDays,
         priceMinor: plan.priceMinor,
         graceDays: plan.graceDays,
+        accessDays: plan.accessDays,
+        accessStartMinute: plan.accessStartMinute,
+        accessEndMinute: plan.accessEndMinute,
+        minAge: plan.minAge ?? undefined,
+        maxAge: plan.maxAge ?? undefined,
         active: !plan.active,
       }),
     onSuccess: () => {
@@ -895,13 +1046,23 @@ function PlansTab() {
     setDurationDays(String(plan.durationDays));
     setPrice((plan.priceMinor / 100).toFixed(2));
     setGraceDays(String(plan.graceDays));
+    setAccessDays(plan.accessDays.split(","));
+    setAccessStart(minuteToTime(plan.accessStartMinute));
+    setAccessEnd(minuteToTime(plan.accessEndMinute));
+    setMinAge(plan.minAge === null ? "" : String(plan.minAge));
+    setMaxAge(plan.maxAge === null ? "" : String(plan.maxAge));
   };
 
   const valid =
     name.trim().length > 0 &&
     Number(durationDays) > 0 &&
     validMoney(price) &&
-    Number(graceDays) >= 0;
+    Number(graceDays) >= 0 &&
+    accessDays.length > 0 &&
+    timeToMinute(accessStart) < timeToMinute(accessEnd) &&
+    (!minAge.trim() || (Number(minAge) >= 0 && Number(minAge) <= 120)) &&
+    (!maxAge.trim() || (Number(maxAge) >= 0 && Number(maxAge) <= 120)) &&
+    (!minAge.trim() || !maxAge.trim() || Number(maxAge) >= Number(minAge));
   const error = save.error ?? toggle.error;
 
   return (
@@ -921,14 +1082,53 @@ function PlansTab() {
           <input value={description} onChange={(event) => setDescription(event.target.value)} className={fieldClass} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Días">
+          <Field label="Días de duración">
             <input value={durationDays} onChange={(event) => setDurationDays(event.target.value)} inputMode="numeric" className={fieldClass} />
           </Field>
           <Field label="Precio">
             <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" className={fieldClass} />
           </Field>
-          <Field label="Gracia">
+          <Field label="Días de gracia">
             <input value={graceDays} onChange={(event) => setGraceDays(event.target.value)} inputMode="numeric" className={fieldClass} />
+          </Field>
+        </div>
+        <Field label="Días de acceso">
+          <div className="flex flex-wrap gap-1.5">
+            {weekDays.map(([value, label]) => {
+              const checked = accessDays.includes(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={checked}
+                  onClick={() => setAccessDays((current) => checked ? current.filter((day) => day !== value) : [...current, value])}
+                  className={[
+                    "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition",
+                    checked
+                      ? "border-brand-300 bg-brand-50 text-brand-700"
+                      : "border-slate-300 text-slate-600 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Acceso desde">
+            <input type="time" value={accessStart} onChange={(event) => setAccessStart(event.target.value)} className={fieldClass} />
+          </Field>
+          <Field label="Acceso hasta">
+            <input type="time" value={accessEnd} onChange={(event) => setAccessEnd(event.target.value)} className={fieldClass} />
+          </Field>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Edad mínima (opcional)">
+            <input value={minAge} onChange={(event) => setMinAge(event.target.value)} inputMode="numeric" className={fieldClass} />
+          </Field>
+          <Field label="Edad máxima (opcional)">
+            <input value={maxAge} onChange={(event) => setMaxAge(event.target.value)} inputMode="numeric" className={fieldClass} />
           </Field>
         </div>
         {error && <p className="text-sm text-rose-700">{errorMessage(error)}</p>}
@@ -962,8 +1162,14 @@ function PlansTab() {
                     {!plan.active && <span className="ml-2 text-xs text-slate-400">Inactivo</span>}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {plan.durationDays} días · gracia {plan.graceDays} días
+                    v{plan.version} · {plan.durationDays} días · gracia {plan.graceDays} días
                     {plan.description ? ` · ${plan.description}` : ""}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {plan.accessDays.split(",").map(dayLabel).join(" ")} · {minuteToTime(plan.accessStartMinute)}–{minuteToTime(plan.accessEndMinute)}
+                    {plan.minAge !== null || plan.maxAge !== null
+                      ? ` · ${plan.minAge ?? 0}–${plan.maxAge ?? 120} años`
+                      : " · sin límite de edad"}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -1024,6 +1230,60 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <div className="mt-1">{children}</div>
     </label>
   );
+}
+
+function dayLabel(value: string): string {
+  return weekDays.find(([day]) => day === value)?.[1] ?? value;
+}
+
+function minuteToTime(minute: number): string {
+  const hours = Math.floor(minute / 60);
+  const minutes = minute % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function timeToMinute(value: string): number {
+  const [hours = 0, minutes = 0] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function printReceipt(receipt: MembershipPaymentReceipt) {
+  const printWindow = window.open("", "_blank", "width=420,height=640");
+  if (!printWindow) {
+    return;
+  }
+  const doc = printWindow.document;
+  doc.title = `Recibo ${receipt.receiptNumber}`;
+  const style = doc.createElement("style");
+  style.textContent = "body{font-family:ui-monospace,monospace;padding:24px;font-size:12px;line-height:1.5}h1{font-size:16px;margin:0 0 4px}p{margin:4px 0}.total{font-size:16px;font-weight:700;margin-top:12px}.muted{color:#555}";
+  doc.head.appendChild(style);
+  const title = doc.createElement("h1");
+  title.textContent = receipt.gymName;
+  doc.body.appendChild(title);
+  const lines = [
+    `Recibo ${receipt.receiptNumber}`,
+    formatDateTime(receipt.createdAt),
+    "",
+    `${receipt.memberName} (${receipt.memberNumber})`,
+    receipt.chargeDescription,
+    receipt.reference ? `Referencia: ${receipt.reference}` : "",
+    receipt.receivedByName ? `Recibido por: ${receipt.receivedByName}` : "",
+  ].filter(Boolean);
+  for (const line of lines) {
+    const paragraph = doc.createElement("p");
+    paragraph.textContent = line;
+    doc.body.appendChild(paragraph);
+  }
+  const total = doc.createElement("p");
+  total.className = "total";
+  total.textContent = `${money(receipt.amountMinor, receipt.currency)} · ${receipt.paymentMethod}`;
+  doc.body.appendChild(total);
+  const note = doc.createElement("p");
+  note.className = "muted";
+  note.textContent = "Comprobante no fiscal.";
+  doc.body.appendChild(note);
+  printWindow.focus();
+  printWindow.setTimeout(() => printWindow.print(), 50);
 }
 
 function money(minor: number, currency = "MXN"): string {

@@ -27,6 +27,7 @@ import type {
   Membership,
   MembershipDashboard,
   MembershipPayment,
+  MembershipPaymentReceipt,
   MembershipPlan,
   OpenCashSessionInput,
   PaymentCharge,
@@ -122,6 +123,8 @@ export const api = {
     invoke<MemberAccount>("member_account", { memberId }),
   recordMembershipPayment: (input: RecordMembershipPaymentInput) =>
     invoke<MembershipPayment>("record_membership_payment", { input }),
+  membershipPaymentReceipt: (paymentId: string) =>
+    invoke<MembershipPaymentReceipt>("membership_payment_receipt", { paymentId }),
   simulateAccess: (request: AccessRequest) =>
     invoke<AccessDecision>("simulate_access", { request }),
   listAccessEvents: (limit = 20) =>
