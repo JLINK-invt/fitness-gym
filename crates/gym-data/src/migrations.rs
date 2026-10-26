@@ -196,4 +196,60 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_sync_outbox_pending; \
                DROP TABLE IF EXISTS sync_outbox;",
     },
+    Migration {
+        version: 17,
+        name: "members",
+        up: include_str!("../migrations/0017_members.sql"),
+        down: "DROP TRIGGER IF EXISTS membership_payments_no_delete; \
+               DROP TRIGGER IF EXISTS membership_payments_no_update; \
+               DROP INDEX IF EXISTS idx_membership_payments_charge; \
+               DROP INDEX IF EXISTS idx_membership_payments_member_created; \
+               DROP TABLE IF EXISTS membership_payments; \
+               DROP TRIGGER IF EXISTS membership_charges_no_delete; \
+               DROP TRIGGER IF EXISTS membership_charges_immutable_terms; \
+               DROP INDEX IF EXISTS idx_membership_charges_membership; \
+               DROP INDEX IF EXISTS idx_membership_charges_member_status; \
+               DROP TABLE IF EXISTS membership_charges; \
+               DROP TRIGGER IF EXISTS membership_events_no_delete; \
+               DROP TRIGGER IF EXISTS membership_events_no_update; \
+               DROP INDEX IF EXISTS idx_membership_events_membership; \
+               DROP TABLE IF EXISTS membership_events; \
+               DROP INDEX IF EXISTS idx_memberships_member_created; \
+               DROP INDEX IF EXISTS idx_memberships_organization_end; \
+               DROP INDEX IF EXISTS idx_memberships_one_current; \
+               DROP TABLE IF EXISTS memberships; \
+               DROP INDEX IF EXISTS idx_prospects_organization_status; \
+               DROP TABLE IF EXISTS prospects; \
+               DROP INDEX IF EXISTS idx_members_organization_status; \
+               DROP INDEX IF EXISTS idx_members_organization_name; \
+               DROP TABLE IF EXISTS members; \
+               DROP TABLE IF EXISTS membership_plans;",
+    },
+    Migration {
+        version: 18,
+        name: "membership_plan_rules",
+        up: include_str!("../migrations/0018_membership_plan_rules.sql"),
+        down: "DROP INDEX IF EXISTS idx_cash_movements_membership_payment; \
+               ALTER TABLE cash_movements DROP COLUMN membership_payment_id; \
+               DROP INDEX IF EXISTS idx_membership_payments_receipt; \
+               ALTER TABLE membership_payments DROP COLUMN cash_session_id; \
+               ALTER TABLE membership_payments DROP COLUMN receipt_number; \
+               ALTER TABLE memberships DROP COLUMN max_age; \
+               ALTER TABLE memberships DROP COLUMN min_age; \
+               ALTER TABLE memberships DROP COLUMN access_end_minute; \
+               ALTER TABLE memberships DROP COLUMN access_start_minute; \
+               ALTER TABLE memberships DROP COLUMN access_days; \
+               ALTER TABLE memberships DROP COLUMN plan_version; \
+               ALTER TABLE memberships DROP COLUMN plan_version_id; \
+               DROP TRIGGER IF EXISTS membership_plan_versions_no_delete; \
+               DROP TRIGGER IF EXISTS membership_plan_versions_no_update; \
+               DROP INDEX IF EXISTS idx_membership_plan_versions_plan; \
+               DROP TABLE IF EXISTS membership_plan_versions; \
+               ALTER TABLE membership_plans DROP COLUMN max_age; \
+               ALTER TABLE membership_plans DROP COLUMN min_age; \
+               ALTER TABLE membership_plans DROP COLUMN access_end_minute; \
+               ALTER TABLE membership_plans DROP COLUMN access_start_minute; \
+               ALTER TABLE membership_plans DROP COLUMN access_days; \
+               ALTER TABLE membership_plans DROP COLUMN current_version;",
+    },
 ];

@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.11.0";
+export const CONTRACT_VERSION = "2.13.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -65,6 +65,7 @@ export type Permission =
   | "manageInventory"
   | "manageCatalog"
   | "manageBackups"
+  | "manageMembers"
   | "viewAudit";
 
 export interface SetupState {
@@ -188,6 +189,271 @@ export interface AddCatalogPriceInput {
 }
 
 export type PaymentMethod = "cash" | "transfer" | "point";
+
+export type MemberStatus = "active" | "inactive" | "archived";
+
+export type ProspectStatus = "new" | "contacted" | "trial" | "converted" | "lost";
+
+export type MembershipStatus =
+  | "scheduled"
+  | "active"
+  | "paused"
+  | "expired"
+  | "cancelled";
+
+export type MembershipChargeStatus = "pending" | "paid" | "void";
+
+export interface MembershipPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  durationDays: number;
+  priceMinor: number;
+  currency: string;
+  graceDays: number;
+  version: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Member {
+  id: string;
+  memberNumber: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  email: string | null;
+  birthDate: string | null;
+  status: MemberStatus;
+  joinedAt: string;
+  notes: string | null;
+  activeMembership: Membership | null;
+  debtMinor: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Membership {
+  id: string;
+  memberId: string;
+  memberName: string;
+  planId: string;
+  planName: string;
+  planVersion: number;
+  planVersionId: string;
+  status: MembershipStatus;
+  startDate: string;
+  endDate: string;
+  priceMinor: number;
+  currency: string;
+  graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
+  pausedAt: string | null;
+  pauseUntil: string | null;
+  cancellationReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Prospect {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  source: string | null;
+  status: ProspectStatus;
+  notes: string | null;
+  convertedMemberId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MembershipCharge {
+  id: string;
+  membershipId: string;
+  memberId: string;
+  description: string;
+  amountMinor: number;
+  currency: string;
+  dueDate: string;
+  status: MembershipChargeStatus;
+  paidMinor: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MembershipPayment {
+  id: string;
+  chargeId: string;
+  membershipId: string;
+  memberId: string;
+  amountMinor: number;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+  receiptNumber: string;
+  cashSessionId: string | null;
+  receivedBy: string | null;
+  receivedByName: string | null;
+  createdAt: string;
+}
+
+export interface MembershipPaymentReceipt {
+  paymentId: string;
+  receiptNumber: string;
+  gymName: string;
+  memberNumber: string;
+  memberName: string;
+  chargeDescription: string;
+  amountMinor: number;
+  currency: string;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+  receivedByName: string | null;
+  createdAt: string;
+}
+
+export interface MembershipDashboardTrendPoint {
+  month: string;
+  newMembers: number;
+  renewals: number;
+  cancellations: number;
+  incomeMinor: number;
+}
+
+export interface MemberAccount {
+  memberId: string;
+  currency: string;
+  charges: MembershipCharge[];
+  payments: MembershipPayment[];
+  balanceMinor: number;
+}
+
+export interface MembershipDashboard {
+  periodStart: string;
+  periodEnd: string;
+  timezone: string;
+  activeMembers: number;
+  activeMemberships: number;
+  expiringSoon: number;
+  pastDue: number;
+  debtMinor: number;
+  newMembersThisMonth: number;
+  incomeThisMonthMinor: number;
+  renewalsThisMonth: number;
+  cancellationsThisMonth: number;
+  trend: MembershipDashboardTrendPoint[];
+  recentPayments: MembershipPaymentReceipt[];
+  expiringMemberships: Membership[];
+}
+
+export interface CreateMemberInput {
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  email?: string;
+  birthDate?: string;
+  notes?: string;
+}
+
+export interface UpdateMemberInput {
+  memberId: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  email?: string;
+  birthDate?: string;
+  status: MemberStatus;
+  notes?: string;
+}
+
+export interface CreateMembershipPlanInput {
+  name: string;
+  description?: string;
+  durationDays: number;
+  priceMinor: number;
+  graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge?: number;
+  maxAge?: number;
+}
+
+export interface UpdateMembershipPlanInput {
+  planId: string;
+  name: string;
+  description?: string;
+  durationDays: number;
+  priceMinor: number;
+  graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge?: number;
+  maxAge?: number;
+  active: boolean;
+}
+
+export interface CreateProspectInput {
+  name: string;
+  phone?: string;
+  email?: string;
+  source?: string;
+  notes?: string;
+}
+
+export interface UpdateProspectInput {
+  prospectId: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  source?: string;
+  status: ProspectStatus;
+  notes?: string;
+}
+
+export interface CreateMembershipInput {
+  memberId: string;
+  planId: string;
+  startDate?: string;
+}
+
+export interface RenewMembershipInput {
+  membershipId: string;
+  planId?: string;
+}
+
+export interface PauseMembershipInput {
+  membershipId: string;
+  untilDate: string;
+}
+
+export interface ResumeMembershipInput {
+  membershipId: string;
+}
+
+export interface CancelMembershipInput {
+  membershipId: string;
+  reason: string;
+}
+
+export interface RecordMembershipPaymentInput {
+  chargeId: string;
+  amountMinor: number;
+  paymentMethod: PaymentMethod;
+  reference?: string;
+  idempotencyKey: string;
+}
 
 export interface SaleItemInput {
   variantId: string;

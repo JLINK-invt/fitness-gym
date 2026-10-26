@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.11.0";
+pub const CONTRACT_VERSION: &str = "2.13.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,6 +302,363 @@ pub enum PaymentMethod {
     Cash,
     Transfer,
     Point,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MemberStatus {
+    Active,
+    Inactive,
+    Archived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProspectStatus {
+    New,
+    Contacted,
+    Trial,
+    Converted,
+    Lost,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MembershipStatus {
+    Scheduled,
+    Active,
+    Paused,
+    Expired,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MembershipChargeStatus {
+    Pending,
+    Paid,
+    Void,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipPlan {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub duration_days: i64,
+    pub price_minor: i64,
+    pub currency: String,
+    pub grace_days: i64,
+    pub version: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    pub id: String,
+    pub member_number: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub birth_date: Option<String>,
+    pub status: MemberStatus,
+    pub joined_at: String,
+    pub notes: Option<String>,
+    pub active_membership: Option<Membership>,
+    pub debt_minor: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    pub id: String,
+    pub member_id: String,
+    pub member_name: String,
+    pub plan_id: String,
+    pub plan_name: String,
+    pub plan_version: i64,
+    pub plan_version_id: String,
+    pub status: MembershipStatus,
+    pub start_date: String,
+    pub end_date: String,
+    pub price_minor: i64,
+    pub currency: String,
+    pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
+    pub paused_at: Option<String>,
+    pub pause_until: Option<String>,
+    pub cancellation_reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prospect {
+    pub id: String,
+    pub name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub source: Option<String>,
+    pub status: ProspectStatus,
+    pub notes: Option<String>,
+    pub converted_member_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipCharge {
+    pub id: String,
+    pub membership_id: String,
+    pub member_id: String,
+    pub description: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub due_date: String,
+    pub status: MembershipChargeStatus,
+    pub paid_minor: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipPayment {
+    pub id: String,
+    pub charge_id: String,
+    pub membership_id: String,
+    pub member_id: String,
+    pub amount_minor: i64,
+    pub payment_method: PaymentMethod,
+    pub reference: Option<String>,
+    pub receipt_number: String,
+    pub cash_session_id: Option<String>,
+    pub received_by: Option<String>,
+    pub received_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipPaymentReceipt {
+    pub payment_id: String,
+    pub receipt_number: String,
+    pub gym_name: String,
+    pub member_number: String,
+    pub member_name: String,
+    pub charge_description: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub payment_method: PaymentMethod,
+    pub reference: Option<String>,
+    pub received_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipDashboardTrendPoint {
+    pub month: String,
+    pub new_members: i64,
+    pub renewals: i64,
+    pub cancellations: i64,
+    pub income_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberAccount {
+    pub member_id: String,
+    pub currency: String,
+    pub charges: Vec<MembershipCharge>,
+    pub payments: Vec<MembershipPayment>,
+    pub balance_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipDashboard {
+    pub period_start: String,
+    pub period_end: String,
+    pub timezone: String,
+    pub active_members: i64,
+    pub active_memberships: i64,
+    pub expiring_soon: i64,
+    pub past_due: i64,
+    pub debt_minor: i64,
+    pub new_members_this_month: i64,
+    pub income_this_month_minor: i64,
+    pub renewals_this_month: i64,
+    pub cancellations_this_month: i64,
+    pub trend: Vec<MembershipDashboardTrendPoint>,
+    pub recent_payments: Vec<MembershipPaymentReceipt>,
+    pub expiring_memberships: Vec<Membership>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMemberInput {
+    pub first_name: String,
+    pub last_name: String,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub birth_date: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemberInput {
+    pub member_id: String,
+    pub first_name: String,
+    pub last_name: String,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub birth_date: Option<String>,
+    pub status: MemberStatus,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMembershipPlanInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub duration_days: i64,
+    pub price_minor: i64,
+    pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    #[serde(default)]
+    pub min_age: Option<i64>,
+    #[serde(default)]
+    pub max_age: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMembershipPlanInput {
+    pub plan_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub duration_days: i64,
+    pub price_minor: i64,
+    pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    #[serde(default)]
+    pub min_age: Option<i64>,
+    #[serde(default)]
+    pub max_age: Option<i64>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateProspectInput {
+    pub name: String,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProspectInput {
+    pub prospect_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    pub status: ProspectStatus,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMembershipInput {
+    pub member_id: String,
+    pub plan_id: String,
+    #[serde(default)]
+    pub start_date: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenewMembershipInput {
+    pub membership_id: String,
+    #[serde(default)]
+    pub plan_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PauseMembershipInput {
+    pub membership_id: String,
+    pub until_date: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeMembershipInput {
+    pub membership_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelMembershipInput {
+    pub membership_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordMembershipPaymentInput {
+    pub charge_id: String,
+    pub amount_minor: i64,
+    pub payment_method: PaymentMethod,
+    #[serde(default)]
+    pub reference: Option<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

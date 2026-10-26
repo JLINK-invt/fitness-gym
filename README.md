@@ -14,12 +14,12 @@ suscripciones separadas quedan fuera de la V1.
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v16 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v18 |
 | Acceso simulado con evento idempotente | Oculto en la UI; el backend se conserva para Phase 4 |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
 | Recuperación del dueño | Operativo: código de un solo uso, sin correo ni autenticador |
-| RBAC por rol en comandos Tauri | Operativo para auth, personal, catálogo, ventas, caja e inventario |
+| RBAC por rol en comandos Tauri | Operativo para auth, personal, socios, catálogo, ventas, caja e inventario |
 | Personal | Operativo: crear accesos, cambiar rol y desactivar/reactivar con auditoría |
 | Auditoría inmutable | Operativo: append-only, hash chain y verificación de integridad |
 | Catálogo, precios e impuestos | Operativo: productos, variantes, precios versionados y archivo lógico |
@@ -28,16 +28,17 @@ suscripciones separadas quedan fuera de la V1.
 | Inventario y valoración | Operativo: entradas, ajustes, umbrales y valoración por costo promedio |
 | Panel operativo | Operativo: existencias, valor, alertas de mínimo y rotación básica |
 | Journal de sincronización | Operativo en local: outbox transaccional, inbox idempotente y motor con fake server; transporte real pendiente |
-| Suscripciones V1 | Diferidas; se unifican con membresías de socios en Phase 4 |
-| CRM básico, socios y membresías | Misma versión desktop, Fase 4 |
+| Suscripciones V1 | Diferidas; se unifican con membresías de socios en Fase 4 |
+| CRM básico, socios y membresías | Operativo: prospectos, socios, planes, membresías, cargos y pagos |
 | Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 30 comprobaciones en verde con IPC simulado |
+| Smoke E2E de interfaz | 35 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 entrega un código de recuperación, exige login, administra accesos del equipo con
 permisos revalidados en Rust,
 registra auditoría append-only con hash chain, administra el catálogo con precios
-versionados, abre y cierra turnos de caja, registra ingresos y gastos con evidencia, cobra ventas con snapshot de precio,
+versionados, administra prospectos, socios, planes y membresías con cargos y pagos,
+abre y cierra turnos de caja, registra ingresos y gastos con evidencia, cobra ventas con snapshot de precio,
 registra devoluciones parciales contra el ledger inmutable, controla inventario por
 movimientos append-only, muestra un panel con alertas de mínimo y rotación básica,
 y crea snapshots cifrados. Funciona sin Internet. Solo se admite un gimnasio por
@@ -123,6 +124,8 @@ npx -y @playwright/cli@latest run-code --filename=apps/gym-desktop/e2e/smoke.js
 El script cubre primer arranque con dueño, health, validación de frase, creación
 de backup, rechazo de frase incorrecta, restauración y cierre de sesión. También crea un producto con precio
 inicial, una nueva versión de precio y una segunda variante, además de un cajero.
+En socios crea un plan, da de alta a un socio, asigna membresía, cobra el cargo y
+convierte un prospecto en socio.
 Comprueba que el cajero no ve módulos administrativos, registra un gasto de caja,
 cobra una venta, cierra el turno con una diferencia justificada, verifica la
 cadena de auditoría, confirma que una cuenta desactivada ya no puede iniciar

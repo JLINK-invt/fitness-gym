@@ -22,6 +22,7 @@ pub enum Permission {
     ManageInventory,
     ManageCatalog,
     ManageBackups,
+    ManageMembers,
     ViewAudit,
 }
 
@@ -46,6 +47,7 @@ impl Permission {
             Permission::ManageInventory => "manageInventory",
             Permission::ManageCatalog => "manageCatalog",
             Permission::ManageBackups => "manageBackups",
+            Permission::ManageMembers => "manageMembers",
             Permission::ViewAudit => "viewAudit",
         }
     }
@@ -53,7 +55,7 @@ impl Permission {
 
 pub const V1_ROLES: [Role; 4] = [Role::Owner, Role::Manager, Role::Cashier, Role::Accounting];
 
-pub const V1_PERMISSIONS: [Permission; 8] = [
+pub const V1_PERMISSIONS: [Permission; 9] = [
     Permission::ManageSettings,
     Permission::ManageStaff,
     Permission::ViewFinance,
@@ -61,6 +63,7 @@ pub const V1_PERMISSIONS: [Permission; 8] = [
     Permission::ManageInventory,
     Permission::ManageCatalog,
     Permission::ManageBackups,
+    Permission::ManageMembers,
     Permission::ViewAudit,
 ];
 
@@ -76,6 +79,7 @@ pub fn permissions_for(role: Role) -> &'static [Permission] {
             Permission::ManageInventory,
             Permission::ManageCatalog,
             Permission::ManageBackups,
+            Permission::ManageMembers,
             Permission::ViewAudit,
         ],
         Role::Manager => &[
@@ -85,9 +89,14 @@ pub fn permissions_for(role: Role) -> &'static [Permission] {
             Permission::ManageInventory,
             Permission::ManageCatalog,
             Permission::ManageBackups,
+            Permission::ManageMembers,
             Permission::ViewAudit,
         ],
-        Role::Cashier => &[Permission::OperatePos, Permission::ManageInventory],
+        Role::Cashier => &[
+            Permission::OperatePos,
+            Permission::ManageInventory,
+            Permission::ManageMembers,
+        ],
         Role::Accounting => &[Permission::ViewFinance, Permission::ViewAudit],
     }
 }
@@ -139,12 +148,17 @@ mod tests {
                 Permission::ManageInventory,
                 Permission::ManageCatalog,
                 Permission::ManageBackups,
+                Permission::ManageMembers,
                 Permission::ViewAudit,
             ]
         );
         assert_eq!(
             permissions_for(Role::Cashier),
-            &[Permission::OperatePos, Permission::ManageInventory]
+            &[
+                Permission::OperatePos,
+                Permission::ManageInventory,
+                Permission::ManageMembers,
+            ]
         );
         assert_eq!(
             permissions_for(Role::Accounting),

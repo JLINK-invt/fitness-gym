@@ -92,4 +92,43 @@ pub enum DataError {
 
     #[error("the inventory movement does not exist in this gym")]
     InventoryMovementNotFound,
+
+    #[error("a membership plan with that name already exists")]
+    MembershipPlanAlreadyExists,
+
+    #[error("the membership plan does not exist in this gym")]
+    MembershipPlanNotFound,
+
+    #[error("the member does not exist in this gym")]
+    MemberNotFound,
+
+    #[error("the member already has a current membership")]
+    MembershipAlreadyCurrent,
+
+    #[error("the membership does not exist in this gym")]
+    MembershipNotFound,
+
+    #[error("the membership cannot be changed from its current state")]
+    MembershipStateConflict,
+
+    #[error("the prospect does not exist in this gym")]
+    ProspectNotFound,
+
+    #[error("the prospect was already converted")]
+    ProspectAlreadyConverted,
+
+    #[error("the membership charge does not exist in this gym")]
+    MembershipChargeNotFound,
+
+    #[error("the membership charge is not payable")]
+    MembershipChargeNotPayable,
+
+    #[error("the membership payment does not exist in this gym")]
+    MembershipPaymentNotFound,
+
+    #[error("the payment exceeds the outstanding charge balance")]
+    MembershipPaymentExceedsBalance,
+
+    #[error("the idempotency key was already used with a different membership payment")]
+    MembershipPaymentIdempotencyConflict,
 }

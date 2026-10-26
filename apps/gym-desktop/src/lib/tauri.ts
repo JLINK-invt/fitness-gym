@@ -22,14 +22,24 @@ import type {
   InventoryItem,
   InventoryMovement,
   ListPaymentChargesInput,
+  Member,
+  MemberAccount,
+  Membership,
+  MembershipDashboard,
+  MembershipPayment,
+  MembershipPaymentReceipt,
+  MembershipPlan,
   OpenCashSessionInput,
   PaymentCharge,
+  Prospect,
   RecordCashMovementInput,
   RecordInventoryEntryInput,
-  UpdateInventoryThresholdInput,
+  RecordMembershipPaymentInput,
   RecoveryCode,
   RecoveryKit,
+  RenewMembershipInput,
   RestoreOutcome,
+  ResumeMembershipInput,
   Sale,
   SaleReturn,
   SessionSummary,
@@ -39,6 +49,16 @@ import type {
   StaffSummary,
   UpdateCatalogProductInput,
   UpdateCatalogVariantInput,
+  UpdateInventoryThresholdInput,
+  UpdateMemberInput,
+  UpdateMembershipPlanInput,
+  UpdateProspectInput,
+  CancelMembershipInput,
+  CreateMemberInput,
+  CreateMembershipInput,
+  CreateMembershipPlanInput,
+  CreateProspectInput,
+  PauseMembershipInput,
 } from "@gym/contracts";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -63,6 +83,48 @@ export const api = {
     invoke<StaffSummary>("create_staff", { name, role, password }),
   updateStaff: (userId: string, role: StaffRole, status: StaffStatus) =>
     invoke<StaffSummary>("update_staff", { userId, role, status }),
+  membershipDashboard: () =>
+    invoke<MembershipDashboard>("membership_dashboard"),
+  listMembershipPlans: () =>
+    invoke<MembershipPlan[]>("list_membership_plans"),
+  createMembershipPlan: (input: CreateMembershipPlanInput) =>
+    invoke<MembershipPlan>("create_membership_plan", { input }),
+  updateMembershipPlan: (input: UpdateMembershipPlanInput) =>
+    invoke<MembershipPlan>("update_membership_plan", { input }),
+  listMembers: (query?: string) =>
+    invoke<Member[]>("list_members", { query: query?.trim() || null }),
+  getMember: (memberId: string) =>
+    invoke<Member>("get_member", { memberId }),
+  createMember: (input: CreateMemberInput) =>
+    invoke<Member>("create_member", { input }),
+  updateMember: (input: UpdateMemberInput) =>
+    invoke<Member>("update_member", { input }),
+  listProspects: (query?: string) =>
+    invoke<Prospect[]>("list_prospects", { query: query?.trim() || null }),
+  createProspect: (input: CreateProspectInput) =>
+    invoke<Prospect>("create_prospect", { input }),
+  updateProspect: (input: UpdateProspectInput) =>
+    invoke<Prospect>("update_prospect", { input }),
+  convertProspect: (prospectId: string) =>
+    invoke<Member>("convert_prospect", { prospectId }),
+  listMemberships: (memberId: string) =>
+    invoke<Membership[]>("list_memberships", { memberId }),
+  createMembership: (input: CreateMembershipInput) =>
+    invoke<Membership>("create_membership", { input }),
+  renewMembership: (input: RenewMembershipInput) =>
+    invoke<Membership>("renew_membership", { input }),
+  pauseMembership: (input: PauseMembershipInput) =>
+    invoke<Membership>("pause_membership", { input }),
+  resumeMembership: (input: ResumeMembershipInput) =>
+    invoke<Membership>("resume_membership", { input }),
+  cancelMembership: (input: CancelMembershipInput) =>
+    invoke<Membership>("cancel_membership", { input }),
+  memberAccount: (memberId: string) =>
+    invoke<MemberAccount>("member_account", { memberId }),
+  recordMembershipPayment: (input: RecordMembershipPaymentInput) =>
+    invoke<MembershipPayment>("record_membership_payment", { input }),
+  membershipPaymentReceipt: (paymentId: string) =>
+    invoke<MembershipPaymentReceipt>("membership_payment_receipt", { paymentId }),
   simulateAccess: (request: AccessRequest) =>
     invoke<AccessDecision>("simulate_access", { request }),
   listAccessEvents: (limit = 20) =>
