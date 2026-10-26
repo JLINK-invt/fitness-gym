@@ -14,7 +14,7 @@ suscripciones separadas quedan fuera de la V1.
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v16 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v18 |
 | Acceso simulado con evento idempotente | Oculto en la UI; el backend se conserva para Phase 4 |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
