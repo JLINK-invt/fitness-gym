@@ -12,14 +12,15 @@ use gym_contracts::{
     CreateSaleReturnInput, ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput,
     HealthReport, HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
     ListPaymentChargesInput, Member, MemberAccount, MemberStatus, Membership, MembershipCharge,
-    MembershipChargeStatus, MembershipDashboard, MembershipPayment, MembershipPlan,
-    MembershipStatus, ModuleHealth, OpenCashSessionInput, PauseMembershipInput, PaymentCharge,
-    PaymentMethod, PaymentMethodTotal, ProductSalesTotal, Prospect, ProspectStatus,
-    RecordCashMovementInput, RecordInventoryEntryInput, RecordMembershipPaymentInput, RecoveryCode,
-    RecoveryKit, RenewMembershipInput, RestoreOutcome, ResumeMembershipInput, Sale, SaleItem,
-    SaleReturn, SaleReturnItem, SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary,
-    UpdateCatalogProductInput, UpdateCatalogVariantInput, UpdateInventoryThresholdInput,
-    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, CONTRACT_VERSION,
+    MembershipChargeStatus, MembershipDashboard, MembershipDashboardTrendPoint, MembershipPayment,
+    MembershipPaymentReceipt, MembershipPlan, MembershipStatus, ModuleHealth, OpenCashSessionInput,
+    PauseMembershipInput, PaymentCharge, PaymentMethod, PaymentMethodTotal, ProductSalesTotal,
+    Prospect, ProspectStatus, RecordCashMovementInput, RecordInventoryEntryInput,
+    RecordMembershipPaymentInput, RecoveryCode, RecoveryKit, RenewMembershipInput, RestoreOutcome,
+    ResumeMembershipInput, Sale, SaleItem, SaleReturn, SaleReturnItem, SessionSummary, SetupState,
+    StaffRole, StaffStatus, StaffSummary, UpdateCatalogProductInput, UpdateCatalogVariantInput,
+    UpdateInventoryThresholdInput, UpdateMemberInput, UpdateMembershipPlanInput,
+    UpdateProspectInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
@@ -36,8 +37,9 @@ use gym_data::{
     CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider,
     FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord, InventoryMovementRecord,
     KeyProvider, KeyringKeyProvider, MemberAccountRecord, MemberRecord, MembershipChargeRecord,
-    MembershipDashboardRecord, MembershipPaymentRecord, MembershipPlanRecord, MembershipRecord,
-    NewCashMovement, NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
+    MembershipDashboardRecord, MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord,
+    MembershipPaymentRecord, MembershipPlanRecord, MembershipRecord, NewCashMovement,
+    NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
     NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewMember,
     NewMembershipPayment, NewMembershipPlan, NewProspect, NewSale, NewSaleItem, NewSaleReturn,
     NewSaleReturnItem, PaymentChargeRecord, PaymentMethodTotalRecord, ProductSalesRecord,
@@ -450,6 +452,12 @@ fn membership_plan_summary(record: MembershipPlanRecord) -> MembershipPlan {
         price_minor: record.price_minor,
         currency: record.currency,
         grace_days: record.grace_days,
+        version: record.version,
+        access_days: record.access_days,
+        access_start_minute: record.access_start_minute,
+        access_end_minute: record.access_end_minute,
+        min_age: record.min_age,
+        max_age: record.max_age,
         active: record.active,
         created_at: record.created_at,
         updated_at: record.updated_at,
@@ -463,12 +471,19 @@ fn membership_summary(record: MembershipRecord) -> Membership {
         member_name: record.member_name,
         plan_id: record.plan_id,
         plan_name: record.plan_name,
+        plan_version: record.plan_version,
+        plan_version_id: record.plan_version_id,
         status: membership_status(&record.status),
         start_date: record.start_date,
         end_date: record.end_date,
         price_minor: record.price_minor,
         currency: record.currency,
         grace_days: record.grace_days,
+        access_days: record.access_days,
+        access_start_minute: record.access_start_minute,
+        access_end_minute: record.access_end_minute,
+        min_age: record.min_age,
+        max_age: record.max_age,
         paused_at: record.paused_at,
         pause_until: record.pause_until,
         cancellation_reason: record.cancellation_reason,
@@ -536,9 +551,42 @@ fn membership_payment_summary(record: MembershipPaymentRecord) -> MembershipPaym
         amount_minor: record.amount_minor,
         payment_method: payment_method(&record.payment_method),
         reference: record.reference,
+        receipt_number: record.receipt_number,
+        cash_session_id: record.cash_session_id,
         received_by: record.received_by,
         received_by_name: record.received_by_name,
         created_at: record.created_at,
+    }
+}
+
+fn membership_payment_receipt_summary(
+    record: MembershipPaymentReceiptRecord,
+) -> MembershipPaymentReceipt {
+    MembershipPaymentReceipt {
+        payment_id: record.payment_id,
+        receipt_number: record.receipt_number,
+        gym_name: record.gym_name,
+        member_number: record.member_number,
+        member_name: record.member_name,
+        charge_description: record.charge_description,
+        amount_minor: record.amount_minor,
+        currency: record.currency,
+        payment_method: payment_method(&record.payment_method),
+        reference: record.reference,
+        received_by_name: record.received_by_name,
+        created_at: record.created_at,
+    }
+}
+
+fn membership_trend_summary(
+    record: MembershipDashboardTrendRecord,
+) -> MembershipDashboardTrendPoint {
+    MembershipDashboardTrendPoint {
+        month: record.month,
+        new_members: record.new_members,
+        renewals: record.renewals,
+        cancellations: record.cancellations,
+        income_minor: record.income_minor,
     }
 }
 
@@ -562,12 +610,33 @@ fn member_account_summary(record: MemberAccountRecord) -> MemberAccount {
 
 fn membership_dashboard_summary(record: MembershipDashboardRecord) -> MembershipDashboard {
     MembershipDashboard {
+        period_start: record.period_start,
+        period_end: record.period_end,
+        timezone: record.timezone,
         active_members: record.active_members,
         active_memberships: record.active_memberships,
         expiring_soon: record.expiring_soon,
         past_due: record.past_due,
         debt_minor: record.debt_minor,
         new_members_this_month: record.new_members_this_month,
+        income_this_month_minor: record.income_this_month_minor,
+        renewals_this_month: record.renewals_this_month,
+        cancellations_this_month: record.cancellations_this_month,
+        trend: record
+            .trend
+            .into_iter()
+            .map(membership_trend_summary)
+            .collect(),
+        recent_payments: record
+            .recent_payments
+            .into_iter()
+            .map(membership_payment_receipt_summary)
+            .collect(),
+        expiring_memberships: record
+            .expiring_memberships
+            .into_iter()
+            .map(membership_summary)
+            .collect(),
     }
 }
 
@@ -1830,6 +1899,11 @@ fn create_membership_plan(
                 duration_days: input.duration_days,
                 price_minor: input.price_minor,
                 grace_days: input.grace_days,
+                access_days: input.access_days,
+                access_start_minute: input.access_start_minute,
+                access_end_minute: input.access_end_minute,
+                min_age: input.min_age,
+                max_age: input.max_age,
             },
         )
         .map_err(members_api_error)?;
@@ -1862,6 +1936,11 @@ fn update_membership_plan(
                 duration_days: input.duration_days,
                 price_minor: input.price_minor,
                 grace_days: input.grace_days,
+                access_days: input.access_days,
+                access_start_minute: input.access_start_minute,
+                access_end_minute: input.access_end_minute,
+                min_age: input.min_age,
+                max_age: input.max_age,
                 active: input.active,
             },
         )
@@ -2243,6 +2322,18 @@ fn record_membership_payment(
         Some(&payment.id),
     );
     Ok(membership_payment_summary(payment))
+}
+
+#[tauri::command]
+fn membership_payment_receipt(
+    payment_id: String,
+    state: State<'_, AppState>,
+) -> Result<MembershipPaymentReceipt, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.membership_payment_receipt(&session.organization_id, &payment_id)
+        .map(membership_payment_receipt_summary)
+        .map_err(members_api_error)
 }
 
 #[tauri::command]
@@ -3140,6 +3231,7 @@ pub fn run() {
             cancel_membership,
             member_account,
             record_membership_payment,
+            membership_payment_receipt,
             membership_dashboard,
             list_catalog,
             create_catalog_item,

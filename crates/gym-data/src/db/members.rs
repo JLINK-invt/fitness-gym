@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::Datelike;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
@@ -16,6 +18,12 @@ pub struct MembershipPlanRecord {
     pub price_minor: i64,
     pub currency: String,
     pub grace_days: i64,
+    pub version: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -28,6 +36,11 @@ pub struct NewMembershipPlan {
     pub duration_days: i64,
     pub price_minor: i64,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +50,11 @@ pub struct UpdateMembershipPlan {
     pub duration_days: i64,
     pub price_minor: i64,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
     pub active: bool,
 }
 
@@ -119,12 +137,19 @@ pub struct MembershipRecord {
     pub member_name: String,
     pub plan_id: String,
     pub plan_name: String,
+    pub plan_version: i64,
+    pub plan_version_id: String,
     pub status: String,
     pub start_date: String,
     pub end_date: String,
     pub price_minor: i64,
     pub currency: String,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
     pub paused_at: Option<String>,
     pub pause_until: Option<String>,
     pub cancellation_reason: Option<String>,
@@ -156,9 +181,36 @@ pub struct MembershipPaymentRecord {
     pub amount_minor: i64,
     pub payment_method: String,
     pub reference: Option<String>,
+    pub receipt_number: String,
+    pub cash_session_id: Option<String>,
     pub received_by: Option<String>,
     pub received_by_name: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipPaymentReceiptRecord {
+    pub payment_id: String,
+    pub receipt_number: String,
+    pub gym_name: String,
+    pub member_number: String,
+    pub member_name: String,
+    pub charge_description: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub payment_method: String,
+    pub reference: Option<String>,
+    pub received_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipDashboardTrendRecord {
+    pub month: String,
+    pub new_members: i64,
+    pub renewals: i64,
+    pub cancellations: i64,
+    pub income_minor: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,12 +224,21 @@ pub struct MemberAccountRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MembershipDashboardRecord {
+    pub period_start: String,
+    pub period_end: String,
+    pub timezone: String,
     pub active_members: i64,
     pub active_memberships: i64,
     pub expiring_soon: i64,
     pub past_due: i64,
     pub debt_minor: i64,
     pub new_members_this_month: i64,
+    pub income_this_month_minor: i64,
+    pub renewals_this_month: i64,
+    pub cancellations_this_month: i64,
+    pub trend: Vec<MembershipDashboardTrendRecord>,
+    pub recent_payments: Vec<MembershipPaymentReceiptRecord>,
+    pub expiring_memberships: Vec<MembershipRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +256,11 @@ struct ValidatedMembershipPlan {
     duration_days: i64,
     price_minor: i64,
     grace_days: i64,
+    access_days: String,
+    access_start_minute: i64,
+    access_end_minute: i64,
+    min_age: Option<i64>,
+    max_age: Option<i64>,
     active: bool,
 }
 
@@ -230,7 +296,8 @@ impl Db {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
                 "SELECT id, name, description, duration_days, price_minor, currency,
-                        grace_days, active, created_at, updated_at
+                        grace_days, current_version, access_days, access_start_minute,
+                        access_end_minute, min_age, max_age, active, created_at, updated_at
                  FROM membership_plans
                  WHERE organization_id = ?1
                  ORDER BY active DESC, price_minor, name COLLATE NOCASE",
@@ -268,8 +335,10 @@ impl Db {
             transaction.execute(
                 "INSERT INTO membership_plans
                      (id, organization_id, name, description, duration_days,
-                      price_minor, currency, grace_days, active, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                      price_minor, currency, grace_days, current_version, access_days,
+                      access_start_minute, access_end_minute, min_age, max_age,
+                      active, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
                 params![
                     id,
                     organization_id,
@@ -279,9 +348,23 @@ impl Db {
                     plan.price_minor,
                     currency,
                     plan.grace_days,
+                    plan.access_days,
+                    plan.access_start_minute,
+                    plan.access_end_minute,
+                    plan.min_age,
+                    plan.max_age,
                     i64::from(plan.active),
                     now
                 ],
+            )?;
+            insert_membership_plan_version(
+                &transaction,
+                organization_id,
+                &id,
+                1,
+                &plan,
+                &currency,
+                &now,
             )?;
             transaction.commit()?;
         }
@@ -306,17 +389,29 @@ impl Db {
                 &plan.name,
                 Some(plan_id),
             )?;
+            let existing = load_membership_plan(&transaction, organization_id, plan_id)?;
+            let version = existing.version + 1;
+            let currency = organization_currency(&transaction, organization_id)?;
             let changed = transaction.execute(
                 "UPDATE membership_plans
                  SET name = ?1, description = ?2, duration_days = ?3,
-                     price_minor = ?4, grace_days = ?5, active = ?6, updated_at = ?7
-                 WHERE organization_id = ?8 AND id = ?9",
+                     price_minor = ?4, grace_days = ?5, current_version = ?6,
+                     access_days = ?7, access_start_minute = ?8,
+                     access_end_minute = ?9, min_age = ?10, max_age = ?11,
+                     active = ?12, updated_at = ?13
+                 WHERE organization_id = ?14 AND id = ?15",
                 params![
                     plan.name,
                     plan.description,
                     plan.duration_days,
                     plan.price_minor,
                     plan.grace_days,
+                    version,
+                    plan.access_days,
+                    plan.access_start_minute,
+                    plan.access_end_minute,
+                    plan.min_age,
+                    plan.max_age,
                     i64::from(plan.active),
                     now,
                     organization_id,
@@ -326,6 +421,15 @@ impl Db {
             if changed == 0 {
                 return Err(DataError::MembershipPlanNotFound);
             }
+            insert_membership_plan_version(
+                &transaction,
+                organization_id,
+                plan_id,
+                version,
+                &plan,
+                &currency,
+                &now,
+            )?;
             transaction.commit()?;
         }
         self.membership_plan(organization_id, plan_id)
@@ -693,9 +797,12 @@ impl Db {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
                 "SELECT m.id, m.member_id, TRIM(mem.first_name || ' ' || mem.last_name),
-                        m.plan_id, m.plan_name, m.status, m.start_date, m.end_date,
-                        m.price_minor, m.currency, m.grace_days, m.paused_at,
-                        m.pause_until, m.cancellation_reason, m.created_at, m.updated_at
+                        m.plan_id, m.plan_name, m.plan_version, m.plan_version_id,
+                        m.status, m.start_date, m.end_date,
+                        m.price_minor, m.currency, m.grace_days, m.access_days,
+                        m.access_start_minute, m.access_end_minute, m.min_age, m.max_age,
+                        m.paused_at, m.pause_until, m.cancellation_reason,
+                        m.created_at, m.updated_at
                  FROM memberships m
                  JOIN members mem
                    ON mem.organization_id = m.organization_id AND mem.id = m.member_id
@@ -749,6 +856,9 @@ impl Db {
                     "the membership plan is not active".into(),
                 ));
             }
+            ensure_plan_eligibility(&plan, &member, start)?;
+            let plan_version_id =
+                load_plan_version_id(&transaction, organization_id, &plan.id, plan.version)?;
             let current: bool = transaction.query_row(
                 "SELECT EXISTS(
                      SELECT 1 FROM memberships
@@ -769,22 +879,32 @@ impl Db {
             };
             transaction.execute(
                 "INSERT INTO memberships
-                     (id, organization_id, member_id, plan_id, plan_name, status,
-                      start_date, end_date, price_minor, currency, grace_days,
+                     (id, organization_id, member_id, plan_id, plan_name,
+                      plan_version, plan_version_id, status, start_date, end_date,
+                      price_minor, currency, grace_days, access_days,
+                      access_start_minute, access_end_minute, min_age, max_age,
                       created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                         ?14, ?15, ?16, ?17, ?18, ?19, ?19)",
                 params![
                     membership_id,
                     organization_id,
                     member_id,
                     plan.id,
                     plan.name,
+                    plan.version,
+                    plan_version_id,
                     status,
                     date_string(start),
                     date_string(end),
                     plan.price_minor,
                     plan.currency,
                     plan.grace_days,
+                    plan.access_days,
+                    plan.access_start_minute,
+                    plan.access_end_minute,
+                    plan.min_age,
+                    plan.max_age,
                     now
                 ],
             )?;
@@ -823,6 +943,8 @@ impl Db {
                     "membershipId": membership_id,
                     "memberId": member_id,
                     "planId": plan.id,
+                    "planVersion": plan.version,
+                    "planVersionId": plan_version_id,
                     "status": status,
                     "startDate": date_string(start),
                     "endDate": date_string(end),
@@ -863,6 +985,10 @@ impl Db {
             }
             let current_end = parse_date(&membership.end_date, "membership end date")?;
             let period_start = std::cmp::max(today(), current_end + chrono::TimeDelta::days(1));
+            let member = load_member_base(&transaction, organization_id, &membership.member_id)?;
+            ensure_plan_eligibility(&plan, &member, period_start)?;
+            let plan_version_id =
+                load_plan_version_id(&transaction, organization_id, &plan.id, plan.version)?;
             let end = period_start + chrono::TimeDelta::days(plan.duration_days - 1);
             let membership_start = parse_date(&membership.start_date, "membership start date")?;
             let status = if membership_start > today() {
@@ -872,19 +998,29 @@ impl Db {
             };
             transaction.execute(
                 "UPDATE memberships
-                 SET plan_id = ?1, plan_name = ?2, status = ?3, end_date = ?4,
-                     price_minor = ?5, currency = ?6, grace_days = ?7,
+                 SET plan_id = ?1, plan_name = ?2, plan_version = ?3,
+                     plan_version_id = ?4, status = ?5, end_date = ?6,
+                     price_minor = ?7, currency = ?8, grace_days = ?9,
+                     access_days = ?10, access_start_minute = ?11,
+                     access_end_minute = ?12, min_age = ?13, max_age = ?14,
                      paused_at = NULL, pause_until = NULL,
-                     cancellation_reason = NULL, updated_at = ?8
-                 WHERE organization_id = ?9 AND id = ?10",
+                     cancellation_reason = NULL, updated_at = ?15
+                 WHERE organization_id = ?16 AND id = ?17",
                 params![
                     plan.id,
                     plan.name,
+                    plan.version,
+                    plan_version_id,
                     status,
                     date_string(end),
                     plan.price_minor,
                     plan.currency,
                     plan.grace_days,
+                    plan.access_days,
+                    plan.access_start_minute,
+                    plan.access_end_minute,
+                    plan.min_age,
+                    plan.max_age,
                     now,
                     organization_id,
                     membership_id
@@ -928,6 +1064,8 @@ impl Db {
                     "membershipId": membership_id,
                     "memberId": membership.member_id,
                     "planId": plan.id,
+                    "planVersion": plan.version,
+                    "planVersionId": plan_version_id,
                     "status": status,
                     "startDate": date_string(period_start),
                     "endDate": date_string(end),
@@ -1219,12 +1357,19 @@ impl Db {
                     return Err(DataError::MembershipPaymentExceedsBalance);
                 }
                 let payment_id = uuid::Uuid::new_v4().to_string();
+                let receipt_number = next_membership_receipt_number(&transaction, organization_id)?;
+                let cash_session_id = if payment.payment_method == "cash" {
+                    Some(open_cash_session_id(&transaction, organization_id)?)
+                } else {
+                    None
+                };
                 transaction.execute(
                     "INSERT INTO membership_payments
                          (id, organization_id, charge_id, membership_id, member_id,
-                          amount_minor, payment_method, reference, idempotency_key,
-                          request_hash, received_by, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                          amount_minor, payment_method, reference, receipt_number,
+                          cash_session_id, idempotency_key, request_hash, received_by,
+                          created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     params![
                         payment_id,
                         organization_id,
@@ -1234,12 +1379,56 @@ impl Db {
                         payment.amount_minor,
                         payment.payment_method,
                         reference,
+                        receipt_number,
+                        cash_session_id,
                         idempotency_key,
                         request_hash,
                         received_by,
                         now
                     ],
                 )?;
+                if let Some(cash_session_id) = cash_session_id.as_deref() {
+                    let movement_id = uuid::Uuid::new_v4().to_string();
+                    let evidence = format!("Pago membresía {receipt_number}");
+                    transaction.execute(
+                        "INSERT INTO cash_movements
+                             (id, organization_id, cash_session_id, movement_type, category,
+                              amount_minor, payment_method, evidence, authorized_by,
+                              membership_payment_id, created_at)
+                         VALUES (?1, ?2, ?3, 'income', 'membership_payment', ?4, 'cash',
+                                 ?5, ?6, ?7, ?8)",
+                        params![
+                            movement_id,
+                            organization_id,
+                            cash_session_id,
+                            payment.amount_minor,
+                            evidence,
+                            received_by,
+                            payment_id,
+                            now
+                        ],
+                    )?;
+                    enqueue_sync_event(
+                        &transaction,
+                        organization_id,
+                        "cash.movement_recorded",
+                        "cash_movement",
+                        &movement_id,
+                        &format!("cash-movement:{movement_id}:created"),
+                        &serde_json::json!({
+                            "movementId": movement_id,
+                            "cashSessionId": cash_session_id,
+                            "movementType": "income",
+                            "category": "membership_payment",
+                            "amountMinor": payment.amount_minor,
+                            "paymentMethod": "cash",
+                            "membershipPaymentId": payment_id,
+                            "receiptNumber": receipt_number,
+                            "createdAt": now,
+                        }),
+                        &now,
+                    )?;
+                }
                 let paid_minor = charge.paid_minor + payment.amount_minor;
                 let status = if paid_minor == charge.amount_minor {
                     "paid"
@@ -1267,6 +1456,8 @@ impl Db {
                         "amountMinor": payment.amount_minor,
                         "paymentMethod": payment.payment_method,
                         "reference": reference,
+                        "receiptNumber": receipt_number,
+                        "cashSessionId": cash_session_id,
                         "receivedBy": received_by,
                         "createdAt": now,
                     }),
@@ -1287,7 +1478,8 @@ impl Db {
         self.with_connection(|conn| {
             conn.query_row(
                 "SELECT p.id, p.charge_id, p.membership_id, p.member_id, p.amount_minor,
-                        p.payment_method, p.reference, p.received_by, u.name, p.created_at
+                        p.payment_method, p.reference, p.receipt_number, p.cash_session_id,
+                        p.received_by, u.name, p.created_at
                  FROM membership_payments p
                  LEFT JOIN users u ON u.id = p.received_by
                  WHERE p.organization_id = ?1 AND p.id = ?2",
@@ -1296,6 +1488,16 @@ impl Db {
             )
             .optional()?
             .ok_or(DataError::MembershipPaymentNotFound)
+        })
+    }
+
+    pub fn membership_payment_receipt(
+        &self,
+        organization_id: &str,
+        payment_id: &str,
+    ) -> Result<MembershipPaymentReceiptRecord, DataError> {
+        self.with_connection(|conn| {
+            load_membership_payment_receipt(conn, organization_id, payment_id)
         })
     }
 
@@ -1308,6 +1510,13 @@ impl Db {
             let today = today();
             let month_start = chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
                 .ok_or_else(|| DataError::InvalidValue("invalid current date".into()))?;
+            let next_month = if today.month() == 12 {
+                chrono::NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+            }
+            .ok_or_else(|| DataError::InvalidValue("invalid current date".into()))?;
+            let period_end = next_month - chrono::TimeDelta::days(1);
             let soon = today + chrono::TimeDelta::days(7);
             let active_members: i64 = conn.query_row(
                 "SELECT count(*) FROM members
@@ -1343,17 +1552,66 @@ impl Db {
             )?;
             let new_members_this_month: i64 = conn.query_row(
                 "SELECT count(*) FROM members
-                 WHERE organization_id = ?1 AND joined_at >= ?2",
-                params![organization_id, date_string(month_start)],
+                 WHERE organization_id = ?1 AND joined_at >= ?2 AND joined_at < ?3",
+                params![
+                    organization_id,
+                    date_string(month_start),
+                    date_string(next_month)
+                ],
                 |row| row.get(0),
             )?;
+            let income_this_month_minor: i64 = conn.query_row(
+                "SELECT COALESCE(SUM(amount_minor), 0) FROM membership_payments
+                 WHERE organization_id = ?1 AND created_at >= ?2 AND created_at < ?3",
+                params![
+                    organization_id,
+                    date_string(month_start),
+                    date_string(next_month)
+                ],
+                |row| row.get(0),
+            )?;
+            let renewals_this_month: i64 = conn.query_row(
+                "SELECT count(*) FROM membership_events
+                 WHERE organization_id = ?1 AND event_type = 'renewed'
+                   AND created_at >= ?2 AND created_at < ?3",
+                params![
+                    organization_id,
+                    date_string(month_start),
+                    date_string(next_month)
+                ],
+                |row| row.get(0),
+            )?;
+            let cancellations_this_month: i64 = conn.query_row(
+                "SELECT count(*) FROM membership_events
+                 WHERE organization_id = ?1 AND event_type = 'cancelled'
+                   AND created_at >= ?2 AND created_at < ?3",
+                params![
+                    organization_id,
+                    date_string(month_start),
+                    date_string(next_month)
+                ],
+                |row| row.get(0),
+            )?;
+            let trend = dashboard_trend(conn, organization_id, month_start)?;
+            let recent_payments = load_recent_payment_receipts(conn, organization_id, 5)?;
+            let expiring_memberships =
+                load_expiring_memberships(conn, organization_id, today, soon, 5)?;
             Ok(MembershipDashboardRecord {
+                period_start: date_string(month_start),
+                period_end: date_string(period_end),
+                timezone: "UTC".into(),
                 active_members,
                 active_memberships,
                 expiring_soon,
                 past_due,
                 debt_minor,
                 new_members_this_month,
+                income_this_month_minor,
+                renewals_this_month,
+                cancellations_this_month,
+                trend,
+                recent_payments,
+                expiring_memberships,
             })
         })
     }
@@ -1381,13 +1639,189 @@ impl Db {
     }
 }
 
+fn dashboard_trend(
+    conn: &Connection,
+    organization_id: &str,
+    current_month_start: chrono::NaiveDate,
+) -> Result<Vec<MembershipDashboardTrendRecord>, DataError> {
+    let mut months = Vec::with_capacity(6);
+    let base =
+        current_month_start.year() * 12 + i32::try_from(current_month_start.month0()).unwrap_or(0);
+    for offset in (0..6).rev() {
+        let index = base - offset;
+        let year = index.div_euclid(12);
+        let month = u32::try_from(index.rem_euclid(12) + 1).unwrap_or(1);
+        let date = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+            .ok_or_else(|| DataError::InvalidValue("invalid trend month".into()))?;
+        months.push(date.format("%Y-%m").to_string());
+    }
+    let first = months
+        .first()
+        .ok_or_else(|| DataError::InvalidValue("invalid trend range".into()))?;
+
+    let mut new_members = HashMap::new();
+    {
+        let mut statement = conn.prepare(
+            "SELECT strftime('%Y-%m', joined_at), count(*) FROM members
+             WHERE organization_id = ?1 AND joined_at >= ?2
+             GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![organization_id, first], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (month, count) = row?;
+            new_members.insert(month, count);
+        }
+    }
+    let mut renewals = HashMap::new();
+    {
+        let mut statement = conn.prepare(
+            "SELECT strftime('%Y-%m', created_at), count(*) FROM membership_events
+             WHERE organization_id = ?1 AND event_type = 'renewed' AND created_at >= ?2
+             GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![organization_id, first], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (month, count) = row?;
+            renewals.insert(month, count);
+        }
+    }
+    let mut cancellations = HashMap::new();
+    {
+        let mut statement = conn.prepare(
+            "SELECT strftime('%Y-%m', created_at), count(*) FROM membership_events
+             WHERE organization_id = ?1 AND event_type = 'cancelled' AND created_at >= ?2
+             GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![organization_id, first], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (month, count) = row?;
+            cancellations.insert(month, count);
+        }
+    }
+    let mut income = HashMap::new();
+    {
+        let mut statement = conn.prepare(
+            "SELECT strftime('%Y-%m', created_at), COALESCE(SUM(amount_minor), 0)
+             FROM membership_payments
+             WHERE organization_id = ?1 AND created_at >= ?2
+             GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![organization_id, first], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (month, amount) = row?;
+            income.insert(month, amount);
+        }
+    }
+
+    Ok(months
+        .into_iter()
+        .map(|month| MembershipDashboardTrendRecord {
+            new_members: new_members.get(&month).copied().unwrap_or(0),
+            renewals: renewals.get(&month).copied().unwrap_or(0),
+            cancellations: cancellations.get(&month).copied().unwrap_or(0),
+            income_minor: income.get(&month).copied().unwrap_or(0),
+            month,
+        })
+        .collect())
+}
+
+fn load_recent_payment_receipts(
+    conn: &Connection,
+    organization_id: &str,
+    limit: i64,
+) -> Result<Vec<MembershipPaymentReceiptRecord>, DataError> {
+    let mut statement = conn.prepare(
+        "SELECT p.id, COALESCE(p.receipt_number, ''),
+                o.name, mem.member_number,
+                TRIM(mem.first_name || ' ' || mem.last_name),
+                c.description, p.amount_minor, c.currency, p.payment_method,
+                p.reference, u.name, p.created_at
+         FROM membership_payments p
+         JOIN organizations o ON o.id = p.organization_id
+         JOIN members mem
+           ON mem.organization_id = p.organization_id AND mem.id = p.member_id
+         JOIN membership_charges c
+           ON c.organization_id = p.organization_id AND c.id = p.charge_id
+         LEFT JOIN users u ON u.id = p.received_by
+         WHERE p.organization_id = ?1
+         ORDER BY p.created_at DESC LIMIT ?2",
+    )?;
+    let rows = statement
+        .query_map(
+            params![organization_id, limit.clamp(1, 20)],
+            map_membership_payment_receipt,
+        )?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DataError::from)?;
+    Ok(rows)
+}
+
+fn load_expiring_memberships(
+    conn: &Connection,
+    organization_id: &str,
+    today: chrono::NaiveDate,
+    soon: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<MembershipRecord>, DataError> {
+    let mut statement = conn.prepare(
+        "SELECT m.id, m.member_id, TRIM(mem.first_name || ' ' || mem.last_name),
+                m.plan_id, m.plan_name, m.plan_version, m.plan_version_id,
+                m.status, m.start_date, m.end_date,
+                m.price_minor, m.currency, m.grace_days, m.access_days,
+                m.access_start_minute, m.access_end_minute, m.min_age, m.max_age,
+                m.paused_at, m.pause_until, m.cancellation_reason,
+                m.created_at, m.updated_at
+         FROM memberships m
+         JOIN members mem
+           ON mem.organization_id = m.organization_id AND mem.id = m.member_id
+         WHERE m.organization_id = ?1 AND m.status = 'active'
+           AND m.end_date BETWEEN ?2 AND ?3
+         ORDER BY m.end_date, mem.last_name COLLATE NOCASE
+         LIMIT ?4",
+    )?;
+    let rows = statement
+        .query_map(
+            params![
+                organization_id,
+                date_string(today),
+                date_string(soon),
+                limit.clamp(1, 20)
+            ],
+            map_membership,
+        )?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DataError::from)?;
+    Ok(rows)
+}
+
 fn validate_membership_plan(plan: NewMembershipPlan) -> Result<ValidatedMembershipPlan, DataError> {
+    let min_age = validate_age(plan.min_age, "minimum age")?;
+    let max_age = validate_age(plan.max_age, "maximum age")?;
+    validate_age_range(min_age, max_age)?;
+    let access_start_minute =
+        validate_access_minute(plan.access_start_minute, "access start minute", 0, 1439)?;
+    let access_end_minute =
+        validate_access_minute(plan.access_end_minute, "access end minute", 1, 1440)?;
+    validate_access_window(access_start_minute, access_end_minute)?;
     Ok(ValidatedMembershipPlan {
         name: required_text(&plan.name, "plan name", 2, 80)?,
         description: normalize_optional_text(plan.description, 300, "description")?,
         duration_days: validate_duration(plan.duration_days)?,
         price_minor: validate_price(plan.price_minor)?,
         grace_days: validate_grace_days(plan.grace_days)?,
+        access_days: validate_access_days(&plan.access_days)?,
+        access_start_minute,
+        access_end_minute,
+        min_age,
+        max_age,
         active: true,
     })
 }
@@ -1395,12 +1829,25 @@ fn validate_membership_plan(plan: NewMembershipPlan) -> Result<ValidatedMembersh
 fn validate_membership_plan_update(
     plan: UpdateMembershipPlan,
 ) -> Result<ValidatedMembershipPlan, DataError> {
+    let min_age = validate_age(plan.min_age, "minimum age")?;
+    let max_age = validate_age(plan.max_age, "maximum age")?;
+    validate_age_range(min_age, max_age)?;
+    let access_start_minute =
+        validate_access_minute(plan.access_start_minute, "access start minute", 0, 1439)?;
+    let access_end_minute =
+        validate_access_minute(plan.access_end_minute, "access end minute", 1, 1440)?;
+    validate_access_window(access_start_minute, access_end_minute)?;
     Ok(ValidatedMembershipPlan {
         name: required_text(&plan.name, "plan name", 2, 80)?,
         description: normalize_optional_text(plan.description, 300, "description")?,
         duration_days: validate_duration(plan.duration_days)?,
         price_minor: validate_price(plan.price_minor)?,
         grace_days: validate_grace_days(plan.grace_days)?,
+        access_days: validate_access_days(&plan.access_days)?,
+        access_start_minute,
+        access_end_minute,
+        min_age,
+        max_age,
         active: plan.active,
     })
 }
@@ -1433,6 +1880,117 @@ fn validate_grace_days(value: i64) -> Result<i64, DataError> {
             "grace days must be between 0 and 90".into(),
         ))
     }
+}
+
+fn validate_access_days(value: &str) -> Result<String, DataError> {
+    let mut days = Vec::new();
+    for day in value.split(',') {
+        let day = day.trim().to_ascii_lowercase();
+        if day.is_empty() {
+            continue;
+        }
+        if !matches!(
+            day.as_str(),
+            "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
+        ) {
+            return Err(DataError::InvalidValue(
+                "access days must use mon, tue, wed, thu, fri, sat or sun".into(),
+            ));
+        }
+        if !days.contains(&day) {
+            days.push(day);
+        }
+    }
+    if days.is_empty() {
+        return Err(DataError::InvalidValue(
+            "a plan must allow at least one access day".into(),
+        ));
+    }
+    Ok(days.join(","))
+}
+
+fn validate_access_minute(
+    value: i64,
+    field: &str,
+    minimum: i64,
+    maximum: i64,
+) -> Result<i64, DataError> {
+    if (minimum..=maximum).contains(&value) {
+        Ok(value)
+    } else {
+        Err(DataError::InvalidValue(format!(
+            "{field} must be between {minimum} and {maximum}"
+        )))
+    }
+}
+
+fn validate_age(value: Option<i64>, field: &str) -> Result<Option<i64>, DataError> {
+    match value {
+        Some(age) if !(0..=120).contains(&age) => Err(DataError::InvalidValue(format!(
+            "{field} must be between 0 and 120"
+        ))),
+        Some(age) => Ok(Some(age)),
+        None => Ok(None),
+    }
+}
+
+fn validate_access_window(start: i64, end: i64) -> Result<(), DataError> {
+    if start >= end {
+        return Err(DataError::InvalidValue(
+            "access start time must be before the end time".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_age_range(min_age: Option<i64>, max_age: Option<i64>) -> Result<(), DataError> {
+    if let (Some(min), Some(max)) = (min_age, max_age) {
+        if max < min {
+            return Err(DataError::InvalidValue(
+                "maximum age cannot be lower than minimum age".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn member_age_on(birth_date: &str, at: chrono::NaiveDate) -> Result<i64, DataError> {
+    let birth = parse_date(birth_date, "birth date")?;
+    if birth > at {
+        return Err(DataError::InvalidValue(
+            "birth date cannot be after the membership start date".into(),
+        ));
+    }
+    let mut age = at.year() - birth.year();
+    if (at.month(), at.day()) < (birth.month(), birth.day()) {
+        age -= 1;
+    }
+    Ok(i64::from(age))
+}
+
+fn ensure_plan_eligibility(
+    plan: &MembershipPlanRecord,
+    member: &MemberBase,
+    start: chrono::NaiveDate,
+) -> Result<(), DataError> {
+    if plan.min_age.is_none() && plan.max_age.is_none() {
+        return Ok(());
+    }
+    let birth_date = member.birth_date.as_deref().ok_or_else(|| {
+        DataError::InvalidValue("the member needs a birth date for this plan's age rules".into())
+    })?;
+    let age = member_age_on(birth_date, start)?;
+    if plan.min_age.is_some_and(|minimum| age < minimum) {
+        return Err(DataError::InvalidValue(
+            "the member does not meet the plan's minimum age".into(),
+        ));
+    }
+    if plan.max_age.is_some_and(|maximum| age > maximum) {
+        return Err(DataError::InvalidValue(
+            "the member exceeds the plan's maximum age".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_new_member(member: NewMember) -> Result<ValidatedMember, DataError> {
@@ -1563,6 +2121,59 @@ fn ensure_unique_membership_plan(
     }
 }
 
+fn insert_membership_plan_version(
+    transaction: &Transaction<'_>,
+    organization_id: &str,
+    plan_id: &str,
+    version: i64,
+    plan: &ValidatedMembershipPlan,
+    currency: &str,
+    now: &str,
+) -> Result<(), DataError> {
+    transaction.execute(
+        "INSERT INTO membership_plan_versions
+             (id, organization_id, plan_id, version, name, description, duration_days,
+              price_minor, currency, grace_days, access_days, access_start_minute,
+              access_end_minute, min_age, max_age, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            organization_id,
+            plan_id,
+            version,
+            plan.name,
+            plan.description,
+            plan.duration_days,
+            plan.price_minor,
+            currency,
+            plan.grace_days,
+            plan.access_days,
+            plan.access_start_minute,
+            plan.access_end_minute,
+            plan.min_age,
+            plan.max_age,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+fn load_plan_version_id(
+    conn: &Connection,
+    organization_id: &str,
+    plan_id: &str,
+    version: i64,
+) -> Result<String, DataError> {
+    conn.query_row(
+        "SELECT id FROM membership_plan_versions
+         WHERE organization_id = ?1 AND plan_id = ?2 AND version = ?3",
+        params![organization_id, plan_id, version],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| DataError::InvalidValue("membership plan version not found".into()))
+}
+
 fn load_membership_plan(
     conn: &Connection,
     organization_id: &str,
@@ -1570,7 +2181,8 @@ fn load_membership_plan(
 ) -> Result<MembershipPlanRecord, DataError> {
     conn.query_row(
         "SELECT id, name, description, duration_days, price_minor, currency,
-                grace_days, active, created_at, updated_at
+                grace_days, current_version, access_days, access_start_minute,
+                access_end_minute, min_age, max_age, active, created_at, updated_at
          FROM membership_plans
          WHERE organization_id = ?1 AND id = ?2",
         params![organization_id, plan_id],
@@ -1589,9 +2201,15 @@ fn map_membership_plan(row: &Row<'_>) -> rusqlite::Result<MembershipPlanRecord> 
         price_minor: row.get(4)?,
         currency: row.get(5)?,
         grace_days: row.get(6)?,
-        active: row.get::<_, i64>(7)? != 0,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        version: row.get(7)?,
+        access_days: row.get(8)?,
+        access_start_minute: row.get(9)?,
+        access_end_minute: row.get(10)?,
+        min_age: row.get(11)?,
+        max_age: row.get(12)?,
+        active: row.get::<_, i64>(13)? != 0,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
@@ -1646,9 +2264,12 @@ fn hydrate_member(
     let active_membership = conn
         .query_row(
             "SELECT m.id, m.member_id, TRIM(mem.first_name || ' ' || mem.last_name),
-                    m.plan_id, m.plan_name, m.status, m.start_date, m.end_date,
-                    m.price_minor, m.currency, m.grace_days, m.paused_at,
-                    m.pause_until, m.cancellation_reason, m.created_at, m.updated_at
+                    m.plan_id, m.plan_name, m.plan_version, m.plan_version_id,
+                    m.status, m.start_date, m.end_date,
+                    m.price_minor, m.currency, m.grace_days, m.access_days,
+                    m.access_start_minute, m.access_end_minute, m.min_age, m.max_age,
+                    m.paused_at, m.pause_until, m.cancellation_reason,
+                    m.created_at, m.updated_at
              FROM memberships m
              JOIN members mem
                ON mem.organization_id = m.organization_id AND mem.id = m.member_id
@@ -1724,17 +2345,24 @@ fn map_membership(row: &Row<'_>) -> rusqlite::Result<MembershipRecord> {
         member_name: row.get(2)?,
         plan_id: row.get(3)?,
         plan_name: row.get(4)?,
-        status: row.get(5)?,
-        start_date: row.get(6)?,
-        end_date: row.get(7)?,
-        price_minor: row.get(8)?,
-        currency: row.get(9)?,
-        grace_days: row.get(10)?,
-        paused_at: row.get(11)?,
-        pause_until: row.get(12)?,
-        cancellation_reason: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        plan_version: row.get(5)?,
+        plan_version_id: row.get(6)?,
+        status: row.get(7)?,
+        start_date: row.get(8)?,
+        end_date: row.get(9)?,
+        price_minor: row.get(10)?,
+        currency: row.get(11)?,
+        grace_days: row.get(12)?,
+        access_days: row.get(13)?,
+        access_start_minute: row.get(14)?,
+        access_end_minute: row.get(15)?,
+        min_age: row.get(16)?,
+        max_age: row.get(17)?,
+        paused_at: row.get(18)?,
+        pause_until: row.get(19)?,
+        cancellation_reason: row.get(20)?,
+        created_at: row.get(21)?,
+        updated_at: row.get(22)?,
     })
 }
 
@@ -1745,9 +2373,12 @@ fn load_membership(
 ) -> Result<MembershipRecord, DataError> {
     conn.query_row(
         "SELECT m.id, m.member_id, TRIM(mem.first_name || ' ' || mem.last_name),
-                m.plan_id, m.plan_name, m.status, m.start_date, m.end_date,
-                m.price_minor, m.currency, m.grace_days, m.paused_at,
-                m.pause_until, m.cancellation_reason, m.created_at, m.updated_at
+                m.plan_id, m.plan_name, m.plan_version, m.plan_version_id,
+                m.status, m.start_date, m.end_date,
+                m.price_minor, m.currency, m.grace_days, m.access_days,
+                m.access_start_minute, m.access_end_minute, m.min_age, m.max_age,
+                m.paused_at, m.pause_until, m.cancellation_reason,
+                m.created_at, m.updated_at
          FROM memberships m
          JOIN members mem
            ON mem.organization_id = m.organization_id AND mem.id = m.member_id
@@ -1820,10 +2451,57 @@ fn map_membership_payment(row: &Row<'_>) -> rusqlite::Result<MembershipPaymentRe
         amount_minor: row.get(4)?,
         payment_method: row.get(5)?,
         reference: row.get(6)?,
-        received_by: row.get(7)?,
-        received_by_name: row.get(8)?,
-        created_at: row.get(9)?,
+        receipt_number: row.get(7)?,
+        cash_session_id: row.get(8)?,
+        received_by: row.get(9)?,
+        received_by_name: row.get(10)?,
+        created_at: row.get(11)?,
     })
+}
+
+fn map_membership_payment_receipt(
+    row: &Row<'_>,
+) -> rusqlite::Result<MembershipPaymentReceiptRecord> {
+    Ok(MembershipPaymentReceiptRecord {
+        payment_id: row.get(0)?,
+        receipt_number: row.get(1)?,
+        gym_name: row.get(2)?,
+        member_number: row.get(3)?,
+        member_name: row.get(4)?,
+        charge_description: row.get(5)?,
+        amount_minor: row.get(6)?,
+        currency: row.get(7)?,
+        payment_method: row.get(8)?,
+        reference: row.get(9)?,
+        received_by_name: row.get(10)?,
+        created_at: row.get(11)?,
+    })
+}
+
+fn load_membership_payment_receipt(
+    conn: &Connection,
+    organization_id: &str,
+    payment_id: &str,
+) -> Result<MembershipPaymentReceiptRecord, DataError> {
+    conn.query_row(
+        "SELECT p.id, COALESCE(p.receipt_number, ''),
+                o.name, mem.member_number,
+                TRIM(mem.first_name || ' ' || mem.last_name),
+                c.description, p.amount_minor, c.currency, p.payment_method,
+                p.reference, u.name, p.created_at
+         FROM membership_payments p
+         JOIN organizations o ON o.id = p.organization_id
+         JOIN members mem
+           ON mem.organization_id = p.organization_id AND mem.id = p.member_id
+         JOIN membership_charges c
+           ON c.organization_id = p.organization_id AND c.id = p.charge_id
+         LEFT JOIN users u ON u.id = p.received_by
+         WHERE p.organization_id = ?1 AND p.id = ?2",
+        params![organization_id, payment_id],
+        map_membership_payment_receipt,
+    )
+    .optional()?
+    .ok_or(DataError::MembershipPaymentNotFound)
 }
 
 fn load_member_payments(
@@ -1833,7 +2511,8 @@ fn load_member_payments(
 ) -> Result<Vec<MembershipPaymentRecord>, DataError> {
     let mut statement = conn.prepare(
         "SELECT p.id, p.charge_id, p.membership_id, p.member_id, p.amount_minor,
-                p.payment_method, p.reference, p.received_by, u.name, p.created_at
+                p.payment_method, p.reference, p.receipt_number, p.cash_session_id,
+                p.received_by, u.name, p.created_at
          FROM membership_payments p
          LEFT JOIN users u ON u.id = p.received_by
          WHERE p.organization_id = ?1 AND p.member_id = ?2
@@ -1912,6 +2591,32 @@ fn insert_membership_charge(
     Ok(id)
 }
 
+fn next_membership_receipt_number(
+    conn: &Connection,
+    organization_id: &str,
+) -> Result<String, DataError> {
+    let next: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(CAST(SUBSTR(receipt_number, 5) AS INTEGER)), 0) + 1
+         FROM membership_payments
+         WHERE organization_id = ?1 AND receipt_number IS NOT NULL",
+        params![organization_id],
+        |row| row.get(0),
+    )?;
+    Ok(format!("REC-{next:05}"))
+}
+
+fn open_cash_session_id(conn: &Connection, organization_id: &str) -> Result<String, DataError> {
+    conn.query_row(
+        "SELECT id FROM cash_sessions
+         WHERE organization_id = ?1 AND status = 'open'
+         ORDER BY opened_at DESC LIMIT 1",
+        params![organization_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or(DataError::CashSessionNotOpen)
+}
+
 fn membership_payment_hash(
     charge_id: &str,
     amount_minor: i64,
@@ -1973,11 +2678,11 @@ mod tests {
     }
 
     #[test]
-    fn schema_17_is_applied() {
+    fn schema_18_is_applied() {
         let (db, path) = test_db("schema");
         let status = db.status().expect("status");
         assert_eq!(status.schema_version, MIGRATIONS.last().unwrap().version);
-        assert_eq!(status.schema_version, 17);
+        assert_eq!(status.schema_version, 18);
         drop(db);
         let _ = std::fs::remove_file(path);
     }
@@ -2013,6 +2718,11 @@ mod tests {
                     duration_days: 30,
                     price_minor: 50_000,
                     grace_days: 3,
+                    access_days: "mon,tue,wed,thu,fri".into(),
+                    access_start_minute: 360,
+                    access_end_minute: 1320,
+                    min_age: None,
+                    max_age: None,
                 },
             )
             .expect("plan");
@@ -2030,6 +2740,9 @@ mod tests {
         assert_eq!(account.balance_minor, 50_000);
 
         let charge_id = account.charges[0].id.clone();
+        let cash_session = db
+            .open_cash_session(&organization_id, &actor_id, 0)
+            .expect("cash session");
         let partial = db
             .record_membership_payment(
                 &organization_id,
@@ -2044,6 +2757,18 @@ mod tests {
             )
             .expect("partial payment");
         assert_eq!(partial.amount_minor, 20_000);
+        assert_eq!(partial.receipt_number, "REC-00001");
+        assert_eq!(
+            partial.cash_session_id.as_deref(),
+            Some(cash_session.id.as_str())
+        );
+        let movements = db
+            .list_cash_movements(&organization_id, &cash_session.id, 10)
+            .expect("cash movements");
+        assert_eq!(movements.len(), 1);
+        assert_eq!(movements[0].category, "membership_payment");
+        assert_eq!(movements[0].amount_minor, 20_000);
+        assert!(movements[0].evidence.contains("REC-00001"));
         assert_eq!(
             db.member_account(&organization_id, &member.id)
                 .expect("account")
@@ -2129,6 +2854,249 @@ mod tests {
         assert_eq!(dashboard.active_memberships, 0);
         assert_eq!(dashboard.debt_minor, 50_000);
         assert_eq!(dashboard.new_members_this_month, 1);
+
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn plan_rules_are_versioned_and_age_gated() {
+        let (db, path) = test_db("plan-rules");
+        let organization_id = setup(&db);
+        let actor_id = owner_id(&db, &organization_id);
+
+        let member = db
+            .create_member(
+                &organization_id,
+                NewMember {
+                    first_name: "Luis".into(),
+                    last_name: "Pérez".into(),
+                    phone: None,
+                    email: None,
+                    birth_date: Some("2000-01-15".into()),
+                    notes: None,
+                },
+            )
+            .expect("member");
+        let plan = db
+            .create_membership_plan(
+                &organization_id,
+                NewMembershipPlan {
+                    name: "Matutino".into(),
+                    description: None,
+                    duration_days: 30,
+                    price_minor: 40_000,
+                    grace_days: 2,
+                    access_days: "mon,tue,wed,thu,fri".into(),
+                    access_start_minute: 360,
+                    access_end_minute: 720,
+                    min_age: Some(18),
+                    max_age: Some(60),
+                },
+            )
+            .expect("plan");
+        assert_eq!(plan.version, 1);
+
+        let membership = db
+            .create_membership(&organization_id, &actor_id, &member.id, &plan.id, None)
+            .expect("membership");
+        assert_eq!(membership.plan_version, 1);
+        assert_eq!(membership.access_days, "mon,tue,wed,thu,fri");
+        assert_eq!(membership.price_minor, 40_000);
+
+        let updated = db
+            .update_membership_plan(
+                &organization_id,
+                &plan.id,
+                UpdateMembershipPlan {
+                    name: "Matutino".into(),
+                    description: None,
+                    duration_days: 30,
+                    price_minor: 45_000,
+                    grace_days: 2,
+                    access_days: "mon,tue,wed,thu,fri,sat".into(),
+                    access_start_minute: 360,
+                    access_end_minute: 780,
+                    min_age: Some(18),
+                    max_age: Some(60),
+                    active: true,
+                },
+            )
+            .expect("updated plan");
+        assert_eq!(updated.version, 2);
+        assert_eq!(updated.price_minor, 45_000);
+
+        let snapshot = db
+            .membership(&organization_id, &membership.id)
+            .expect("membership snapshot");
+        assert_eq!(snapshot.plan_version, 1);
+        assert_eq!(snapshot.price_minor, 40_000);
+        assert_eq!(snapshot.access_days, "mon,tue,wed,thu,fri");
+
+        let renewed = db
+            .renew_membership(&organization_id, &actor_id, &membership.id, None)
+            .expect("renewal");
+        assert_eq!(renewed.plan_version, 2);
+        assert_eq!(renewed.price_minor, 45_000);
+        assert_eq!(renewed.access_days, "mon,tue,wed,thu,fri,sat");
+        assert_eq!(renewed.access_end_minute, 780);
+
+        let underage = db
+            .create_member(
+                &organization_id,
+                NewMember {
+                    first_name: "Menor".into(),
+                    last_name: "Edad".into(),
+                    phone: None,
+                    email: None,
+                    birth_date: Some("2015-01-15".into()),
+                    notes: None,
+                },
+            )
+            .expect("underage member");
+        let underage_error = db
+            .create_membership(&organization_id, &actor_id, &underage.id, &plan.id, None)
+            .expect_err("underage membership");
+        assert!(matches!(underage_error, DataError::InvalidValue(_)));
+
+        let no_birth_date = db
+            .create_member(
+                &organization_id,
+                NewMember {
+                    first_name: "Sin".into(),
+                    last_name: "Nacimiento".into(),
+                    phone: None,
+                    email: None,
+                    birth_date: None,
+                    notes: None,
+                },
+            )
+            .expect("member without birth date");
+        let missing_birth_date_error = db
+            .create_membership(
+                &organization_id,
+                &actor_id,
+                &no_birth_date.id,
+                &plan.id,
+                None,
+            )
+            .expect_err("membership without birth date");
+        assert!(matches!(
+            missing_birth_date_error,
+            DataError::InvalidValue(_)
+        ));
+
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn membership_payments_require_cash_and_feed_dashboard() {
+        let (db, path) = test_db("payment-dashboard");
+        let organization_id = setup(&db);
+        let actor_id = owner_id(&db, &organization_id);
+
+        let member = db
+            .create_member(
+                &organization_id,
+                NewMember {
+                    first_name: "Sofía".into(),
+                    last_name: "Ramos".into(),
+                    phone: None,
+                    email: None,
+                    birth_date: Some("1995-03-20".into()),
+                    notes: None,
+                },
+            )
+            .expect("member");
+        let plan = db
+            .create_membership_plan(
+                &organization_id,
+                NewMembershipPlan {
+                    name: "Semanal".into(),
+                    description: None,
+                    duration_days: 5,
+                    price_minor: 15_000,
+                    grace_days: 0,
+                    access_days: "mon,tue,wed,thu,fri,sat,sun".into(),
+                    access_start_minute: 0,
+                    access_end_minute: 1440,
+                    min_age: None,
+                    max_age: None,
+                },
+            )
+            .expect("plan");
+        let membership = db
+            .create_membership(&organization_id, &actor_id, &member.id, &plan.id, None)
+            .expect("membership");
+        let charge_id = db
+            .member_account(&organization_id, &member.id)
+            .expect("account")
+            .charges[0]
+            .id
+            .clone();
+
+        let no_cash = db
+            .record_membership_payment(
+                &organization_id,
+                &actor_id,
+                NewMembershipPayment {
+                    charge_id: charge_id.clone(),
+                    amount_minor: 5_000,
+                    payment_method: "cash".into(),
+                    reference: None,
+                    idempotency_key: "cash-without-session".into(),
+                },
+            )
+            .expect_err("cash payment without session");
+        assert!(matches!(no_cash, DataError::CashSessionNotOpen));
+
+        let cash_session = db
+            .open_cash_session(&organization_id, &actor_id, 0)
+            .expect("cash session");
+        let payment = db
+            .record_membership_payment(
+                &organization_id,
+                &actor_id,
+                NewMembershipPayment {
+                    charge_id,
+                    amount_minor: 5_000,
+                    payment_method: "cash".into(),
+                    reference: None,
+                    idempotency_key: "cash-with-session".into(),
+                },
+            )
+            .expect("cash payment");
+        assert_eq!(payment.receipt_number, "REC-00001");
+        assert_eq!(
+            payment.cash_session_id.as_deref(),
+            Some(cash_session.id.as_str())
+        );
+
+        let receipt = db
+            .membership_payment_receipt(&organization_id, &payment.id)
+            .expect("receipt");
+        assert_eq!(receipt.receipt_number, "REC-00001");
+        assert_eq!(receipt.member_number, member.member_number);
+        assert_eq!(receipt.amount_minor, 5_000);
+        assert_eq!(receipt.gym_name, "Test Gym");
+
+        let dashboard = db
+            .membership_dashboard(&organization_id)
+            .expect("dashboard");
+        assert_eq!(dashboard.income_this_month_minor, 5_000);
+        assert_eq!(dashboard.recent_payments.len(), 1);
+        assert_eq!(dashboard.recent_payments[0].payment_id, payment.id);
+        assert_eq!(dashboard.expiring_soon, 1);
+        assert_eq!(dashboard.expiring_memberships.len(), 1);
+        assert_eq!(dashboard.expiring_memberships[0].id, membership.id);
+        assert_eq!(dashboard.trend.len(), 6);
+        assert_eq!(
+            dashboard.trend.last().map(|point| point.income_minor),
+            Some(5_000)
+        );
+        assert_eq!(dashboard.period_start.len(), 10);
+        assert_eq!(dashboard.timezone, "UTC");
 
         drop(db);
         let _ = std::fs::remove_file(path);

@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.12.0";
+export const CONTRACT_VERSION = "2.13.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -211,6 +211,12 @@ export interface MembershipPlan {
   priceMinor: number;
   currency: string;
   graceDays: number;
+  version: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -239,12 +245,19 @@ export interface Membership {
   memberName: string;
   planId: string;
   planName: string;
+  planVersion: number;
+  planVersionId: string;
   status: MembershipStatus;
   startDate: string;
   endDate: string;
   priceMinor: number;
   currency: string;
   graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge: number | null;
+  maxAge: number | null;
   pausedAt: string | null;
   pauseUntil: string | null;
   cancellationReason: string | null;
@@ -287,9 +300,34 @@ export interface MembershipPayment {
   amountMinor: number;
   paymentMethod: PaymentMethod;
   reference: string | null;
+  receiptNumber: string;
+  cashSessionId: string | null;
   receivedBy: string | null;
   receivedByName: string | null;
   createdAt: string;
+}
+
+export interface MembershipPaymentReceipt {
+  paymentId: string;
+  receiptNumber: string;
+  gymName: string;
+  memberNumber: string;
+  memberName: string;
+  chargeDescription: string;
+  amountMinor: number;
+  currency: string;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+  receivedByName: string | null;
+  createdAt: string;
+}
+
+export interface MembershipDashboardTrendPoint {
+  month: string;
+  newMembers: number;
+  renewals: number;
+  cancellations: number;
+  incomeMinor: number;
 }
 
 export interface MemberAccount {
@@ -301,12 +339,21 @@ export interface MemberAccount {
 }
 
 export interface MembershipDashboard {
+  periodStart: string;
+  periodEnd: string;
+  timezone: string;
   activeMembers: number;
   activeMemberships: number;
   expiringSoon: number;
   pastDue: number;
   debtMinor: number;
   newMembersThisMonth: number;
+  incomeThisMonthMinor: number;
+  renewalsThisMonth: number;
+  cancellationsThisMonth: number;
+  trend: MembershipDashboardTrendPoint[];
+  recentPayments: MembershipPaymentReceipt[];
+  expiringMemberships: Membership[];
 }
 
 export interface CreateMemberInput {
@@ -335,6 +382,11 @@ export interface CreateMembershipPlanInput {
   durationDays: number;
   priceMinor: number;
   graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge?: number;
+  maxAge?: number;
 }
 
 export interface UpdateMembershipPlanInput {
@@ -344,6 +396,11 @@ export interface UpdateMembershipPlanInput {
   durationDays: number;
   priceMinor: number;
   graceDays: number;
+  accessDays: string;
+  accessStartMinute: number;
+  accessEndMinute: number;
+  minAge?: number;
+  maxAge?: number;
   active: boolean;
 }
 

@@ -225,4 +225,31 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP TABLE IF EXISTS members; \
                DROP TABLE IF EXISTS membership_plans;",
     },
+    Migration {
+        version: 18,
+        name: "membership_plan_rules",
+        up: include_str!("../migrations/0018_membership_plan_rules.sql"),
+        down: "DROP INDEX IF EXISTS idx_cash_movements_membership_payment; \
+               ALTER TABLE cash_movements DROP COLUMN membership_payment_id; \
+               DROP INDEX IF EXISTS idx_membership_payments_receipt; \
+               ALTER TABLE membership_payments DROP COLUMN cash_session_id; \
+               ALTER TABLE membership_payments DROP COLUMN receipt_number; \
+               ALTER TABLE memberships DROP COLUMN max_age; \
+               ALTER TABLE memberships DROP COLUMN min_age; \
+               ALTER TABLE memberships DROP COLUMN access_end_minute; \
+               ALTER TABLE memberships DROP COLUMN access_start_minute; \
+               ALTER TABLE memberships DROP COLUMN access_days; \
+               ALTER TABLE memberships DROP COLUMN plan_version; \
+               ALTER TABLE memberships DROP COLUMN plan_version_id; \
+               DROP TRIGGER IF EXISTS membership_plan_versions_no_delete; \
+               DROP TRIGGER IF EXISTS membership_plan_versions_no_update; \
+               DROP INDEX IF EXISTS idx_membership_plan_versions_plan; \
+               DROP TABLE IF EXISTS membership_plan_versions; \
+               ALTER TABLE membership_plans DROP COLUMN max_age; \
+               ALTER TABLE membership_plans DROP COLUMN min_age; \
+               ALTER TABLE membership_plans DROP COLUMN access_end_minute; \
+               ALTER TABLE membership_plans DROP COLUMN access_start_minute; \
+               ALTER TABLE membership_plans DROP COLUMN access_days; \
+               ALTER TABLE membership_plans DROP COLUMN current_version;",
+    },
 ];

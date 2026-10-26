@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.12.0";
+pub const CONTRACT_VERSION: &str = "2.13.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -350,6 +350,12 @@ pub struct MembershipPlan {
     pub price_minor: i64,
     pub currency: String,
     pub grace_days: i64,
+    pub version: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -382,12 +388,19 @@ pub struct Membership {
     pub member_name: String,
     pub plan_id: String,
     pub plan_name: String,
+    pub plan_version: i64,
+    pub plan_version_id: String,
     pub status: MembershipStatus,
     pub start_date: String,
     pub end_date: String,
     pub price_minor: i64,
     pub currency: String,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    pub min_age: Option<i64>,
+    pub max_age: Option<i64>,
     pub paused_at: Option<String>,
     pub pause_until: Option<String>,
     pub cancellation_reason: Option<String>,
@@ -436,9 +449,38 @@ pub struct MembershipPayment {
     pub amount_minor: i64,
     pub payment_method: PaymentMethod,
     pub reference: Option<String>,
+    pub receipt_number: String,
+    pub cash_session_id: Option<String>,
     pub received_by: Option<String>,
     pub received_by_name: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipPaymentReceipt {
+    pub payment_id: String,
+    pub receipt_number: String,
+    pub gym_name: String,
+    pub member_number: String,
+    pub member_name: String,
+    pub charge_description: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub payment_method: PaymentMethod,
+    pub reference: Option<String>,
+    pub received_by_name: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipDashboardTrendPoint {
+    pub month: String,
+    pub new_members: i64,
+    pub renewals: i64,
+    pub cancellations: i64,
+    pub income_minor: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -454,12 +496,21 @@ pub struct MemberAccount {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MembershipDashboard {
+    pub period_start: String,
+    pub period_end: String,
+    pub timezone: String,
     pub active_members: i64,
     pub active_memberships: i64,
     pub expiring_soon: i64,
     pub past_due: i64,
     pub debt_minor: i64,
     pub new_members_this_month: i64,
+    pub income_this_month_minor: i64,
+    pub renewals_this_month: i64,
+    pub cancellations_this_month: i64,
+    pub trend: Vec<MembershipDashboardTrendPoint>,
+    pub recent_payments: Vec<MembershipPaymentReceipt>,
+    pub expiring_memberships: Vec<Membership>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,6 +554,13 @@ pub struct CreateMembershipPlanInput {
     pub duration_days: i64,
     pub price_minor: i64,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    #[serde(default)]
+    pub min_age: Option<i64>,
+    #[serde(default)]
+    pub max_age: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -515,6 +573,13 @@ pub struct UpdateMembershipPlanInput {
     pub duration_days: i64,
     pub price_minor: i64,
     pub grace_days: i64,
+    pub access_days: String,
+    pub access_start_minute: i64,
+    pub access_end_minute: i64,
+    #[serde(default)]
+    pub min_age: Option<i64>,
+    #[serde(default)]
+    pub max_age: Option<i64>,
     pub active: bool,
 }
 
