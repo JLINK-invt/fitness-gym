@@ -185,4 +185,15 @@ pub const MIGRATIONS: &[Migration] = &[
                ALTER TABLE sale_returns DROP COLUMN request_hash; \
                ALTER TABLE sale_returns DROP COLUMN idempotency_key;",
     },
+    Migration {
+        version: 16,
+        name: "sync_journal",
+        up: include_str!("../migrations/0016_sync_journal.sql"),
+        down: "DROP INDEX IF EXISTS idx_sync_inbox_organization_sequence; \
+               DROP TABLE IF EXISTS sync_state; \
+               DROP TABLE IF EXISTS sync_inbox; \
+               DROP INDEX IF EXISTS idx_sync_outbox_aggregate; \
+               DROP INDEX IF EXISTS idx_sync_outbox_pending; \
+               DROP TABLE IF EXISTS sync_outbox;",
+    },
 ];

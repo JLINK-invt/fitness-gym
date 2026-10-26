@@ -17,7 +17,9 @@
 - No hay administrador local hostil; el dueño controla el equipo.
 - El webview (WebKit/WebView2) está actualizado y no está comprometido.
 - La app no recibe contenido remoto ni ejecuta plugins de terceros.
-- Phase 1 no sincroniza entre dispositivos.
+- No hay sincronización entre dispositivos habilitada. Existe un journal local
+  de outbox/inbox (esquema v16) que se prueba con un servidor falso; no hay
+  transporte de red, enrolamiento ni aplicación de eventos remotos.
 
 ## 2. Activos
 
@@ -223,13 +225,17 @@ su propio ADR antes de implementarse.
 
 ### Sincronización multi-dispositivo
 
-| Amenaza | Control requerido | Fase |
+El journal local ya implementa outbox transaccional, idempotencia por gimnasio,
+inbox deduplicado por `event_id` y cursor por secuencia. El transporte real
+sigue pendiente.
+
+| Amenaza | Control requerido | Estado |
 | --- | --- | --- |
-| Relay lee datos | Cifrado de extremo a extremo; el servidor solo ve sobres | 2+ |
-| Replay o duplicados | Log idempotente por organización y dispositivo | 2+ |
-| Conflicto de edición | Política por agregado y resolución explícita | 2+ |
-| Dispositivo robado sigue sincronizando | Revocación de clave de dispositivo y rotación | 2+ |
-| Downgrade de reglas | Versión mínima de contrato y migración firmada | 2+ |
+| Relay lee datos | Cifrado de extremo a extremo; el servidor solo ve sobres | Pendiente; el journal local está cifrado con SQLCipher |
+| Replay o duplicados | Log idempotente por organización y dispositivo | Local implementado; deduplicación server-side pendiente |
+| Conflicto de edición | Política por agregado y resolución explícita | Pendiente |
+| Dispositivo robado sigue sincronizando | Revocación de clave de dispositivo y rotación | Pendiente; sin transporte ni enrolamiento |
+| Downgrade de reglas | Versión mínima de contrato y migración firmada | Pendiente |
 
 ## 7. Riesgos residuales
 
@@ -249,8 +255,8 @@ su propio ADR antes de implementarse.
 - Coerción física o violencia.
 - Administrador del SO o malware con privilegios de kernel.
 - Ataques de canal lateral sobre el hardware.
-- Servicio cloud multi-tenant y sincronización (se evaluará con su propio threat
-  model antes de Phase 2).
+- Servicio cloud multi-tenant y transporte de sincronización (se evaluará con su
+  propio threat model antes de habilitarlo). El journal local no cruza la red.
 - Cumplimiento legal específico (LFPDPPP, PCI); se abordará con asesoría.
 
 ## 9. Requisitos verificables de Phase 1

@@ -9,11 +9,13 @@ React (apps/gym-desktop/src)
 Comandos Tauri (apps/gym-desktop/src-tauri)
   │
   ├── gym-core      reglas puras, RBAC y bus de eventos
-  ├── gym-data      SQLCipher + migraciones + key provider
+  ├── gym-data      SQLCipher + migraciones + key provider + journal de sync
+  ├── gym-sync      motor outbox/inbox y frontera SyncTransport
   └── gym-backup    snapshots cifrados + restore verificado
 ```
 
-La nube no participa en la operación. Todo el flujo anterior es local.
+La nube no participa en la operación. Todo el flujo anterior es local; el
+journal de sync solo se ejercita contra un servidor falso en pruebas.
 
 ## Límites de dependencia
 
@@ -21,6 +23,8 @@ La nube no participa en la operación. Todo el flujo anterior es local.
 - `gym-contracts` solo contiene DTOs serializables y errores de API.
 - `gym-data` depende de `gym-core` y `gym-contracts`; nunca al revés.
 - `gym-backup` depende de `gym-data`; no expone detalles de SQLCipher a la UI.
+- `gym-sync` depende de `gym-data`; no conoce Tauri ni detalles de SQLCipher y
+  recibe el transporte por un trait.
 - La app Tauri es la única capa que conoce comandos, ventanas y rutas del SO.
 - `packages/contracts` es el espejo TypeScript de `gym-contracts`; un cambio
   incompatible exige subir `CONTRACT_VERSION`.
@@ -68,6 +72,11 @@ La nube no participa en la operación. Todo el flujo anterior es local.
   calcula como `stock <= minStock` al consultar.
 - El acceso simulado usa `access_decision` como agregado y
   `access.allowed`/`access.denied` como tipos de evento.
+- `sync_outbox` guarda eventos de ventas, devoluciones, caja e inventario en la
+  misma transacción del cambio de negocio, con `idempotency_key` única por
+  gimnasio. `sync_inbox` deduplica por `event_id` y `sync_state` guarda el
+  último `server_sequence`. La migración 16 crea el journal; no hay transporte
+  de red ni aplicación de eventos remotos al negocio.
 
 ## Identidad y sesión
 
@@ -186,6 +195,18 @@ inserta una sola vez en `module_events`. La misma clave con el mismo lector y
 credencial devuelve el evento original; con datos distintos se rechaza. La ruta
 y la navegación no se exponen en la UI de V1. El contrato completo está en
 [`contracts/access-simulated.md`](contracts/access-simulated.md).
+
+## Sincronización local
+
+`gym-data` escribe un evento de outbox en la misma transacción que la venta,
+devolución, turno o movimiento de inventario. `gym-sync` toma los pendientes
+vencidos, los empuja por `SyncTransport` y marca los aceptados como `sent`; los
+rechazos se reintentan con backoff y pasan a `dead_letter` tras cinco intentos.
+El inbox guarda eventos remotos, deduplica por `event_id` y avanza un cursor por
+secuencia de servidor. Las pruebas usan un servidor falso en memoria; el
+transporte HTTPS con mTLS, el enrolamiento y la aplicación de eventos remotos
+quedan pendientes. El contrato completo está en
+[`contracts/sync.md`](contracts/sync.md).
 
 ## Backups
 

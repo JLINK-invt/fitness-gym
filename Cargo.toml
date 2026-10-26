@@ -5,6 +5,7 @@ members = [
   "crates/gym-contracts",
   "crates/gym-core",
   "crates/gym-data",
+  "crates/gym-sync",
   "crates/gym-backup",
 ]
 
@@ -23,6 +24,7 @@ gym-backup = { path = "crates/gym-backup" }
 gym-contracts = { path = "crates/gym-contracts" }
 gym-core = { path = "crates/gym-core" }
 gym-data = { path = "crates/gym-data" }
+gym-sync = { path = "crates/gym-sync" }
 hex = "0.4"
 rand = "0.8"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }

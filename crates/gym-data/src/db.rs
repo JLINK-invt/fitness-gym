@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use crate::error::DataError;
 use crate::key::DbKey;
 use crate::migrations::MIGRATIONS;
+use crate::sha256_hex;
 
 pub type LocalDatabaseStatus = DatabaseStatus;
 
@@ -557,6 +558,55 @@ pub struct ModuleEventRecord {
 pub struct RecordedModuleEvent {
     pub event: ModuleEventRecord,
     pub inserted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncOutboxRecord {
+    pub id: String,
+    pub event_type: String,
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub idempotency_key: String,
+    pub payload_json: String,
+    pub payload_hash: String,
+    pub state: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+    pub next_attempt_at: String,
+    pub sent_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncInboxRecord {
+    pub event_id: String,
+    pub server_sequence: i64,
+    pub event_type: String,
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub idempotency_key: String,
+    pub payload_json: String,
+    pub payload_hash: String,
+    pub occurred_at: String,
+    pub received_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboundSyncEvent {
+    pub event_id: String,
+    pub server_sequence: i64,
+    pub event_type: String,
+    pub aggregate_type: String,
+    pub aggregate_id: String,
+    pub idempotency_key: String,
+    pub payload_json: String,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncFailureRecord {
+    pub state: String,
+    pub attempts: i64,
 }
 
 /// Handle to the local encrypted database. `Mutex<Option<Connection>>` keeps
@@ -1619,6 +1669,26 @@ impl Db {
                     created_at
                 ],
             )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "cash.movement_recorded",
+                "cash_movement",
+                &id,
+                &format!("cash-movement:{id}:created"),
+                &serde_json::json!({
+                    "movementId": id,
+                    "cashSessionId": input.cash_session_id,
+                    "movementType": input.movement_type,
+                    "category": category,
+                    "amountMinor": input.amount_minor,
+                    "paymentMethod": input.payment_method,
+                    "evidence": evidence,
+                    "authorizedBy": authorized_by,
+                    "createdAt": created_at,
+                }),
+                &created_at,
+            )?;
             transaction.commit()?;
         }
 
@@ -1723,6 +1793,22 @@ impl Db {
                     opened_by,
                     opened_at
                 ],
+            )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "cash.session_opened",
+                "cash_session",
+                &id,
+                &format!("cash-session:{id}:opened"),
+                &serde_json::json!({
+                    "cashSessionId": id,
+                    "currency": currency,
+                    "openingAmountMinor": opening_amount_minor,
+                    "openedBy": opened_by,
+                    "openedAt": opened_at,
+                }),
+                &opened_at,
             )?;
             transaction.commit()?;
         }
@@ -1836,6 +1922,24 @@ impl Db {
             if updated != 1 {
                 return Err(DataError::CashSessionNotOpen);
             }
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "cash.session_closed",
+                "cash_session",
+                session_id,
+                &format!("cash-session:{session_id}:closed"),
+                &serde_json::json!({
+                    "cashSessionId": session_id,
+                    "expectedCashMinor": expected_cash_minor,
+                    "countedAmountMinor": counted_amount_minor,
+                    "differenceMinor": difference_minor,
+                    "differenceReason": stored_reason,
+                    "closedBy": closed_by,
+                    "closedAt": closed_at,
+                }),
+                &closed_at,
+            )?;
             transaction.commit()?;
         }
 
@@ -2292,6 +2396,43 @@ impl Db {
                     total_minor,
                     now
                 ],
+            )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "sale.created",
+                "sale",
+                &sale_id,
+                &format!("sale:{sale_id}:created"),
+                &serde_json::json!({
+                    "saleId": sale_id,
+                    "currency": currency,
+                    "subtotalMinor": subtotal_minor,
+                    "taxMinor": tax_minor,
+                    "totalMinor": total_minor,
+                    "paymentMethod": sale.payment_method,
+                    "cashReceivedMinor": cash_received_minor,
+                    "changeMinor": change_minor,
+                    "cashSessionId": cash_session_id,
+                    "soldBy": sold_by,
+                    "paymentReference": payment_reference,
+                    "createdAt": now,
+                    "items": lines.iter().map(|line| serde_json::json!({
+                        "variantId": line.variant_id,
+                        "productName": line.product_name,
+                        "variantName": line.variant_name,
+                        "sku": line.sku,
+                        "unit": line.unit,
+                        "quantity": line.quantity,
+                        "unitAmountMinor": line.unit_amount_minor,
+                        "taxRateBps": line.tax_rate_bps,
+                        "priceIncludesTax": line.price_includes_tax,
+                        "subtotalMinor": line.subtotal_minor,
+                        "taxMinor": line.tax_minor,
+                        "totalMinor": line.total_minor,
+                    })).collect::<Vec<_>>(),
+                }),
+                &now,
             )?;
             transaction.commit()?;
         }
@@ -3159,6 +3300,33 @@ impl Db {
                     now
                 ],
             )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "sale.returned",
+                "sale_return",
+                &return_id,
+                &format!("sale-return:{return_id}:created"),
+                &serde_json::json!({
+                    "returnId": return_id,
+                    "saleId": sale_return.sale_id,
+                    "currency": currency,
+                    "refundMethod": refund_method,
+                    "totalMinor": total_minor,
+                    "reason": reason,
+                    "authorizedBy": authorized_by,
+                    "paymentReference": payment_reference,
+                    "createdAt": now,
+                    "items": lines.iter().map(|(sale_item_id, quantity, amount_minor, variant_id, unit)| serde_json::json!({
+                        "saleItemId": sale_item_id,
+                        "variantId": variant_id,
+                        "unit": unit,
+                        "quantity": quantity,
+                        "amountMinor": amount_minor,
+                    })).collect::<Vec<_>>(),
+                }),
+                &now,
+            )?;
             transaction.commit()?;
         }
 
@@ -3313,6 +3481,26 @@ impl Db {
                     created_at: &now,
                 },
             )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "inventory.entry_recorded",
+                "inventory_movement",
+                &movement_id,
+                &format!("inventory-movement:{movement_id}:recorded"),
+                &serde_json::json!({
+                    "movementId": movement_id,
+                    "variantId": entry.variant_id,
+                    "quantityDelta": entry.quantity,
+                    "unitCostMinor": entry.unit_cost_minor,
+                    "totalCostMinor": total_cost_minor,
+                    "reference": reference,
+                    "note": note,
+                    "authorizedBy": authorized_by,
+                    "createdAt": now,
+                }),
+                &now,
+            )?;
             transaction.commit()?;
         }
 
@@ -3383,6 +3571,25 @@ impl Db {
                     authorized_by: Some(authorized_by),
                     created_at: &now,
                 },
+            )?;
+            enqueue_sync_event(
+                &transaction,
+                organization_id,
+                "inventory.adjustment_recorded",
+                "inventory_movement",
+                &movement_id,
+                &format!("inventory-movement:{movement_id}:recorded"),
+                &serde_json::json!({
+                    "movementId": movement_id,
+                    "variantId": adjustment.variant_id,
+                    "quantityDelta": adjustment.quantity_delta,
+                    "unitCostMinor": unit_cost_minor,
+                    "totalCostMinor": total_cost_minor,
+                    "reason": reason,
+                    "authorizedBy": authorized_by,
+                    "createdAt": now,
+                }),
+                &now,
             )?;
             transaction.commit()?;
         }
@@ -3936,6 +4143,248 @@ impl Db {
         })
     }
 
+    pub fn pending_sync_events(
+        &self,
+        organization_id: &str,
+        due_at: &str,
+        limit: usize,
+    ) -> Result<Vec<SyncOutboxRecord>, DataError> {
+        let limit = limit.clamp(1, 100) as i64;
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, event_type, aggregate_type, aggregate_id, idempotency_key,
+                        payload_json, payload_hash, state, attempts, last_error,
+                        next_attempt_at, sent_at, created_at
+                 FROM sync_outbox
+                 WHERE organization_id = ?1 AND state = 'pending'
+                   AND next_attempt_at <= ?2
+                 ORDER BY created_at, id
+                 LIMIT ?3",
+            )?;
+            let rows = statement
+                .query_map(
+                    params![organization_id, due_at, limit],
+                    map_sync_outbox_record,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn list_sync_outbox(
+        &self,
+        organization_id: &str,
+        limit: usize,
+    ) -> Result<Vec<SyncOutboxRecord>, DataError> {
+        let limit = limit.clamp(1, 200) as i64;
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, event_type, aggregate_type, aggregate_id, idempotency_key,
+                        payload_json, payload_hash, state, attempts, last_error,
+                        next_attempt_at, sent_at, created_at
+                 FROM sync_outbox
+                 WHERE organization_id = ?1
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(params![organization_id, limit], map_sync_outbox_record)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn mark_sync_event_sent(
+        &self,
+        organization_id: &str,
+        event_id: &str,
+        sent_at: &str,
+    ) -> Result<bool, DataError> {
+        self.with_connection(|conn| {
+            let updated = conn.execute(
+                "UPDATE sync_outbox
+                 SET state = 'sent', sent_at = ?1, last_error = NULL
+                 WHERE organization_id = ?2 AND id = ?3 AND state = 'pending'",
+                params![sent_at, organization_id, event_id],
+            )?;
+            Ok(updated == 1)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fail_sync_event(
+        &self,
+        organization_id: &str,
+        event_id: &str,
+        error: &str,
+        next_attempt_at: &str,
+        max_attempts: i64,
+    ) -> Result<SyncFailureRecord, DataError> {
+        if max_attempts < 1 {
+            return Err(DataError::InvalidValue(
+                "sync attempts must be at least one".into(),
+            ));
+        }
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+        let current = transaction
+            .query_row(
+                "SELECT attempts, state FROM sync_outbox
+                 WHERE organization_id = ?1 AND id = ?2",
+                params![organization_id, event_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((attempts, state)) = current else {
+            return Err(DataError::InvalidValue(
+                "the sync event does not exist in this gym".into(),
+            ));
+        };
+        if state != "pending" {
+            return Ok(SyncFailureRecord { state, attempts });
+        }
+        let attempts = attempts + 1;
+        let state = if attempts >= max_attempts {
+            "dead_letter"
+        } else {
+            "pending"
+        };
+        let error: String = error.chars().take(500).collect();
+        transaction.execute(
+            "UPDATE sync_outbox
+             SET attempts = ?1, state = ?2, last_error = ?3, next_attempt_at = ?4
+             WHERE organization_id = ?5 AND id = ?6",
+            params![
+                attempts,
+                state,
+                error,
+                next_attempt_at,
+                organization_id,
+                event_id
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(SyncFailureRecord {
+            state: state.into(),
+            attempts,
+        })
+    }
+
+    pub fn sync_cursor(&self, organization_id: &str) -> Result<i64, DataError> {
+        self.with_connection(|conn| {
+            let cursor = conn
+                .query_row(
+                    "SELECT last_server_sequence FROM sync_state WHERE organization_id = ?1",
+                    params![organization_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            Ok(cursor.unwrap_or(0))
+        })
+    }
+
+    pub fn apply_inbox_event(
+        &self,
+        organization_id: &str,
+        event: InboundSyncEvent,
+    ) -> Result<bool, DataError> {
+        if event.event_id.trim().is_empty()
+            || event.idempotency_key.trim().is_empty()
+            || event.server_sequence < 1
+        {
+            return Err(DataError::InvalidValue(
+                "the inbound sync event is missing identifiers".into(),
+            ));
+        }
+        let payload_hash = sha256_hex(event.payload_json.as_bytes());
+        let received_at = chrono::Utc::now().to_rfc3339();
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+        let cursor: i64 = transaction
+            .query_row(
+                "SELECT last_server_sequence FROM sync_state WHERE organization_id = ?1",
+                params![organization_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if event.server_sequence <= cursor {
+            transaction.commit()?;
+            return Ok(false);
+        }
+        let inserted = transaction.execute(
+            "INSERT INTO sync_inbox
+                 (event_id, organization_id, server_sequence, event_type,
+                  aggregate_type, aggregate_id, idempotency_key, payload_json,
+                  payload_hash, occurred_at, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT DO NOTHING",
+            params![
+                event.event_id,
+                organization_id,
+                event.server_sequence,
+                event.event_type,
+                event.aggregate_type,
+                event.aggregate_id,
+                event.idempotency_key,
+                event.payload_json,
+                payload_hash,
+                event.occurred_at,
+                received_at
+            ],
+        )?;
+        if inserted == 1 {
+            transaction.execute(
+                "INSERT INTO sync_state (organization_id, last_server_sequence, updated_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (organization_id) DO UPDATE SET
+                     last_server_sequence = MAX(last_server_sequence, excluded.last_server_sequence),
+                     updated_at = excluded.updated_at",
+                params![organization_id, event.server_sequence, received_at],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(inserted == 1)
+    }
+
+    pub fn list_sync_inbox(
+        &self,
+        organization_id: &str,
+        limit: usize,
+    ) -> Result<Vec<SyncInboxRecord>, DataError> {
+        let limit = limit.clamp(1, 200) as i64;
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT event_id, server_sequence, event_type, aggregate_type,
+                        aggregate_id, idempotency_key, payload_json, payload_hash,
+                        occurred_at, received_at
+                 FROM sync_inbox
+                 WHERE organization_id = ?1
+                 ORDER BY server_sequence DESC
+                 LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(params![organization_id, limit], |row| {
+                    Ok(SyncInboxRecord {
+                        event_id: row.get(0)?,
+                        server_sequence: row.get(1)?,
+                        event_type: row.get(2)?,
+                        aggregate_type: row.get(3)?,
+                        aggregate_id: row.get(4)?,
+                        idempotency_key: row.get(5)?,
+                        payload_json: row.get(6)?,
+                        payload_hash: row.get(7)?,
+                        occurred_at: row.get(8)?,
+                        received_at: row.get(9)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
     /// Copies the open encrypted database to `destination` without exposing
     /// plaintext. SQLCipher re-encrypts with the current key.
     pub fn vacuum_into(&self, destination: &Path) -> Result<(), DataError> {
@@ -4237,6 +4686,59 @@ fn insert_payment_charge(
     Ok(())
 }
 
+fn map_sync_outbox_record(row: &Row<'_>) -> rusqlite::Result<SyncOutboxRecord> {
+    Ok(SyncOutboxRecord {
+        id: row.get(0)?,
+        event_type: row.get(1)?,
+        aggregate_type: row.get(2)?,
+        aggregate_id: row.get(3)?,
+        idempotency_key: row.get(4)?,
+        payload_json: row.get(5)?,
+        payload_hash: row.get(6)?,
+        state: row.get(7)?,
+        attempts: row.get(8)?,
+        last_error: row.get(9)?,
+        next_attempt_at: row.get(10)?,
+        sent_at: row.get(11)?,
+        created_at: row.get(12)?,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_sync_event(
+    transaction: &Transaction<'_>,
+    organization_id: &str,
+    event_type: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+    idempotency_key: &str,
+    payload: &serde_json::Value,
+    created_at: &str,
+) -> Result<(), DataError> {
+    let payload_json = serde_json::to_string(payload)?;
+    let payload_hash = sha256_hex(payload_json.as_bytes());
+    transaction.execute(
+        "INSERT INTO sync_outbox
+             (id, organization_id, event_type, aggregate_type, aggregate_id,
+              idempotency_key, payload_json, payload_hash, state, attempts,
+              next_attempt_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', 0, ?9, ?9)
+         ON CONFLICT (organization_id, idempotency_key) DO NOTHING",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            organization_id,
+            event_type,
+            aggregate_type,
+            aggregate_id,
+            idempotency_key,
+            payload_json,
+            payload_hash,
+            created_at
+        ],
+    )?;
+    Ok(())
+}
+
 fn validate_catalog_unit(value: &str) -> Result<(), DataError> {
     if matches!(value, "piece" | "service" | "session" | "package") {
         Ok(())
@@ -4493,7 +4995,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 15);
+        assert_eq!(second_status.schema_version, 16);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);

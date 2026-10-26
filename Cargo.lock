@@ -1596,6 +1596,7 @@ dependencies = [
  "keyring",
  "rand",
  "rusqlite",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
@@ -1618,6 +1619,18 @@ dependencies = [
  "tauri-build",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "gym-sync"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gym-data",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
