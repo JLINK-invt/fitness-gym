@@ -197,6 +197,91 @@ type StoredCashSession = {
   closedAt: string | null;
 };
 
+type StoredMembershipPlan = {
+  id: string;
+  name: string;
+  description: string | null;
+  durationDays: number;
+  priceMinor: number;
+  currency: string;
+  graceDays: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredMember = {
+  id: string;
+  memberNumber: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  email: string | null;
+  birthDate: string | null;
+  status: "active" | "inactive" | "archived";
+  joinedAt: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredProspect = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  source: string | null;
+  status: "new" | "contacted" | "trial" | "converted" | "lost";
+  notes: string | null;
+  convertedMemberId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredMembership = {
+  id: string;
+  memberId: string;
+  planId: string;
+  planName: string;
+  status: "scheduled" | "active" | "paused" | "expired" | "cancelled";
+  startDate: string;
+  endDate: string;
+  priceMinor: number;
+  currency: string;
+  graceDays: number;
+  pausedAt: string | null;
+  pauseUntil: string | null;
+  cancellationReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredMembershipCharge = {
+  id: string;
+  membershipId: string;
+  memberId: string;
+  description: string;
+  amountMinor: number;
+  currency: string;
+  dueDate: string;
+  status: "pending" | "paid" | "void";
+  paidMinor: number;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredMembershipPayment = {
+  id: string;
+  chargeId: string;
+  membershipId: string;
+  memberId: string;
+  amountMinor: number;
+  paymentMethod: "cash" | "transfer" | "point";
+  reference: string | null;
+  receivedBy: string | null;
+  receivedByName: string | null;
+  createdAt: string;
+};
+type StoredMembershipPaymentAttempt = {
+  requestHash: string;
+  paymentId: string;
+};
+
 (() => {
   const state: {
     organizations: Organization[];
@@ -219,6 +304,14 @@ type StoredCashSession = {
     cashMovements: StoredCashMovement[];
     inventoryMovements: StoredInventoryMovement[];
     inventoryThresholds: Map<string, number>;
+    membershipPlans: StoredMembershipPlan[];
+    members: StoredMember[];
+    prospects: StoredProspect[];
+    memberships: StoredMembership[];
+    membershipCharges: StoredMembershipCharge[];
+    membershipPayments: StoredMembershipPayment[];
+    membershipPaymentIdempotency: Map<string, StoredMembershipPaymentAttempt>;
+    memberSequence: number;
   } = {
     organizations: [],
     owner: null,
@@ -240,6 +333,14 @@ type StoredCashSession = {
     cashMovements: [],
     inventoryMovements: [],
     inventoryThresholds: new Map(),
+    membershipPlans: [],
+    members: [],
+    prospects: [],
+    memberships: [],
+    membershipCharges: [],
+    membershipPayments: [],
+    membershipPaymentIdempotency: new Map(),
+    memberSequence: 0,
   };
 
   const now = () => new Date().toISOString();
@@ -264,6 +365,7 @@ type StoredCashSession = {
           "manageInventory",
           "manageCatalog",
           "manageBackups",
+          "manageMembers",
           "viewAudit",
         ];
       case "manager":
@@ -274,10 +376,11 @@ type StoredCashSession = {
           "manageInventory",
           "manageCatalog",
           "manageBackups",
+          "manageMembers",
           "viewAudit",
         ];
       case "cashier":
-        return ["operatePos", "manageInventory"];
+        return ["operatePos", "manageInventory", "manageMembers"];
       case "accounting":
         return ["viewFinance", "viewAudit"];
     }
@@ -322,6 +425,89 @@ type StoredCashSession = {
     createdAt: member.createdAt,
   });
 
+  const dateOnly = (date = new Date()) => date.toISOString().slice(0, 10);
+  const addDays = (value: string, days: number) => {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return dateOnly(date);
+  };
+  const memberSnapshot = (member: StoredMember) => {
+    const memberships = state.memberships.filter((item) => item.memberId === member.id);
+    const active = memberships.find((item) =>
+      ["active", "scheduled", "paused"].includes(item.status),
+    );
+    const debtMinor = state.membershipCharges
+      .filter((charge) => charge.memberId === member.id && charge.status === "pending")
+      .reduce((total, charge) => total + charge.amountMinor - charge.paidMinor, 0);
+    return {
+      id: member.id,
+      memberNumber: member.memberNumber,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      phone: member.phone,
+      email: member.email,
+      birthDate: member.birthDate,
+      status: member.status,
+      joinedAt: member.joinedAt,
+      notes: member.notes,
+      activeMembership: active ? membershipSnapshot(active) : null,
+      debtMinor,
+      createdAt: member.createdAt,
+      updatedAt: member.updatedAt,
+    };
+  };
+  const membershipSnapshot = (membership: StoredMembership) => {
+    const member = state.members.find((item) => item.id === membership.memberId);
+    return {
+      ...membership,
+      memberName: member ? `${member.firstName} ${member.lastName}`.trim() : "Socio",
+    };
+  };
+  const chargeSnapshot = (charge: StoredMembershipCharge) => ({ ...charge });
+  const paymentSnapshot = (payment: StoredMembershipPayment) => ({ ...payment });
+  const accountSnapshot = (memberId: string) => {
+    const charges = state.membershipCharges
+      .filter((charge) => charge.memberId === memberId)
+      .sort((left, right) => right.dueDate.localeCompare(left.dueDate));
+    const payments = state.membershipPayments
+      .filter((payment) => payment.memberId === memberId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      memberId,
+      currency: "MXN",
+      charges: charges.map(chargeSnapshot),
+      payments: payments.map(paymentSnapshot),
+      balanceMinor: charges
+        .filter((charge) => charge.status !== "void")
+        .reduce((total, charge) => total + charge.amountMinor - charge.paidMinor, 0),
+    };
+  };
+  const dashboardSnapshot = () => {
+    const today = dateOnly();
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const soon = addDays(today, 7);
+    return {
+      activeMembers: state.members.filter((member) => member.status === "active").length,
+      activeMemberships: state.memberships.filter((membership) => membership.status === "active").length,
+      expiringSoon: state.memberships.filter(
+        (membership) =>
+          membership.status === "active" &&
+          membership.endDate >= today &&
+          membership.endDate <= soon,
+      ).length,
+      pastDue: new Set(
+        state.membershipCharges
+          .filter((charge) => charge.status === "pending" && charge.dueDate < today)
+          .map((charge) => charge.memberId),
+      ).size,
+      debtMinor: state.membershipCharges
+        .filter((charge) => charge.status === "pending")
+        .reduce((total, charge) => total + charge.amountMinor - charge.paidMinor, 0),
+      newMembersThisMonth: state.members.filter((member) => member.joinedAt >= monthStart).length,
+    };
+  };
+  const requireManageMembers = () => requirePermission("manageMembers");
+
   const recordAudit = (input: {
     actor?: Session | null;
     action: string;
@@ -349,7 +535,7 @@ type StoredCashSession = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.11.0",
+    contractVersion: "2.12.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -360,7 +546,7 @@ type StoredCashSession = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 15,
+      schemaVersion: 17,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -1178,6 +1364,646 @@ type StoredCashSession = {
             resource: "staff_membership",
           });
           return staffSummary(member);
+        }
+
+        case "membership_dashboard": {
+          requireManageMembers();
+          return dashboardSnapshot();
+        }
+
+        case "list_membership_plans": {
+          requireManageMembers();
+          return state.membershipPlans.map((plan) => ({ ...plan }));
+        }
+
+        case "create_membership_plan": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          const description = String(input.description ?? "").trim() || null;
+          const durationDays = Number(input.durationDays);
+          const priceMinor = Number(input.priceMinor);
+          const graceDays = Number(input.graceDays);
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre del plan es obligatorio.");
+          }
+          if (!Number.isInteger(durationDays) || durationDays < 1) {
+            throw apiError("invalidRequest", "La duración debe ser de al menos un día.");
+          }
+          if (!Number.isInteger(priceMinor) || priceMinor < 0) {
+            throw apiError("invalidRequest", "El precio debe ser cero o mayor.");
+          }
+          if (!Number.isInteger(graceDays) || graceDays < 0) {
+            throw apiError("invalidRequest", "Los días de gracia deben ser cero o mayor.");
+          }
+          if (
+            state.membershipPlans.some(
+              (plan) => plan.name.toLowerCase() === name.toLowerCase(),
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe un plan con ese nombre.");
+          }
+          const plan: StoredMembershipPlan = {
+            id: uuid(),
+            name,
+            description,
+            durationDays,
+            priceMinor,
+            currency: "MXN",
+            graceDays,
+            active: true,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.membershipPlans.push(plan);
+          recordAudit({
+            actor: state.session,
+            action: "membership_plan.created",
+            resource: "membership_plan",
+          });
+          return { ...plan };
+        }
+
+        case "update_membership_plan": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const plan = state.membershipPlans.find(
+            (item) => item.id === String(input.planId ?? ""),
+          );
+          if (!plan) {
+            throw apiError("notFound", "El plan de membresía no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const durationDays = Number(input.durationDays);
+          const priceMinor = Number(input.priceMinor);
+          const graceDays = Number(input.graceDays);
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre del plan es obligatorio.");
+          }
+          if (!Number.isInteger(durationDays) || durationDays < 1) {
+            throw apiError("invalidRequest", "La duración debe ser de al menos un día.");
+          }
+          if (!Number.isInteger(priceMinor) || priceMinor < 0) {
+            throw apiError("invalidRequest", "El precio debe ser cero o mayor.");
+          }
+          if (!Number.isInteger(graceDays) || graceDays < 0) {
+            throw apiError("invalidRequest", "Los días de gracia deben ser cero o mayor.");
+          }
+          if (
+            state.membershipPlans.some(
+              (item) =>
+                item.id !== plan.id &&
+                item.name.toLowerCase() === name.toLowerCase(),
+            )
+          ) {
+            throw apiError("invalidRequest", "Ya existe un plan con ese nombre.");
+          }
+          plan.name = name;
+          plan.description = String(input.description ?? "").trim() || null;
+          plan.durationDays = durationDays;
+          plan.priceMinor = priceMinor;
+          plan.graceDays = graceDays;
+          plan.active = Boolean(input.active);
+          plan.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "membership_plan.updated",
+            resource: "membership_plan",
+          });
+          return { ...plan };
+        }
+
+        case "list_members": {
+          requireManageMembers();
+          const query = String(args.query ?? "").trim().toLowerCase();
+          return state.members
+            .filter((member) => {
+              if (!query) {
+                return true;
+              }
+              return [
+                member.firstName,
+                member.lastName,
+                member.memberNumber,
+                member.phone ?? "",
+                member.email ?? "",
+              ]
+                .join(" ")
+                .toLowerCase()
+                .includes(query);
+            })
+            .map(memberSnapshot);
+        }
+
+        case "get_member": {
+          requireManageMembers();
+          const member = state.members.find(
+            (item) => item.id === String(args.memberId ?? ""),
+          );
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          return memberSnapshot(member);
+        }
+
+        case "create_member": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const firstName = String(input.firstName ?? "").trim();
+          const lastName = String(input.lastName ?? "").trim();
+          const phone = String(input.phone ?? "").trim() || null;
+          const email = String(input.email ?? "").trim().toLowerCase() || null;
+          const birthDate = String(input.birthDate ?? "").trim() || null;
+          const notes = String(input.notes ?? "").trim() || null;
+          if (!firstName || !lastName) {
+            throw apiError("invalidRequest", "Nombre y apellido son obligatorios.");
+          }
+          if (email && !email.includes("@")) {
+            throw apiError("invalidRequest", "El email no es válido.");
+          }
+          state.memberSequence += 1;
+          const member: StoredMember = {
+            id: uuid(),
+            memberNumber: `SOC-${String(state.memberSequence).padStart(5, "0")}`,
+            firstName,
+            lastName,
+            phone,
+            email,
+            birthDate,
+            status: "active",
+            joinedAt: dateOnly(),
+            notes,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.members.push(member);
+          recordAudit({
+            actor: state.session,
+            action: "member.created",
+            resource: "member",
+          });
+          return memberSnapshot(member);
+        }
+
+        case "update_member": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const member = state.members.find(
+            (item) => item.id === String(input.memberId ?? ""),
+          );
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          const firstName = String(input.firstName ?? "").trim();
+          const lastName = String(input.lastName ?? "").trim();
+          const status = String(input.status ?? "");
+          if (!firstName || !lastName) {
+            throw apiError("invalidRequest", "Nombre y apellido son obligatorios.");
+          }
+          if (!["active", "inactive", "archived"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de socio inválido.");
+          }
+          member.firstName = firstName;
+          member.lastName = lastName;
+          member.phone = String(input.phone ?? "").trim() || null;
+          member.email = String(input.email ?? "").trim().toLowerCase() || null;
+          member.birthDate = String(input.birthDate ?? "").trim() || null;
+          member.status = status as StoredMember["status"];
+          member.notes = String(input.notes ?? "").trim() || null;
+          member.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "member.updated",
+            resource: "member",
+          });
+          return memberSnapshot(member);
+        }
+
+        case "list_prospects": {
+          requireManageMembers();
+          const query = String(args.query ?? "").trim().toLowerCase();
+          return state.prospects
+            .filter((prospect) =>
+              !query
+                ? true
+                : [prospect.name, prospect.phone ?? "", prospect.email ?? ""]
+                    .join(" ")
+                    .toLowerCase()
+                    .includes(query),
+            )
+            .map((prospect) => ({ ...prospect }));
+        }
+
+        case "create_prospect": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre del prospecto es obligatorio.");
+          }
+          const prospect: StoredProspect = {
+            id: uuid(),
+            name,
+            phone: String(input.phone ?? "").trim() || null,
+            email: String(input.email ?? "").trim().toLowerCase() || null,
+            source: String(input.source ?? "").trim() || null,
+            status: "new",
+            notes: String(input.notes ?? "").trim() || null,
+            convertedMemberId: null,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.prospects.push(prospect);
+          recordAudit({
+            actor: state.session,
+            action: "prospect.created",
+            resource: "prospect",
+          });
+          return { ...prospect };
+        }
+
+        case "update_prospect": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const prospect = state.prospects.find(
+            (item) => item.id === String(input.prospectId ?? ""),
+          );
+          if (!prospect) {
+            throw apiError("notFound", "El prospecto no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const status = String(input.status ?? "");
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre del prospecto es obligatorio.");
+          }
+          if (!["new", "contacted", "trial", "converted", "lost"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de prospecto inválido.");
+          }
+          if (prospect.status === "converted" && status !== "converted") {
+            throw apiError("invalidRequest", "Un prospecto convertido no se puede reabrir.");
+          }
+          if (status === "converted" && !prospect.convertedMemberId) {
+            throw apiError("invalidRequest", "Usa la acción de conversión.");
+          }
+          prospect.name = name;
+          prospect.phone = String(input.phone ?? "").trim() || null;
+          prospect.email = String(input.email ?? "").trim().toLowerCase() || null;
+          prospect.source = String(input.source ?? "").trim() || null;
+          prospect.status = status as StoredProspect["status"];
+          prospect.notes = String(input.notes ?? "").trim() || null;
+          prospect.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "prospect.updated",
+            resource: "prospect",
+          });
+          return { ...prospect };
+        }
+
+        case "convert_prospect": {
+          requireManageMembers();
+          const prospect = state.prospects.find(
+            (item) => item.id === String(args.prospectId ?? ""),
+          );
+          if (!prospect) {
+            throw apiError("notFound", "El prospecto no existe.");
+          }
+          if (prospect.status === "converted" || prospect.convertedMemberId) {
+            throw apiError("invalidRequest", "El prospecto ya fue convertido.");
+          }
+          const [firstName = prospect.name, ...rest] = prospect.name.split(/\s+/);
+          state.memberSequence += 1;
+          const member: StoredMember = {
+            id: uuid(),
+            memberNumber: `SOC-${String(state.memberSequence).padStart(5, "0")}`,
+            firstName,
+            lastName: rest.join(" "),
+            phone: prospect.phone,
+            email: prospect.email,
+            birthDate: null,
+            status: "active",
+            joinedAt: dateOnly(),
+            notes: prospect.notes,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.members.push(member);
+          prospect.status = "converted";
+          prospect.convertedMemberId = member.id;
+          prospect.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "prospect.converted",
+            resource: "member",
+          });
+          return memberSnapshot(member);
+        }
+
+        case "list_memberships": {
+          requireManageMembers();
+          return state.memberships
+            .filter((membership) => membership.memberId === String(args.memberId ?? ""))
+            .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+            .map(membershipSnapshot);
+        }
+
+        case "create_membership": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const member = state.members.find(
+            (item) => item.id === String(input.memberId ?? ""),
+          );
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          if (member.status !== "active") {
+            throw apiError("invalidRequest", "Solo socios activos pueden recibir membresía.");
+          }
+          const plan = state.membershipPlans.find(
+            (item) => item.id === String(input.planId ?? ""),
+          );
+          if (!plan || !plan.active) {
+            throw apiError("invalidRequest", "El plan no está activo.");
+          }
+          if (
+            state.memberships.some(
+              (membership) =>
+                membership.memberId === member.id &&
+                ["scheduled", "active", "paused"].includes(membership.status),
+            )
+          ) {
+            throw apiError("invalidRequest", "El socio ya tiene una membresía vigente.");
+          }
+          const startDate = String(input.startDate ?? "").trim() || dateOnly();
+          const endDate = addDays(startDate, plan.durationDays - 1);
+          const membership: StoredMembership = {
+            id: uuid(),
+            memberId: member.id,
+            planId: plan.id,
+            planName: plan.name,
+            status: startDate > dateOnly() ? "scheduled" : "active",
+            startDate,
+            endDate,
+            priceMinor: plan.priceMinor,
+            currency: plan.currency,
+            graceDays: plan.graceDays,
+            pausedAt: null,
+            pauseUntil: null,
+            cancellationReason: null,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+          state.memberships.push(membership);
+          if (plan.priceMinor > 0) {
+            state.membershipCharges.push({
+              id: uuid(),
+              membershipId: membership.id,
+              memberId: member.id,
+              description: `Membresía ${plan.name}`,
+              amountMinor: plan.priceMinor,
+              currency: plan.currency,
+              dueDate: startDate,
+              status: "pending",
+              paidMinor: 0,
+              createdAt: now(),
+              updatedAt: now(),
+            });
+          }
+          recordAudit({
+            actor: state.session,
+            action: "membership.created",
+            resource: "membership",
+          });
+          return membershipSnapshot(membership);
+        }
+
+        case "renew_membership": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const membership = state.memberships.find(
+            (item) => item.id === String(input.membershipId ?? ""),
+          );
+          if (!membership) {
+            throw apiError("notFound", "La membresía no existe.");
+          }
+          if (["paused", "cancelled"].includes(membership.status)) {
+            throw apiError("invalidRequest", "La membresía no permite renovación.");
+          }
+          const plan = state.membershipPlans.find(
+            (item) =>
+              item.id ===
+              (String(input.planId ?? "").trim() || membership.planId),
+          );
+          if (!plan || !plan.active) {
+            throw apiError("invalidRequest", "El plan no está activo.");
+          }
+          const periodStart =
+            membership.endDate >= dateOnly() ? addDays(membership.endDate, 1) : dateOnly();
+          const endDate = addDays(periodStart, plan.durationDays - 1);
+          membership.planId = plan.id;
+          membership.planName = plan.name;
+          membership.status = membership.startDate > dateOnly() ? "scheduled" : "active";
+          membership.endDate = endDate;
+          membership.priceMinor = plan.priceMinor;
+          membership.currency = plan.currency;
+          membership.graceDays = plan.graceDays;
+          membership.pausedAt = null;
+          membership.pauseUntil = null;
+          membership.cancellationReason = null;
+          membership.updatedAt = now();
+          if (plan.priceMinor > 0) {
+            state.membershipCharges.push({
+              id: uuid(),
+              membershipId: membership.id,
+              memberId: membership.memberId,
+              description: `Renovación ${plan.name}`,
+              amountMinor: plan.priceMinor,
+              currency: plan.currency,
+              dueDate: periodStart,
+              status: "pending",
+              paidMinor: 0,
+              createdAt: now(),
+              updatedAt: now(),
+            });
+          }
+          recordAudit({
+            actor: state.session,
+            action: "membership.renewed",
+            resource: "membership",
+          });
+          return membershipSnapshot(membership);
+        }
+
+        case "pause_membership": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const membership = state.memberships.find(
+            (item) => item.id === String(input.membershipId ?? ""),
+          );
+          if (!membership) {
+            throw apiError("notFound", "La membresía no existe.");
+          }
+          if (!["active", "scheduled"].includes(membership.status)) {
+            throw apiError("invalidRequest", "La membresía no se puede pausar.");
+          }
+          const untilDate = String(input.untilDate ?? "").trim();
+          if (!untilDate || untilDate < dateOnly()) {
+            throw apiError("invalidRequest", "La fecha de pausa no puede estar en el pasado.");
+          }
+          membership.status = "paused";
+          membership.pausedAt = dateOnly();
+          membership.pauseUntil = untilDate;
+          membership.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "membership.paused",
+            resource: "membership",
+          });
+          return membershipSnapshot(membership);
+        }
+
+        case "resume_membership": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const membership = state.memberships.find(
+            (item) => item.id === String(input.membershipId ?? ""),
+          );
+          if (!membership) {
+            throw apiError("notFound", "La membresía no existe.");
+          }
+          if (membership.status !== "paused" || !membership.pausedAt) {
+            throw apiError("invalidRequest", "La membresía no está pausada.");
+          }
+          const pausedDays = Math.max(
+            0,
+            Math.round(
+              (Date.parse(`${dateOnly()}T00:00:00.000Z`) -
+                Date.parse(`${membership.pausedAt}T00:00:00.000Z`)) /
+                86_400_000,
+            ),
+          );
+          membership.endDate = addDays(membership.endDate, pausedDays);
+          membership.status = membership.startDate > dateOnly() ? "scheduled" : "active";
+          membership.pausedAt = null;
+          membership.pauseUntil = null;
+          membership.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "membership.resumed",
+            resource: "membership",
+          });
+          return membershipSnapshot(membership);
+        }
+
+        case "cancel_membership": {
+          requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const membership = state.memberships.find(
+            (item) => item.id === String(input.membershipId ?? ""),
+          );
+          if (!membership) {
+            throw apiError("notFound", "La membresía no existe.");
+          }
+          if (!["active", "scheduled", "paused"].includes(membership.status)) {
+            throw apiError("invalidRequest", "La membresía no se puede cancelar.");
+          }
+          const reason = String(input.reason ?? "").trim();
+          if (!reason) {
+            throw apiError("invalidRequest", "El motivo de cancelación es obligatorio.");
+          }
+          membership.status = "cancelled";
+          membership.cancellationReason = reason;
+          membership.pausedAt = null;
+          membership.pauseUntil = null;
+          membership.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "membership.cancelled",
+            resource: "membership",
+          });
+          return membershipSnapshot(membership);
+        }
+
+        case "member_account": {
+          requireManageMembers();
+          const memberId = String(args.memberId ?? "");
+          if (!state.members.some((member) => member.id === memberId)) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          return accountSnapshot(memberId);
+        }
+
+        case "record_membership_payment": {
+          const session = requireManageMembers();
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const charge = state.membershipCharges.find(
+            (item) => item.id === String(input.chargeId ?? ""),
+          );
+          if (!charge) {
+            throw apiError("notFound", "El cargo no existe.");
+          }
+          if (charge.status !== "pending") {
+            throw apiError("invalidRequest", "El cargo no está pendiente de pago.");
+          }
+          const amountMinor = Number(input.amountMinor);
+          const paymentMethod = String(input.paymentMethod ?? "");
+          const reference = String(input.reference ?? "").trim() || null;
+          const idempotencyKey = String(input.idempotencyKey ?? "").trim();
+          if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+            throw apiError("invalidRequest", "El pago debe ser mayor a cero.");
+          }
+          const remaining = charge.amountMinor - charge.paidMinor;
+          if (amountMinor > remaining) {
+            throw apiError("invalidRequest", "El pago supera el saldo del cargo.");
+          }
+          if (!["cash", "transfer", "point"].includes(paymentMethod)) {
+            throw apiError("invalidRequest", "Método de pago inválido.");
+          }
+          if (!idempotencyKey) {
+            throw apiError("invalidRequest", "La clave de idempotencia es obligatoria.");
+          }
+          const requestHash = `${charge.id}:${amountMinor}:${paymentMethod}:${reference ?? ""}`;
+          const previous = state.membershipPaymentIdempotency.get(idempotencyKey);
+          if (previous) {
+            if (previous.requestHash !== requestHash) {
+              throw apiError(
+                "invalidRequest",
+                "La clave de idempotencia ya se usó con otro pago.",
+              );
+            }
+            const existing = state.membershipPayments.find(
+              (payment) => payment.id === previous.paymentId,
+            );
+            if (existing) {
+              return paymentSnapshot(existing);
+            }
+          }
+          const payment: StoredMembershipPayment = {
+            id: uuid(),
+            chargeId: charge.id,
+            membershipId: charge.membershipId,
+            memberId: charge.memberId,
+            amountMinor,
+            paymentMethod: paymentMethod as StoredMembershipPayment["paymentMethod"],
+            reference,
+            receivedBy: session.userId,
+            receivedByName: session.name,
+            createdAt: now(),
+          };
+          charge.paidMinor += amountMinor;
+          charge.status = charge.paidMinor >= charge.amountMinor ? "paid" : "pending";
+          charge.updatedAt = now();
+          state.membershipPayments.push(payment);
+          state.membershipPaymentIdempotency.set(idempotencyKey, {
+            requestHash,
+            paymentId: payment.id,
+          });
+          recordAudit({
+            actor: session,
+            action: "membership.payment_recorded",
+            resource: "membership_payment",
+          });
+          return paymentSnapshot(payment);
         }
 
         case "list_catalog": {
@@ -2310,7 +3136,7 @@ type StoredCashSession = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 15,
+            schemaVersion: 17,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);

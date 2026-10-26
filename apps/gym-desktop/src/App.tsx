@@ -13,6 +13,7 @@ import { CatalogPage } from "./pages/CatalogPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { InventoryPage } from "./pages/InventoryPage";
+import { MembersPage } from "./pages/MembersPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SalesPage } from "./pages/SalesPage";
 import { StaffPage } from "./pages/StaffPage";
@@ -96,6 +97,14 @@ export function App() {
           element={
             <Guarded permission="manageInventory">
               <InventoryPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="members"
+          element={
+            <Guarded permission="manageMembers">
+              <MembersPage />
             </Guarded>
           }
         />

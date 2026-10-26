@@ -13,13 +13,16 @@ pub use db::{
     verify_encrypted_database, AuditEventRecord, AuditIntegrityRecord, CashMovementRecord,
     CashSessionRecord, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, Db,
     FinancialReportRecord, InboundSyncEvent, InventoryAdjustmentRecord, InventoryItemRecord,
-    InventoryMovementRecord, LocalDatabaseStatus, ModuleEventRecord, NewCashMovement,
-    NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
-    NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewSale, NewSaleItem,
-    NewSaleReturn, NewSaleReturnItem, OrganizationRecord, OwnerRecoveryRecord, PaymentChargeRecord,
-    PaymentMethodTotalRecord, ProductSalesRecord, RecordedModuleEvent, SaleItemRecord, SaleRecord,
-    SaleReturnItemRecord, SaleReturnRecord, StaffRecord, SyncFailureRecord, SyncInboxRecord,
-    SyncOutboxRecord, UserCredentialRecord, UserRecord,
+    InventoryMovementRecord, LocalDatabaseStatus, MemberAccountRecord, MemberRecord,
+    MembershipChargeRecord, MembershipDashboardRecord, MembershipPaymentRecord,
+    MembershipPlanRecord, MembershipRecord, ModuleEventRecord, NewCashMovement, NewCatalogItem,
+    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate,
+    NewInventoryAdjustment, NewInventoryEntry, NewMember, NewMembershipPayment, NewMembershipPlan,
+    NewProspect, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, OrganizationRecord,
+    OwnerRecoveryRecord, PaymentChargeRecord, PaymentMethodTotalRecord, ProductSalesRecord,
+    ProspectRecord, RecordedModuleEvent, SaleItemRecord, SaleRecord, SaleReturnItemRecord,
+    SaleReturnRecord, StaffRecord, SyncFailureRecord, SyncInboxRecord, SyncOutboxRecord,
+    UpdateMember, UpdateMembershipPlan, UpdateProspect, UserCredentialRecord, UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

@@ -196,4 +196,33 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_sync_outbox_pending; \
                DROP TABLE IF EXISTS sync_outbox;",
     },
+    Migration {
+        version: 17,
+        name: "members",
+        up: include_str!("../migrations/0017_members.sql"),
+        down: "DROP TRIGGER IF EXISTS membership_payments_no_delete; \
+               DROP TRIGGER IF EXISTS membership_payments_no_update; \
+               DROP INDEX IF EXISTS idx_membership_payments_charge; \
+               DROP INDEX IF EXISTS idx_membership_payments_member_created; \
+               DROP TABLE IF EXISTS membership_payments; \
+               DROP TRIGGER IF EXISTS membership_charges_no_delete; \
+               DROP TRIGGER IF EXISTS membership_charges_immutable_terms; \
+               DROP INDEX IF EXISTS idx_membership_charges_membership; \
+               DROP INDEX IF EXISTS idx_membership_charges_member_status; \
+               DROP TABLE IF EXISTS membership_charges; \
+               DROP TRIGGER IF EXISTS membership_events_no_delete; \
+               DROP TRIGGER IF EXISTS membership_events_no_update; \
+               DROP INDEX IF EXISTS idx_membership_events_membership; \
+               DROP TABLE IF EXISTS membership_events; \
+               DROP INDEX IF EXISTS idx_memberships_member_created; \
+               DROP INDEX IF EXISTS idx_memberships_organization_end; \
+               DROP INDEX IF EXISTS idx_memberships_one_current; \
+               DROP TABLE IF EXISTS memberships; \
+               DROP INDEX IF EXISTS idx_prospects_organization_status; \
+               DROP TABLE IF EXISTS prospects; \
+               DROP INDEX IF EXISTS idx_members_organization_status; \
+               DROP INDEX IF EXISTS idx_members_organization_name; \
+               DROP TABLE IF EXISTS members; \
+               DROP TABLE IF EXISTS membership_plans;",
+    },
 ];

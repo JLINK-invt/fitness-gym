@@ -5,16 +5,21 @@ use gym_backup::{
 use gym_contracts::{
     AccessDecision, AccessEventSummary, AccessRequest, AddCatalogPriceInput,
     AddCatalogVariantInput, AdjustInventoryInput, ApiError, AuditEventSummary, AuditIntegrity,
-    AuditResult, BackupSummary, CashMovement, CashMovementType, CashSession, CashSessionStatus,
-    CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit, CatalogVariant,
-    CloseCashSessionInput, CreateCatalogItemInput, CreateSaleInput, CreateSaleReturnInput,
-    ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput, HealthReport,
-    HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
-    ListPaymentChargesInput, ModuleHealth, OpenCashSessionInput, PaymentCharge, PaymentMethod,
-    PaymentMethodTotal, ProductSalesTotal, RecordCashMovementInput, RecordInventoryEntryInput,
-    RecoveryCode, RecoveryKit, RestoreOutcome, Sale, SaleItem, SaleReturn, SaleReturnItem,
-    SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary, UpdateCatalogProductInput,
-    UpdateCatalogVariantInput, UpdateInventoryThresholdInput, CONTRACT_VERSION,
+    AuditResult, BackupSummary, CancelMembershipInput, CashMovement, CashMovementType, CashSession,
+    CashSessionStatus, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
+    CatalogVariant, CloseCashSessionInput, CreateCatalogItemInput, CreateMemberInput,
+    CreateMembershipInput, CreateMembershipPlanInput, CreateProspectInput, CreateSaleInput,
+    CreateSaleReturnInput, ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput,
+    HealthReport, HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
+    ListPaymentChargesInput, Member, MemberAccount, MemberStatus, Membership, MembershipCharge,
+    MembershipChargeStatus, MembershipDashboard, MembershipPayment, MembershipPlan,
+    MembershipStatus, ModuleHealth, OpenCashSessionInput, PauseMembershipInput, PaymentCharge,
+    PaymentMethod, PaymentMethodTotal, ProductSalesTotal, Prospect, ProspectStatus,
+    RecordCashMovementInput, RecordInventoryEntryInput, RecordMembershipPaymentInput, RecoveryCode,
+    RecoveryKit, RenewMembershipInput, RestoreOutcome, ResumeMembershipInput, Sale, SaleItem,
+    SaleReturn, SaleReturnItem, SessionSummary, SetupState, StaffRole, StaffStatus, StaffSummary,
+    UpdateCatalogProductInput, UpdateCatalogVariantInput, UpdateInventoryThresholdInput,
+    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::decide_simulated_access,
@@ -30,11 +35,14 @@ use gym_data::{
     sha256_hex, CashMovementRecord, CashSessionRecord, CatalogPriceRecord, CatalogProductRecord,
     CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider, FileKeyProvider,
     FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord, InventoryMovementRecord,
-    KeyProvider, KeyringKeyProvider, NewCashMovement, NewCatalogItem, NewCatalogPrice,
-    NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewInventoryAdjustment,
-    NewInventoryEntry, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, PaymentChargeRecord,
-    PaymentMethodTotalRecord, ProductSalesRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord,
-    SaleReturnRecord,
+    KeyProvider, KeyringKeyProvider, MemberAccountRecord, MemberRecord, MembershipChargeRecord,
+    MembershipDashboardRecord, MembershipPaymentRecord, MembershipPlanRecord, MembershipRecord,
+    NewCashMovement, NewCatalogItem, NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant,
+    NewCatalogVariantUpdate, NewInventoryAdjustment, NewInventoryEntry, NewMember,
+    NewMembershipPayment, NewMembershipPlan, NewProspect, NewSale, NewSaleItem, NewSaleReturn,
+    NewSaleReturnItem, PaymentChargeRecord, PaymentMethodTotalRecord, ProductSalesRecord,
+    ProspectRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
+    UpdateMember, UpdateMembershipPlan, UpdateProspect,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -376,6 +384,190 @@ fn staff_summary(record: gym_data::StaffRecord) -> StaffSummary {
         status: staff_status(&record.status),
         last_login_at: record.last_login_at,
         created_at: record.created_at,
+    }
+}
+
+fn member_status(value: &str) -> MemberStatus {
+    match value {
+        "inactive" => MemberStatus::Inactive,
+        "archived" => MemberStatus::Archived,
+        _ => MemberStatus::Active,
+    }
+}
+
+fn member_status_str(value: MemberStatus) -> &'static str {
+    match value {
+        MemberStatus::Active => "active",
+        MemberStatus::Inactive => "inactive",
+        MemberStatus::Archived => "archived",
+    }
+}
+
+fn prospect_status(value: &str) -> ProspectStatus {
+    match value {
+        "contacted" => ProspectStatus::Contacted,
+        "trial" => ProspectStatus::Trial,
+        "converted" => ProspectStatus::Converted,
+        "lost" => ProspectStatus::Lost,
+        _ => ProspectStatus::New,
+    }
+}
+
+fn prospect_status_str(value: ProspectStatus) -> &'static str {
+    match value {
+        ProspectStatus::New => "new",
+        ProspectStatus::Contacted => "contacted",
+        ProspectStatus::Trial => "trial",
+        ProspectStatus::Converted => "converted",
+        ProspectStatus::Lost => "lost",
+    }
+}
+
+fn membership_status(value: &str) -> MembershipStatus {
+    match value {
+        "scheduled" => MembershipStatus::Scheduled,
+        "paused" => MembershipStatus::Paused,
+        "expired" => MembershipStatus::Expired,
+        "cancelled" => MembershipStatus::Cancelled,
+        _ => MembershipStatus::Active,
+    }
+}
+
+fn membership_charge_status(value: &str) -> MembershipChargeStatus {
+    match value {
+        "paid" => MembershipChargeStatus::Paid,
+        "void" => MembershipChargeStatus::Void,
+        _ => MembershipChargeStatus::Pending,
+    }
+}
+
+fn membership_plan_summary(record: MembershipPlanRecord) -> MembershipPlan {
+    MembershipPlan {
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        duration_days: record.duration_days,
+        price_minor: record.price_minor,
+        currency: record.currency,
+        grace_days: record.grace_days,
+        active: record.active,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn membership_summary(record: MembershipRecord) -> Membership {
+    Membership {
+        id: record.id,
+        member_id: record.member_id,
+        member_name: record.member_name,
+        plan_id: record.plan_id,
+        plan_name: record.plan_name,
+        status: membership_status(&record.status),
+        start_date: record.start_date,
+        end_date: record.end_date,
+        price_minor: record.price_minor,
+        currency: record.currency,
+        grace_days: record.grace_days,
+        paused_at: record.paused_at,
+        pause_until: record.pause_until,
+        cancellation_reason: record.cancellation_reason,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn member_summary(record: MemberRecord) -> Member {
+    Member {
+        id: record.id,
+        member_number: record.member_number,
+        first_name: record.first_name,
+        last_name: record.last_name,
+        phone: record.phone,
+        email: record.email,
+        birth_date: record.birth_date,
+        status: member_status(&record.status),
+        joined_at: record.joined_at,
+        notes: record.notes,
+        active_membership: record.active_membership.map(membership_summary),
+        debt_minor: record.debt_minor,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn prospect_summary(record: ProspectRecord) -> Prospect {
+    Prospect {
+        id: record.id,
+        name: record.name,
+        phone: record.phone,
+        email: record.email,
+        source: record.source,
+        status: prospect_status(&record.status),
+        notes: record.notes,
+        converted_member_id: record.converted_member_id,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn membership_charge_summary(record: MembershipChargeRecord) -> MembershipCharge {
+    MembershipCharge {
+        id: record.id,
+        membership_id: record.membership_id,
+        member_id: record.member_id,
+        description: record.description,
+        amount_minor: record.amount_minor,
+        currency: record.currency,
+        due_date: record.due_date,
+        status: membership_charge_status(&record.status),
+        paid_minor: record.paid_minor,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn membership_payment_summary(record: MembershipPaymentRecord) -> MembershipPayment {
+    MembershipPayment {
+        id: record.id,
+        charge_id: record.charge_id,
+        membership_id: record.membership_id,
+        member_id: record.member_id,
+        amount_minor: record.amount_minor,
+        payment_method: payment_method(&record.payment_method),
+        reference: record.reference,
+        received_by: record.received_by,
+        received_by_name: record.received_by_name,
+        created_at: record.created_at,
+    }
+}
+
+fn member_account_summary(record: MemberAccountRecord) -> MemberAccount {
+    MemberAccount {
+        member_id: record.member_id,
+        currency: record.currency,
+        charges: record
+            .charges
+            .into_iter()
+            .map(membership_charge_summary)
+            .collect(),
+        payments: record
+            .payments
+            .into_iter()
+            .map(membership_payment_summary)
+            .collect(),
+        balance_minor: record.balance_minor,
+    }
+}
+
+fn membership_dashboard_summary(record: MembershipDashboardRecord) -> MembershipDashboard {
+    MembershipDashboard {
+        active_members: record.active_members,
+        active_memberships: record.active_memberships,
+        expiring_soon: record.expiring_soon,
+        past_due: record.past_due,
+        debt_minor: record.debt_minor,
+        new_members_this_month: record.new_members_this_month,
     }
 }
 
@@ -860,6 +1052,52 @@ fn staff_api_error(error: DataError) -> ApiError {
         DataError::InvalidValue(message) => ApiError::invalid(message),
         other => ApiError::new(ErrorCode::Storage, "no se pudo guardar al empleado")
             .with_details(other.to_string()),
+    }
+}
+
+fn members_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::MembershipPlanAlreadyExists => {
+            ApiError::invalid("ya existe un plan de membresía con ese nombre")
+        }
+        DataError::MembershipPlanNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el plan de membresía no existe")
+        }
+        DataError::MemberNotFound => ApiError::new(ErrorCode::NotFound, "el socio no existe"),
+        DataError::MembershipAlreadyCurrent => {
+            ApiError::invalid("el socio ya tiene una membresía vigente")
+        }
+        DataError::MembershipNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la membresía no existe")
+        }
+        DataError::MembershipStateConflict => {
+            ApiError::invalid("la membresía no permite esa operación en su estado actual")
+        }
+        DataError::ProspectNotFound => ApiError::new(ErrorCode::NotFound, "el prospecto no existe"),
+        DataError::ProspectAlreadyConverted => {
+            ApiError::invalid("el prospecto ya fue convertido en socio")
+        }
+        DataError::MembershipChargeNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el cargo no existe")
+        }
+        DataError::MembershipChargeNotPayable => {
+            ApiError::invalid("el cargo no está pendiente de pago")
+        }
+        DataError::MembershipPaymentExceedsBalance => {
+            ApiError::invalid("el pago supera el saldo pendiente del cargo")
+        }
+        DataError::MembershipPaymentIdempotencyConflict => ApiError::invalid(
+            "la clave de idempotencia ya se usó con otro pago; inicia un intento nuevo",
+        ),
+        DataError::MembershipPaymentNotFound => {
+            ApiError::new(ErrorCode::NotFound, "el pago no existe")
+        }
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo guardar la operación de socios",
+        )
+        .with_details(other.to_string()),
     }
 }
 
@@ -1565,6 +1803,455 @@ fn update_staff(
         None,
     );
     Ok(staff_summary(staff))
+}
+
+#[tauri::command]
+fn list_membership_plans(state: State<'_, AppState>) -> Result<Vec<MembershipPlan>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_membership_plans(&session.organization_id)
+        .map_err(members_api_error)
+        .map(|plans| plans.into_iter().map(membership_plan_summary).collect())
+}
+
+#[tauri::command]
+fn create_membership_plan(
+    input: CreateMembershipPlanInput,
+    state: State<'_, AppState>,
+) -> Result<MembershipPlan, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let plan = db
+        .create_membership_plan(
+            &session.organization_id,
+            NewMembershipPlan {
+                name: input.name,
+                description: input.description,
+                duration_days: input.duration_days,
+                price_minor: input.price_minor,
+                grace_days: input.grace_days,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership_plan.created",
+        "membership_plan",
+        "allowed",
+        "tauri",
+        Some(&plan.id),
+    );
+    Ok(membership_plan_summary(plan))
+}
+
+#[tauri::command]
+fn update_membership_plan(
+    input: UpdateMembershipPlanInput,
+    state: State<'_, AppState>,
+) -> Result<MembershipPlan, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let plan = db
+        .update_membership_plan(
+            &session.organization_id,
+            &input.plan_id,
+            UpdateMembershipPlan {
+                name: input.name,
+                description: input.description,
+                duration_days: input.duration_days,
+                price_minor: input.price_minor,
+                grace_days: input.grace_days,
+                active: input.active,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership_plan.updated",
+        "membership_plan",
+        "allowed",
+        "tauri",
+        Some(&plan.id),
+    );
+    Ok(membership_plan_summary(plan))
+}
+
+#[tauri::command]
+fn list_members(
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Member>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_members(&session.organization_id, query.as_deref())
+        .map_err(members_api_error)
+        .map(|members| members.into_iter().map(member_summary).collect())
+}
+
+#[tauri::command]
+fn get_member(member_id: String, state: State<'_, AppState>) -> Result<Member, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.member(&session.organization_id, &member_id)
+        .map(member_summary)
+        .map_err(members_api_error)
+}
+
+#[tauri::command]
+fn create_member(input: CreateMemberInput, state: State<'_, AppState>) -> Result<Member, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let member = db
+        .create_member(
+            &session.organization_id,
+            NewMember {
+                first_name: input.first_name,
+                last_name: input.last_name,
+                phone: input.phone,
+                email: input.email,
+                birth_date: input.birth_date,
+                notes: input.notes,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "member.created",
+        "member",
+        "allowed",
+        "tauri",
+        Some(&member.id),
+    );
+    Ok(member_summary(member))
+}
+
+#[tauri::command]
+fn update_member(input: UpdateMemberInput, state: State<'_, AppState>) -> Result<Member, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let member = db
+        .update_member(
+            &session.organization_id,
+            &input.member_id,
+            UpdateMember {
+                first_name: input.first_name,
+                last_name: input.last_name,
+                phone: input.phone,
+                email: input.email,
+                birth_date: input.birth_date,
+                status: member_status_str(input.status).to_string(),
+                notes: input.notes,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "member.updated",
+        "member",
+        "allowed",
+        "tauri",
+        Some(&member.id),
+    );
+    Ok(member_summary(member))
+}
+
+#[tauri::command]
+fn list_prospects(
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Prospect>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_prospects(&session.organization_id, query.as_deref())
+        .map_err(members_api_error)
+        .map(|prospects| prospects.into_iter().map(prospect_summary).collect())
+}
+
+#[tauri::command]
+fn create_prospect(
+    input: CreateProspectInput,
+    state: State<'_, AppState>,
+) -> Result<Prospect, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let prospect = db
+        .create_prospect(
+            &session.organization_id,
+            NewProspect {
+                name: input.name,
+                phone: input.phone,
+                email: input.email,
+                source: input.source,
+                notes: input.notes,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "prospect.created",
+        "prospect",
+        "allowed",
+        "tauri",
+        Some(&prospect.id),
+    );
+    Ok(prospect_summary(prospect))
+}
+
+#[tauri::command]
+fn update_prospect(
+    input: UpdateProspectInput,
+    state: State<'_, AppState>,
+) -> Result<Prospect, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let prospect = db
+        .update_prospect(
+            &session.organization_id,
+            &input.prospect_id,
+            UpdateProspect {
+                name: input.name,
+                phone: input.phone,
+                email: input.email,
+                source: input.source,
+                status: prospect_status_str(input.status).to_string(),
+                notes: input.notes,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "prospect.updated",
+        "prospect",
+        "allowed",
+        "tauri",
+        Some(&prospect.id),
+    );
+    Ok(prospect_summary(prospect))
+}
+
+#[tauri::command]
+fn convert_prospect(prospect_id: String, state: State<'_, AppState>) -> Result<Member, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let member = db
+        .convert_prospect(&session.organization_id, &prospect_id)
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "prospect.converted",
+        "member",
+        "allowed",
+        "tauri",
+        Some(&member.id),
+    );
+    Ok(member_summary(member))
+}
+
+#[tauri::command]
+fn list_memberships(
+    member_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<Membership>, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.list_memberships(&session.organization_id, &member_id)
+        .map_err(members_api_error)
+        .map(|memberships| memberships.into_iter().map(membership_summary).collect())
+}
+
+#[tauri::command]
+fn create_membership(
+    input: CreateMembershipInput,
+    state: State<'_, AppState>,
+) -> Result<Membership, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let membership = db
+        .create_membership(
+            &session.organization_id,
+            &session.user_id,
+            &input.member_id,
+            &input.plan_id,
+            input.start_date.as_deref(),
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.created",
+        "membership",
+        "allowed",
+        "tauri",
+        Some(&membership.id),
+    );
+    Ok(membership_summary(membership))
+}
+
+#[tauri::command]
+fn renew_membership(
+    input: RenewMembershipInput,
+    state: State<'_, AppState>,
+) -> Result<Membership, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let membership = db
+        .renew_membership(
+            &session.organization_id,
+            &session.user_id,
+            &input.membership_id,
+            input.plan_id.as_deref(),
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.renewed",
+        "membership",
+        "allowed",
+        "tauri",
+        Some(&membership.id),
+    );
+    Ok(membership_summary(membership))
+}
+
+#[tauri::command]
+fn pause_membership(
+    input: PauseMembershipInput,
+    state: State<'_, AppState>,
+) -> Result<Membership, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let membership = db
+        .pause_membership(
+            &session.organization_id,
+            &session.user_id,
+            &input.membership_id,
+            &input.until_date,
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.paused",
+        "membership",
+        "allowed",
+        "tauri",
+        Some(&membership.id),
+    );
+    Ok(membership_summary(membership))
+}
+
+#[tauri::command]
+fn resume_membership(
+    input: ResumeMembershipInput,
+    state: State<'_, AppState>,
+) -> Result<Membership, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let membership = db
+        .resume_membership(
+            &session.organization_id,
+            &session.user_id,
+            &input.membership_id,
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.resumed",
+        "membership",
+        "allowed",
+        "tauri",
+        Some(&membership.id),
+    );
+    Ok(membership_summary(membership))
+}
+
+#[tauri::command]
+fn cancel_membership(
+    input: CancelMembershipInput,
+    state: State<'_, AppState>,
+) -> Result<Membership, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let membership = db
+        .cancel_membership(
+            &session.organization_id,
+            &session.user_id,
+            &input.membership_id,
+            &input.reason,
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.cancelled",
+        "membership",
+        "allowed",
+        "tauri",
+        Some(&membership.id),
+    );
+    Ok(membership_summary(membership))
+}
+
+#[tauri::command]
+fn member_account(
+    member_id: String,
+    state: State<'_, AppState>,
+) -> Result<MemberAccount, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.member_account(&session.organization_id, &member_id)
+        .map(member_account_summary)
+        .map_err(members_api_error)
+}
+
+#[tauri::command]
+fn record_membership_payment(
+    input: RecordMembershipPaymentInput,
+    state: State<'_, AppState>,
+) -> Result<MembershipPayment, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    let payment = db
+        .record_membership_payment(
+            &session.organization_id,
+            &session.user_id,
+            NewMembershipPayment {
+                charge_id: input.charge_id,
+                amount_minor: input.amount_minor,
+                payment_method: payment_method_str(input.payment_method).to_string(),
+                reference: input.reference,
+                idempotency_key: input.idempotency_key,
+            },
+        )
+        .map_err(members_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "membership.payment_recorded",
+        "membership_payment",
+        "allowed",
+        "tauri",
+        Some(&payment.id),
+    );
+    Ok(membership_payment_summary(payment))
+}
+
+#[tauri::command]
+fn membership_dashboard(state: State<'_, AppState>) -> Result<MembershipDashboard, ApiError> {
+    let session = state.authorize(Permission::ManageMembers)?;
+    let db = state.db()?;
+    db.membership_dashboard(&session.organization_id)
+        .map(membership_dashboard_summary)
+        .map_err(members_api_error)
 }
 
 #[tauri::command]
@@ -2434,6 +3121,26 @@ pub fn run() {
             list_staff,
             create_staff,
             update_staff,
+            list_membership_plans,
+            create_membership_plan,
+            update_membership_plan,
+            list_members,
+            get_member,
+            create_member,
+            update_member,
+            list_prospects,
+            create_prospect,
+            update_prospect,
+            convert_prospect,
+            list_memberships,
+            create_membership,
+            renew_membership,
+            pause_membership,
+            resume_membership,
+            cancel_membership,
+            member_account,
+            record_membership_payment,
+            membership_dashboard,
             list_catalog,
             create_catalog_item,
             add_catalog_variant,

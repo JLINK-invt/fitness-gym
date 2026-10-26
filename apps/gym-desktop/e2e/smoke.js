@@ -154,6 +154,44 @@ async (page) => {
   await page.getByLabel("Nombre de Playera").waitFor();
   pass("crear producto rastreado por inventario");
 
+  await page.getByRole("link", { name: "Socios" }).click();
+  await page.getByRole("heading", { name: "Socios y membresías" }).waitFor();
+  await page.getByRole("button", { name: "Planes" }).click();
+  await page.getByLabel("Nombre").fill("Mensual E2E");
+  await page.getByLabel("Precio").fill("450");
+  await page.getByRole("button", { name: "Crear plan" }).click();
+  await page.getByText("$450.00").waitFor();
+  pass("crear plan de membresía");
+
+  await page.getByRole("button", { name: "Socios", exact: true }).click();
+  await page.getByRole("button", { name: "Nuevo socio" }).click();
+  await page.getByLabel("Nombre", { exact: true }).fill("Luisa");
+  await page.getByLabel("Apellido").fill("Socia");
+  await page.getByLabel("Teléfono").fill("555-0101");
+  await page.getByRole("button", { name: "Dar de alta" }).click();
+  await page.getByText("SOC-00001").first().waitFor();
+  pass("dar de alta a un socio");
+
+  await page.getByRole("button", { name: "Gestionar" }).click();
+  await page.getByLabel("Plan de membresía").selectOption({ label: "Mensual E2E · $450.00" });
+  await page.getByRole("button", { name: "Alta de membresía" }).click();
+  await page.getByText(/Vigente .* a /).waitFor();
+  pass("asignar membresía y generar cargo");
+
+  await page.getByRole("button", { name: /Membresía Mensual E2E/ }).click();
+  await page.getByRole("button", { name: /Registrar pago de/ }).click();
+  await page.getByText("Sin cargos pendientes.").waitFor();
+  pass("cobrar el cargo de la membresía");
+
+  await page.getByRole("button", { name: "Prospectos" }).click();
+  await page.getByLabel("Nombre").fill("Pedro Prospecto");
+  await page.getByLabel("Teléfono").fill("555-0202");
+  await page.getByRole("button", { name: "Agregar prospecto" }).click();
+  await page.getByText("Pedro Prospecto").waitFor();
+  await page.getByRole("button", { name: "Convertir en socio" }).click();
+  await page.getByText("Socio creado").waitFor();
+  pass("convertir prospecto en socio");
+
   await page.getByRole("link", { name: "Equipo" }).click();
   await page.getByRole("heading", { name: "Equipo" }).waitFor();
   await page.getByLabel("Nombre del empleado").fill("Carlos Caja");

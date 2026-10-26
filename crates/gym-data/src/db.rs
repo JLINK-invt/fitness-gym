@@ -11,6 +11,14 @@ use crate::key::DbKey;
 use crate::migrations::MIGRATIONS;
 use crate::sha256_hex;
 
+mod members;
+pub use members::{
+    MemberAccountRecord, MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
+    MembershipPaymentRecord, MembershipPlanRecord, MembershipRecord, NewMember,
+    NewMembershipPayment, NewMembershipPlan, NewProspect, ProspectRecord, UpdateMember,
+    UpdateMembershipPlan, UpdateProspect,
+};
+
 pub type LocalDatabaseStatus = DatabaseStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4995,7 +5003,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 16);
+        assert_eq!(second_status.schema_version, 17);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
