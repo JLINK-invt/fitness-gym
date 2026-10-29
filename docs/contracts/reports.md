@@ -1,21 +1,22 @@
 # Contrato local · reportes y analítica (Phase 3–4)
 
-- **Versión de contrato:** 3.0.0
+- **Versión de contrato:** 3.1.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v21 (`0021_gym_operations.sql`)
+- **Esquema:** v22 (`0022_critical_settings_approval.sql`)
 
 ## Comandos
 
 | Comando | Entrada | Salida | Permiso |
 | --- | --- | --- | --- |
-| `financial_report` | `from`, `to` (RFC3339) | `FinancialReport` | `ViewFinance` |
-| `export_financial_report_csv` | `from`, `to` (RFC3339) | `FinancialReportExport` | `ViewFinance` |
-| `create_report_schedule` | `NewReportScheduleInput` | `ReportSchedule` | `ViewFinance` |
-| `list_report_schedules` | — | `ReportSchedule[]` | `ViewFinance` |
-| `set_report_schedule_enabled` | `SetReportScheduleEnabledInput` | `ReportSchedule` | `ViewFinance` |
-| `list_report_runs` | `limit?` | `ReportRun[]` | `ViewFinance` |
-| `run_due_report_schedules` | — | `ReportRun[]` | `ViewFinance` |
+| `financial_report` | `from`, `to` (RFC3339) | `FinancialReport` | `ViewFinance` o `ViewReports` |
+| `export_financial_report_csv` | `from`, `to` (RFC3339) | `FinancialReportExport` | `ExportFinance` |
+| `export_report_csv` | `from`, `to` (RFC3339) | `FinancialReportExport` | `ExportReports` |
+| `create_report_schedule` | `NewReportScheduleInput` | `ReportSchedule` | `ExportReports` |
+| `list_report_schedules` | — | `ReportSchedule[]` | `ViewFinance` o `ViewReports` |
+| `set_report_schedule_enabled` | `SetReportScheduleEnabledInput` | `ReportSchedule` | `ExportReports` |
+| `list_report_runs` | `limit?` | `ReportRun[]` | `ViewFinance` o `ViewReports` |
+| `run_due_report_schedules` | — | `ReportRun[]` | `ExportReports` |
 
 ## DTOs
 
@@ -173,9 +174,15 @@ interface ReportRun {
   se escapan y se neutralizan fórmulas de hoja de cálculo.
 - La cabecera incluye `Gimnasio`, `Razón social` y `RFC` desde `gym_settings`;
   son metadata para el contador, no datos contables ni cálculo de impuestos.
+- El campo `checksum` en `ReportRun` es SHA-256 del CSV; `status = failed` incluye
+  el mensaje de error.
 - La moneda proviene de `organizations.currency`.
-- Solo `ViewFinance` (dueño, encargado y contabilidad) puede consultar,
-  exportar o programar reportes. El cajero no accede a reportes.
+- `financial_report` / `list_report_schedules` / `list_report_runs`: `ViewFinance`
+  o `ViewReports` (dueño, encargado, contabilidad).
+- `export_financial_report_csv`: `ExportFinance` (dueño, encargado).
+- `export_report_csv`, `create_report_schedule`, `set_report_schedule_enabled`,
+  `run_due_report_schedules`: `ExportReports` (dueño, encargado).
+- El cajero no accede a reportes.
 - Las programaciones usan `daily` (+1 día), `weekly` (+7 días) o `monthly`
   (+30 días). `lookbackDays` define el periodo del CSV.
 - `run_due_report_schedules` genera el CSV con `financial_report_csv`, guarda
@@ -193,7 +200,8 @@ interface ReportRun {
 
 ## Auditoría
 
-- `report.exported` con recurso `financial_report`, resultado `allowed` y
+- `report.exported` con recurso `financial_report` (para `export_financial_report_csv`)
+  o `financial_report_export` (para `export_report_csv`), resultado `allowed` y
   `correlationId` igual al nombre del archivo.
 - Si la auditoría falla, el archivo recién escrito se elimina y el comando
   devuelve `storage`; no queda una exportación sin rastro.
@@ -203,4 +211,5 @@ interface ReportRun {
 ## Fuera de alcance
 
 Reportes fiscales, declaraciones, conciliación bancaria automática, envío por
-correo y exportación a Excel/PDF.
+correo y exportación a Excel/PDF. La app no calcula impuestos, CFDI, pólizas
+ni asientos contables; solo exporta datos para el contador.

@@ -1,21 +1,25 @@
 # Contrato local · sincronización (Phase 3)
 
-- **Versión de contrato:** 3.0.0
-- **Estado:** journal local implementado; transporte de red pendiente
-- **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v21 (`0021_gym_operations.sql`)
+- **Versión de contrato:** 3.1.0
+- **Estado:** journal + transporte mTLS implementado (Phase 5)
+- **Ámbito:** app Tauri, core Rust, SQLite local + servidor mTLS multi-gimnasio
+- **Esquema:** v22 (`0022_critical_settings_approval.sql`)
 
 ## Alcance
 
-La app registra los cambios sincronizables en un journal local duradero. El
-outbox se escribe en la misma transacción que el cambio de negocio; el inbox
-guarda eventos remotos de forma idempotente y mantiene un cursor por secuencia
-de servidor. El motor `gym-sync` puede empujar y jalar contra cualquier
-`SyncTransport`; las pruebas usan un servidor falso en memoria.
+La app registra los cambios sincronizables en un journal local duradero y
+sincroniza contra un servidor mTLS multi-gimnasio. El outbox se escribe en la
+misma transacción que el cambio de negocio; el inbox guarda eventos remotos
+de forma idempotente y mantiene un cursor por secuencia de servidor. El motor
+`gym-sync` usa `MtlsSyncTransport` (reqwest + mTLS) contra el servidor
+`gym-sync-server`.
 
-No hay comandos Tauri, pantalla de sincronización, enrolamiento de dispositivo
-ni transporte de red habilitado. La sincronización multi-dispositivo real queda
-pendiente de un servidor, mTLS y resolución de conflictos.
+Comando Tauri: `run_sync_now` (permiso `ManageIntegrations`) ejecuta un ciclo
+completo y devuelve un reporte. UI en **Complementos → Sincronización**.
+
+Servidor: `gym-sync-server` escucha en mTLS; la organización se deriva del CN
+del certificado cliente; deduplicación por `idempotency_key` y secuencia
+monotónica por organización.
 
 ## Tablas
 
@@ -110,13 +114,15 @@ fallo del evento y se reflejan en `SyncReport.transportError`.
 - El journal vive dentro de la misma base SQLCipher; no hay archivos de sync en
   claro.
 - No se registran claves, tokens ni payloads en logs.
-- El transporte real deberá usar HTTPS con mTLS por dispositivo, enrolamiento y
-  rotación de certificados; el `SyncTransport` actual es solo una frontera.
-- El servidor deberá deduplicar por `idempotency_key` y validar la organización
-  del certificado antes de aceptar un evento.
+- El transporte usa mTLS mutuo: el cliente presenta certificado con CN=org,
+  el servidor valida la CA y extrae la organización del CN; rechaza si no
+  coincide con el cuerpo de la petición.
+- El servidor deduplica por `idempotency_key` y valida la organización del
+  certificado antes de aceptar un evento.
+- El certificado del cliente debe incluir `ExtendedKeyUsage: ClientAuth`.
 
 ## Fuera de alcance
 
-Transporte HTTP real, enrolamiento/rotación mTLS, servidor multi-tenant,
-resolución de conflictos, aplicación de eventos remotos al negocio, UI de estado
-de sync y sincronización de catálogo o personal.
+Resolución de conflictos automática, aplicación de eventos remotos al negocio
+(más allá del inbox), enrolamiento/rotación de certificados en la UI,
+sincronización de catálogo o personal.
