@@ -4895,6 +4895,7 @@ pub fn run() {
         .ok();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(&data_dir)?;
@@ -5058,7 +5059,7 @@ mod security_tests {
             fs::read_to_string(root.join("capabilities/default.json")).expect("reads capabilities");
         let parsed: serde_json::Value =
             serde_json::from_str(&capabilities).expect("valid capabilities JSON");
-        assert_eq!(parsed["permissions"], serde_json::json!(["core:default"]));
+        assert_eq!(parsed["permissions"], serde_json::json!(["core:default", "updater:default"]));
         assert!(!capabilities.contains("shell:"));
         assert!(!capabilities.contains("fs:"));
 
