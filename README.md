@@ -15,7 +15,7 @@ suscripciones separadas quedan fuera de la V1.
 
 | Capacidad | Estado |
 | --- | --- |
-| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v21 |
+| Persistencia SQLCipher, migraciones y backups | Operativo; esquema v22 |
 | Accesos, credenciales y asistencia | Operativo: snapshots firmados, credenciales por socio, bitácora idempotente y ocupación por hora |
 | Primer arranque y cuenta del dueño | Operativo: Argon2id, mínimo 12 caracteres, código de recuperación de un solo uso |
 | Login local y sesión en memoria | Operativo: bloqueo tras 5 fallos y expiración por 15 min de inactividad |
@@ -29,7 +29,7 @@ suscripciones separadas quedan fuera de la V1.
 | Caja y turnos | Operativo: fondo inicial, ingresos/gastos con evidencia, cierre con diferencia auditada e historial |
 | Inventario y valoración | Operativo: entradas, ajustes, umbrales y valoración por costo promedio |
 | Panel operativo | Operativo: existencias, valor, alertas de mínimo y rotación básica |
-| Journal de sincronización | Operativo en local: outbox transaccional, inbox idempotente y motor con fake server; transporte real pendiente |
+| Journal de sincronización | Operativo: outbox transaccional, inbox idempotente, motor con fake server y transporte real mTLS |
 | Suscripciones V1 | Diferidas; se unifican con membresías de socios en Fase 4.1 |
 | CRM básico, socios y membresías | Operativo: prospectos, socios, planes, membresías, cargos, pagos y credenciales |
 | Configuración y complementos | Operativo: identidad y reglas operativas, vínculos de integración y journal de sincronización |
@@ -38,8 +38,12 @@ suscripciones separadas quedan fuera de la V1.
 | Finanzas | Operativo: resumen por periodo, métodos de pago y exportación CSV auditada |
 | Mantenimiento | Operativo: equipos, órdenes preventivas/correctivas e historial |
 | Reportes programados | Operativo: CSV financiero automático con checksum y bitácora de ejecuciones |
-| Validación Windows/macOS | Diferida a Fase 5 por falta de hardware macOS |
-| Smoke E2E de interfaz | 46 comprobaciones en verde con IPC simulado |
+| Aprobación de configuración crítica | Operativo: solicitud y revisión por dos personas con auditoría |
+| Exportación de auditoría | Operativo: CSV con hash chain y sidecar SHA-256 |
+| Actualización firmada | Operativo: plugin updater con artefactos minisign; claves pendientes de provisionar |
+| CI/CD multiplataforma | Operativo: matriz Rust Linux/Windows/macOS, bundle de release y auditoría de dependencias |
+| Validación Windows/macOS | En curso en CI; falta hardware macOS para notarización y piloto |
+| Smoke E2E de interfaz | 50 comprobaciones en verde con IPC simulado |
 
 La app abre la base local, aplica migraciones, configura el gimnasio y su dueño,
 entrega un código de recuperación, exige login, administra colaboradores y
@@ -150,10 +154,13 @@ crates/
   gym-contracts/           DTOs versionados (camelCase)
   gym-data/                SQLCipher, migraciones y key providers
   gym-backup/              snapshots cifrados y restauración
-  gym-sync/                journal outbox/inbox y motor de sincronización
+  gym-sync/                journal outbox/inbox, motor y transporte mTLS
+  gym-sync-server/         servidor de sincronización con TLS mutuo
 packages/
   contracts/               espejo TypeScript + JSON Schema
   config/                  tsconfig compartido
+chaos/                     harness de carga, caos y verificación de aceptación
+security/                  script de auditoría de dependencias
 docs/
   architecture.md          límites, flujo y criterios de la fase
   runbooks/migrations.md   rollback y operación de migraciones
@@ -171,6 +178,12 @@ docs/
 - [Contrato de sincronización](docs/contracts/sync.md): outbox, inbox y cursor local.
 - [Contrato de auditoría](docs/contracts/audit.md): append-only, hash chain y consulta.
 - [Runbook de migraciones](docs/runbooks/migrations.md).
+- [Runbook de release](docs/runbooks/release.md): firma minisign y publicación.
+- [Runbook de firma](docs/runbooks/signing.md): certificados Windows y macOS.
+- [Runbook de backup y restauración](docs/runbooks/backup-restore.md).
+- [Runbook de caos y resiliencia](docs/runbooks/chaos-testing.md): prueba de 72 horas.
+- [Runbook de pentest ASVS](docs/runbooks/pentest-asvs.md).
+- [Runbook de piloto](docs/runbooks/pilot-deployment.md).
 
 ## Seguridad implementada
 
@@ -192,18 +205,20 @@ docs/
 - El journal de sincronización encola eventos en la misma transacción del cambio
   de negocio, deduplica por `idempotency_key`, reintenta con backoff y pasa a
   `dead_letter` tras cinco fallos. El inbox deduplica por `event_id` y avanza un
-  cursor por secuencia de servidor. No hay transporte de red habilitado.
+  cursor por secuencia de servidor. El transporte real usa TLS mutuo con la
+  organización tomada del CN del certificado cliente.
+- La configuración crítica requiere solicitud y revisión por dos personas
+  distintas, con registro de auditoría de la aprobación.
 - Auditoría append-only con triggers anti `UPDATE`/`DELETE`, hash chain SHA-256 y
   verificación de integridad desde la UI.
 - Logs sin claves ni passphrases.
 
 ## Siguientes pasos
 
-1. Fase 5: integración real de Point, aceptación de impresión en hardware,
-   validación Windows/macOS y endurecimiento de permisos.
-2. Phase 5: servidor de sincronización con mTLS, hardening, piloto y
-   validación/empaquetado en Windows/macOS.
-3. Fuera de la V1: mobile, growth (leads, campañas, referidos, churn), suscripciones
+1. Fase 5: provisionar certificados de firma (Windows EV, macOS Developer ID),
+   ejecutar la prueba de 72 horas sin Internet, el pentest ASVS y el piloto en un
+   gimnasio real.
+2. Fuera de la V1: mobile, growth (leads, campañas, referidos, churn), suscripciones
    V1, escáner de productos y multi-sede.
 
 Contratos: [acceso simulado](docs/contracts/access-simulated.md),
