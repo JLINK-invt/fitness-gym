@@ -140,4 +140,22 @@ pub enum DataError {
 
     #[error("the report schedule does not exist in this gym")]
     ReportScheduleNotFound,
+
+    #[error("the integration link does not exist in this gym")]
+    IntegrationLinkNotFound,
+
+    #[error("the class does not exist in this gym")]
+    ClassNotFound,
+
+    #[error("the class booking does not exist in this gym")]
+    ClassBookingNotFound,
+
+    #[error("the marketing campaign does not exist in this gym")]
+    CampaignNotFound,
+
+    #[error("the equipment does not exist in this gym")]
+    EquipmentNotFound,
+
+    #[error("the maintenance order does not exist in this gym")]
+    MaintenanceOrderNotFound,
 }

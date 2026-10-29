@@ -7,24 +7,30 @@ use gym_contracts::{
     AccessReconciliationInput, AccessReconciliationSummary, AccessRequest, AccessSnapshot,
     AddCatalogPriceInput, AddCatalogVariantInput, AdjustInventoryInput, ApiError, AttendanceDay,
     AttendanceHour, AttendanceInput, AttendanceMember, AttendancePlan, AttendanceReport,
-    AttendanceZone, AuditEventSummary, AuditIntegrity, AuditResult, BackupSummary,
-    CancelMembershipInput, CashMovement, CashMovementType, CashSession, CashSessionStatus,
-    CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit, CatalogVariant,
-    CloseCashSessionInput, CreateCatalogItemInput, CreateMemberInput, CreateMembershipInput,
-    CreateMembershipPlanInput, CreateProspectInput, CreateSaleInput, CreateSaleReturnInput,
-    ErrorCode, FinancialReport, FinancialReportExport, FinancialReportInput, HealthReport,
-    HealthStatus, InventoryAdjustmentTotal, InventoryItem, InventoryMovement,
-    ListPaymentChargesInput, Member, MemberAccount, MemberCredential, MemberStatus, Membership,
-    MembershipCharge, MembershipChargeStatus, MembershipDashboard, MembershipDashboardTrendPoint,
-    MembershipPayment, MembershipPaymentReceipt, MembershipPlan, MembershipStatus, ModuleHealth,
+    AttendanceZone, AuditEventSummary, AuditIntegrity, AuditResult, BackupSummary, BookClassInput,
+    Campaign, CancelMembershipInput, CashMovement, CashMovementType, CashSession,
+    CashSessionStatus, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
+    CatalogVariant, ClassBooking, ClassSession, CloseCashSessionInput, CreateCampaignInput,
+    CreateCatalogItemInput, CreateClassInput, CreateEquipmentInput, CreateMaintenanceOrderInput,
+    CreateMemberInput, CreateMembershipInput, CreateMembershipPlanInput, CreateProspectInput,
+    CreateSaleInput, CreateSaleReturnInput, Equipment, ErrorCode, FinancialReport,
+    FinancialReportExport, FinancialReportInput, FunnelStage, GymSettings, HealthReport,
+    HealthStatus, IntegrationJournalSummary, IntegrationLink, InventoryAdjustmentTotal,
+    InventoryItem, InventoryMovement, ListPaymentChargesInput, MaintenanceOrder, MarketingFunnel,
+    Member, MemberAccount, MemberCredential, MemberStatus, Membership, MembershipCharge,
+    MembershipChargeStatus, MembershipDashboard, MembershipDashboardTrendPoint, MembershipPayment,
+    MembershipPaymentReceipt, MembershipPlan, MembershipStatus, ModuleHealth,
     NewReportScheduleInput, OpenCashSessionInput, PauseMembershipInput, PaymentCharge,
-    PaymentMethod, PaymentMethodTotal, ProductSalesTotal, Prospect, ProspectStatus,
-    RecordCashMovementInput, RecordInventoryEntryInput, RecordMembershipPaymentInput, RecoveryCode,
-    RecoveryKit, RenewMembershipInput, ReportRun, ReportSchedule, RestoreOutcome,
-    ResumeMembershipInput, Sale, SaleItem, SaleReturn, SaleReturnItem, SessionSummary,
-    SetReportScheduleEnabledInput, SetupState, StaffRole, StaffStatus, StaffSummary,
-    UpdateCatalogProductInput, UpdateCatalogVariantInput, UpdateInventoryThresholdInput,
-    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, CONTRACT_VERSION,
+    PaymentMethod, PaymentMethodTotal, PermissionEffect, PermissionOverride, ProductSalesTotal,
+    Prospect, ProspectStatus, RecordCashMovementInput, RecordInventoryEntryInput,
+    RecordMembershipPaymentInput, RecoveryCode, RecoveryKit, RenewMembershipInput, ReportRun,
+    ReportSchedule, RestoreOutcome, ResumeMembershipInput, Sale, SaleItem, SaleReturn,
+    SaleReturnItem, SessionSummary, SetReportScheduleEnabledInput, SetupState, StaffRole,
+    StaffStatus, StaffSummary, UpdateCampaignInput, UpdateCatalogProductInput,
+    UpdateCatalogVariantInput, UpdateClassBookingInput, UpdateClassInput, UpdateEquipmentInput,
+    UpdateGymSettingsInput, UpdateInventoryThresholdInput, UpdateMaintenanceOrderInput,
+    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, UpdateStaffPermissionsInput,
+    UpsertIntegrationLinkInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::{decide_member_access, decide_simulated_access, MemberAccessContext},
@@ -33,24 +39,28 @@ use gym_core::{
         verify_password, verify_recovery_code, IDLE_TIMEOUT_MINUTES, LOGIN_LOCK_MINUTES,
         MAX_LOGIN_ATTEMPTS, OWNER_MIN_PASSWORD_CHARS, STAFF_MIN_PASSWORD_CHARS,
     },
-    rbac::{self, Permission, Role},
+    rbac::{self, Permission, PermissionOverride as CorePermissionOverride, Role},
     CORE_VERSION, SERVICE_NAME,
 };
 use gym_data::{
     sha256_hex, AccessEventRecord, AccessEventWriteOutcome, AccessSnapshotRecord,
-    AttendanceReportRecord, CashMovementRecord, CashSessionRecord, CatalogPriceRecord,
-    CatalogProductRecord, CatalogVariantRecord, DataError, Db, DbKey, EnvKeyProvider,
-    FileKeyProvider, FinancialReportRecord, InventoryAdjustmentRecord, InventoryItemRecord,
-    InventoryMovementRecord, KeyProvider, KeyringKeyProvider, MemberAccountRecord,
-    MemberCredentialRecord, MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
+    AttendanceReportRecord, CampaignRecord, CashMovementRecord, CashSessionRecord,
+    CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, ClassBookingRecord,
+    ClassRecord, DataError, Db, DbKey, EnvKeyProvider, EquipmentRecord, FileKeyProvider,
+    FinancialReportRecord, GymSettingsRecord, IntegrationLinkRecord, InventoryAdjustmentRecord,
+    InventoryItemRecord, InventoryMovementRecord, KeyProvider, KeyringKeyProvider,
+    MaintenanceOrderRecord, MaintenanceOrderUpdate, MemberAccountRecord, MemberCredentialRecord,
+    MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
     MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord, MembershipPaymentRecord,
-    MembershipPlanRecord, MembershipRecord, NewCashMovement, NewCatalogItem, NewCatalogPrice,
-    NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewInventoryAdjustment,
-    NewInventoryEntry, NewMember, NewMembershipPayment, NewMembershipPlan, NewProspect,
+    MembershipPlanRecord, MembershipRecord, NewCampaign, NewCashMovement, NewCatalogItem,
+    NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewClass,
+    NewEquipment, NewIntegrationLink, NewInventoryAdjustment, NewInventoryEntry,
+    NewMaintenanceOrder, NewMember, NewMembershipPayment, NewMembershipPlan, NewProspect,
     NewReportSchedule, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, PaymentChargeRecord,
     PaymentMethodTotalRecord, ProductSalesRecord, ProspectRecord, ReportRunRecord,
     ReportScheduleRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
-    UpdateMember, UpdateMembershipPlan, UpdateProspect,
+    UpdateClass, UpdateEquipment, UpdateGymSettings, UpdateMember, UpdateMembershipPlan,
+    UpdateProspect,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -143,6 +153,8 @@ fn remove_legacy_key(path: &Path) {
 #[derive(Debug, Clone)]
 struct ActiveSession {
     session: gym_core::auth::Session,
+    organization_name: String,
+    permission_overrides: Vec<CorePermissionOverride>,
     last_seen: Instant,
 }
 
@@ -188,9 +200,9 @@ impl AuthState {
         })?;
         active.last_seen = Instant::now();
         let session = active.session.clone();
-        let allowed = permissions
-            .iter()
-            .any(|permission| rbac::authorize(session.role, *permission).is_ok());
+        let allowed = permissions.iter().any(|permission| {
+            rbac::is_allowed(session.role, &active.permission_overrides, *permission)
+        });
         if !allowed {
             return Err(ApiError::new(
                 ErrorCode::Unauthorized,
@@ -294,19 +306,57 @@ fn staff_role(role: Role) -> StaffRole {
     match role {
         Role::Owner => StaffRole::Owner,
         Role::Manager => StaffRole::Manager,
-        Role::Cashier => StaffRole::Cashier,
-        Role::Accounting => StaffRole::Accounting,
+        Role::Receptionist => StaffRole::Receptionist,
+        Role::Advisor => StaffRole::Advisor,
+        Role::Trainer => StaffRole::Trainer,
     }
 }
 
 fn role_from_str(value: &str) -> Option<Role> {
+    rbac::role_from_str(value)
+}
+
+fn permission_effect_str(effect: PermissionEffect) -> &'static str {
+    match effect {
+        PermissionEffect::Allow => "allow",
+        PermissionEffect::Deny => "deny",
+    }
+}
+
+fn permission_effect_from_str(value: &str) -> Option<PermissionEffect> {
     match value {
-        "owner" => Some(Role::Owner),
-        "manager" => Some(Role::Manager),
-        "cashier" => Some(Role::Cashier),
-        "accounting" => Some(Role::Accounting),
+        "allow" => Some(PermissionEffect::Allow),
+        "deny" => Some(PermissionEffect::Deny),
         _ => None,
     }
+}
+
+fn core_permission_overrides(
+    records: Vec<gym_data::PermissionOverrideRecord>,
+) -> Vec<CorePermissionOverride> {
+    records
+        .into_iter()
+        .filter_map(|record| {
+            let permission = rbac::permission_from_str(&record.permission)?;
+            let allow = permission_effect_from_str(&record.effect)? == PermissionEffect::Allow;
+            Some(CorePermissionOverride { permission, allow })
+        })
+        .collect()
+}
+
+fn contract_permission_overrides(
+    records: Vec<gym_data::PermissionOverrideRecord>,
+) -> Vec<PermissionOverride> {
+    records
+        .into_iter()
+        .filter_map(|record| {
+            let effect = permission_effect_from_str(&record.effect)?;
+            Some(PermissionOverride {
+                permission: record.permission,
+                effect,
+            })
+        })
+        .collect()
 }
 
 fn session_summary(active: &ActiveSession) -> SessionSummary {
@@ -314,9 +364,10 @@ fn session_summary(active: &ActiveSession) -> SessionSummary {
     SessionSummary {
         user_id: session.user_id.clone(),
         organization_id: session.organization_id.clone(),
+        organization_name: active.organization_name.clone(),
         name: session.name.clone(),
         role: staff_role(session.role),
-        permissions: rbac::permissions_for(session.role)
+        permissions: rbac::effective_permissions(session.role, &active.permission_overrides)
             .iter()
             .map(|permission| permission.as_str().to_string())
             .collect(),
@@ -353,7 +404,7 @@ fn ensure_staff_role_allowed(
     if session.role == Role::Manager && (role == Role::Manager || current_role == Some("manager")) {
         return Err(ApiError::new(
             ErrorCode::Unauthorized,
-            "solo puedes administrar cajeros y contabilidad",
+            "solo puedes administrar recepción, asesoría y entrenamiento",
         ));
     }
     Ok(())
@@ -377,21 +428,26 @@ fn role_from_contract(role: StaffRole) -> Role {
     match role {
         StaffRole::Owner => Role::Owner,
         StaffRole::Manager => Role::Manager,
-        StaffRole::Cashier => Role::Cashier,
-        StaffRole::Accounting => Role::Accounting,
+        StaffRole::Receptionist => Role::Receptionist,
+        StaffRole::Advisor => Role::Advisor,
+        StaffRole::Trainer => Role::Trainer,
     }
 }
 
-fn staff_summary(record: gym_data::StaffRecord) -> StaffSummary {
+fn staff_summary(
+    record: gym_data::StaffRecord,
+    overrides: Vec<gym_data::PermissionOverrideRecord>,
+) -> StaffSummary {
     StaffSummary {
         user_id: record.user_id,
         name: record.name,
         role: role_from_str(&record.role)
             .map(staff_role)
-            .unwrap_or(StaffRole::Cashier),
+            .unwrap_or(StaffRole::Receptionist),
         status: staff_status(&record.status),
         last_login_at: record.last_login_at,
         created_at: record.created_at,
+        permission_overrides: contract_permission_overrides(overrides),
     }
 }
 
@@ -1215,6 +1271,7 @@ fn bootstrap_owner(
     name: String,
     password: String,
     gym_name: Option<String>,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RecoveryKit, ApiError> {
     let db = state.db()?;
@@ -1300,9 +1357,12 @@ fn bootstrap_owner(
     };
     let active = ActiveSession {
         session,
+        organization_name: organization.name.clone(),
+        permission_overrides: Vec::new(),
         last_seen: Instant::now(),
     };
     let summary = session_summary(&active);
+    sync_window_title(&app, &organization.name);
     {
         let mut auth = state.auth.lock().map_err(|_| {
             ApiError::new(
@@ -1366,6 +1426,7 @@ fn generate_owner_recovery(state: State<'_, AppState>) -> Result<RecoveryCode, A
 fn recover_owner(
     recovery_code: String,
     new_password: String,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RecoveryKit, ApiError> {
     const RECOVERY_KEY: &str = "__owner_recovery__";
@@ -1486,6 +1547,8 @@ fn recover_owner(
                 name: owner.name.clone(),
                 role: Role::Owner,
             },
+            organization_name: organization.name.clone(),
+            permission_overrides: Vec::new(),
             last_seen: Instant::now(),
         });
     }
@@ -1507,8 +1570,11 @@ fn recover_owner(
             name: owner.name,
             role: Role::Owner,
         },
+        organization_name: organization.name.clone(),
+        permission_overrides: Vec::new(),
         last_seen: Instant::now(),
     };
+    sync_window_title(&app, &organization.name);
     Ok(RecoveryKit {
         session: session_summary(&active),
         recovery_code: next_recovery_code,
@@ -1519,6 +1585,7 @@ fn recover_owner(
 fn login(
     name: String,
     password: String,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SessionSummary, ApiError> {
     let db = state.db()?;
@@ -1596,6 +1663,21 @@ fn login(
     };
 
     let session = build_session(credentials)?;
+    let overrides = db
+        .list_permission_overrides(&organization.id, &session.user_id)
+        .map_err(|error| {
+            ApiError::new(
+                ErrorCode::Storage,
+                "no se pudieron leer los permisos del usuario",
+            )
+            .with_details(error.to_string())
+        })?;
+    let active = ActiveSession {
+        session: session.clone(),
+        organization_name: organization.name.clone(),
+        permission_overrides: core_permission_overrides(overrides),
+        last_seen: Instant::now(),
+    };
     {
         let mut auth = state.auth.lock().map_err(|_| {
             ApiError::new(
@@ -1604,10 +1686,7 @@ fn login(
             )
         })?;
         auth.clear_failures(&key);
-        auth.session = Some(ActiveSession {
-            session: session.clone(),
-            last_seen: Instant::now(),
-        });
+        auth.session = Some(active.clone());
     }
     let _ = db.mark_login(&session.user_id);
     let _ = db.record_audit_event(
@@ -1620,10 +1699,15 @@ fn login(
         None,
     );
 
-    Ok(session_summary(&ActiveSession {
-        session,
-        last_seen: Instant::now(),
-    }))
+    sync_window_title(&app, &organization.name);
+    Ok(session_summary(&active))
+}
+
+fn sync_window_title(app: &tauri::AppHandle, organization_name: &str) {
+    let title = format!("Fitness Gym - {organization_name}");
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title(&title);
+    }
 }
 
 #[tauri::command]
@@ -2186,6 +2270,26 @@ fn run_report_schedule(
     let from = (generated_at - chrono::TimeDelta::days(schedule.lookback_days))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let to = generated_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let settings = match db.gym_settings(organization_id).map(gym_settings_contract) {
+        Ok(settings) => settings,
+        Err(error) => {
+            let run = db
+                .record_report_run(
+                    organization_id,
+                    Some(&schedule.id),
+                    &schedule.report_type,
+                    &from,
+                    &to,
+                    &to,
+                    None,
+                    "",
+                    "failed",
+                    Some(&error.to_string()),
+                )
+                .map_err(reports_api_error)?;
+            return Ok(report_run_contract(run));
+        }
+    };
     let report = match db
         .financial_report(organization_id, &from, &to)
         .map(financial_report_contract)
@@ -2209,7 +2313,7 @@ fn run_report_schedule(
             return Ok(report_run_contract(run));
         }
     };
-    let csv = financial_report_csv(&report);
+    let csv = financial_report_csv(&report, &settings);
     let checksum = sha256_hex(csv.as_bytes());
     let stamp = generated_at.format("%Y%m%dT%H%M%S%3fZ").to_string();
     let file_name = format!("reporte-programado-{}-{stamp}.csv", schedule.cadence);
@@ -2279,9 +2383,18 @@ fn list_staff(state: State<'_, AppState>) -> Result<Vec<StaffSummary>, ApiError>
         .list_staff(&session.organization_id)
         .map_err(staff_api_error)?;
     if session.role == Role::Manager {
-        staff.retain(|member| matches!(member.role.as_str(), "cashier" | "accounting"));
+        staff.retain(|member| {
+            matches!(member.role.as_str(), "receptionist" | "advisor" | "trainer")
+        });
     }
-    Ok(staff.into_iter().map(staff_summary).collect())
+    let mut summaries = Vec::with_capacity(staff.len());
+    for member in staff {
+        let overrides = db
+            .list_permission_overrides(&session.organization_id, &member.user_id)
+            .map_err(staff_api_error)?;
+        summaries.push(staff_summary(member, overrides));
+    }
+    Ok(summaries)
 }
 
 #[tauri::command]
@@ -2318,7 +2431,7 @@ fn create_staff(
         "tauri",
         None,
     );
-    Ok(staff_summary(staff))
+    Ok(staff_summary(staff, Vec::new()))
 }
 
 #[tauri::command]
@@ -2360,7 +2473,64 @@ fn update_staff(
         "tauri",
         None,
     );
-    Ok(staff_summary(staff))
+    let overrides = db
+        .list_permission_overrides(&session.organization_id, &staff.user_id)
+        .map_err(staff_api_error)?;
+    Ok(staff_summary(staff, overrides))
+}
+
+#[tauri::command]
+fn update_staff_permissions(
+    input: UpdateStaffPermissionsInput,
+    state: State<'_, AppState>,
+) -> Result<StaffSummary, ApiError> {
+    let session = state.authorize(Permission::ManagePermissions)?;
+    if input.user_id == session.user_id {
+        return Err(ApiError::invalid(
+            "no puedes modificar tus propios permisos",
+        ));
+    }
+
+    let db = state.db()?;
+    let current = db
+        .list_staff(&session.organization_id)
+        .map_err(staff_api_error)?
+        .into_iter()
+        .find(|member| member.user_id == input.user_id)
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "el colaborador no existe"))?;
+    if current.role == "owner" {
+        return Err(ApiError::invalid(
+            "los permisos del dueño no se pueden modificar",
+        ));
+    }
+
+    let mut overrides = Vec::with_capacity(input.overrides.len());
+    for entry in input.overrides {
+        let permission = rbac::permission_from_str(&entry.permission).ok_or_else(|| {
+            ApiError::invalid(format!("permiso desconocido: {}", entry.permission))
+        })?;
+        if rbac::is_owner_only(permission) {
+            return Err(ApiError::invalid("ese permiso solo puede tenerlo el dueño"));
+        }
+        overrides.push((
+            permission.as_str().to_string(),
+            permission_effect_str(entry.effect).to_string(),
+        ));
+    }
+
+    let records = db
+        .replace_permission_overrides(&session.organization_id, &input.user_id, &overrides)
+        .map_err(staff_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "staff.permissions_updated",
+        "staff_membership",
+        "allowed",
+        "tauri",
+        None,
+    );
+    Ok(staff_summary(current, records))
 }
 
 #[tauri::command]
@@ -3431,9 +3601,15 @@ fn csv_text(value: &str) -> String {
     }
 }
 
-fn financial_report_csv(report: &FinancialReport) -> String {
+fn financial_report_csv(report: &FinancialReport, settings: &GymSettings) -> String {
     let mut rows = vec![
         "Reporte financiero".to_string(),
+        format!("Gimnasio,{}", csv_text(&settings.business_name)),
+        format!(
+            "Razón social,{}",
+            csv_text(settings.legal_name.as_deref().unwrap_or(""))
+        ),
+        format!("RFC,{}", csv_text(settings.tax_id.as_deref().unwrap_or(""))),
         format!("Desde,{}", csv_text(&report.from)),
         format!("Hasta,{}", csv_text(&report.to)),
         format!("Generado,{}", csv_text(&report.generated_at)),
@@ -3563,7 +3739,11 @@ fn export_financial_report_csv(
         .financial_report(&session.organization_id, &input.from, &input.to)
         .map_err(report_api_error)?;
     let report = financial_report_contract(report);
-    let csv = financial_report_csv(&report);
+    let settings = db
+        .gym_settings(&session.organization_id)
+        .map_err(report_api_error)
+        .map(gym_settings_contract)?;
+    let csv = financial_report_csv(&report, &settings);
     let generated_at = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
     let file_name = format!(
         "reporte-{}-{}-{generated_at}.csv",
@@ -3634,6 +3814,647 @@ fn verify_audit_chain(state: State<'_, AppState>) -> Result<AuditIntegrity, ApiE
             ApiError::new(ErrorCode::Storage, "no se pudo verificar la auditoría")
                 .with_details(error.to_string())
         })
+}
+
+fn operations_api_error(error: DataError) -> ApiError {
+    match error {
+        DataError::IntegrationLinkNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la integración no existe")
+        }
+        DataError::ClassNotFound => ApiError::new(ErrorCode::NotFound, "la clase no existe"),
+        DataError::ClassBookingNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la reserva no existe")
+        }
+        DataError::CampaignNotFound => ApiError::new(ErrorCode::NotFound, "la campaña no existe"),
+        DataError::EquipmentNotFound => ApiError::new(ErrorCode::NotFound, "el equipo no existe"),
+        DataError::MaintenanceOrderNotFound => {
+            ApiError::new(ErrorCode::NotFound, "la orden de mantenimiento no existe")
+        }
+        DataError::MemberNotFound => ApiError::new(ErrorCode::NotFound, "el socio no existe"),
+        DataError::StaffNotFound => ApiError::new(ErrorCode::NotFound, "el empleado no existe"),
+        DataError::InvalidValue(message) => ApiError::invalid(message),
+        other => ApiError::new(ErrorCode::Storage, "no se pudo procesar la operación")
+            .with_details(other.to_string()),
+    }
+}
+
+fn gym_settings_contract(record: GymSettingsRecord) -> GymSettings {
+    GymSettings {
+        id: record.id,
+        business_name: record.business_name,
+        legal_name: record.legal_name,
+        tax_id: record.tax_id,
+        currency: record.currency,
+        timezone: record.timezone,
+        locale: record.locale,
+        opening_time: record.opening_time,
+        closing_time: record.closing_time,
+        slot_minutes: record.slot_minutes,
+        grace_minutes: record.grace_minutes,
+        inactivity_days: record.inactivity_days,
+        frozen_days: record.frozen_days,
+        updated_at: record.updated_at,
+    }
+}
+
+fn integration_link_contract(record: IntegrationLinkRecord) -> IntegrationLink {
+    IntegrationLink {
+        id: record.id,
+        module_id: record.module_id,
+        display_name: record.display_name,
+        contract_version: record.contract_version,
+        status: record.status,
+        capabilities: record.capabilities,
+        last_seen_at: record.last_seen_at,
+        last_event_at: record.last_event_at,
+        last_snapshot_at: record.last_snapshot_at,
+        notes: record.notes,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn class_session_contract(record: ClassRecord) -> ClassSession {
+    ClassSession {
+        id: record.id,
+        name: record.name,
+        coach_user_id: record.coach_user_id,
+        coach_name: record.coach_name,
+        weekday: record.weekday,
+        start_time: record.start_time,
+        duration_minutes: record.duration_minutes,
+        capacity: record.capacity,
+        room: record.room,
+        status: record.status,
+        notes: record.notes,
+        booked: record.booked,
+        attended: record.attended,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn class_booking_contract(record: ClassBookingRecord) -> ClassBooking {
+    ClassBooking {
+        id: record.id,
+        class_id: record.class_id,
+        class_name: record.class_name,
+        member_id: record.member_id,
+        member_name: record.member_name,
+        status: record.status,
+        note: record.note,
+        booked_at: record.booked_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn campaign_contract(record: CampaignRecord) -> Campaign {
+    Campaign {
+        id: record.id,
+        name: record.name,
+        channel: record.channel,
+        audience: record.audience,
+        status: record.status,
+        starts_on: record.starts_on,
+        ends_on: record.ends_on,
+        notes: record.notes,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn equipment_contract(record: EquipmentRecord) -> Equipment {
+    Equipment {
+        id: record.id,
+        name: record.name,
+        code: record.code,
+        area: record.area,
+        status: record.status,
+        acquired_on: record.acquired_on,
+        notes: record.notes,
+        open_orders: record.open_orders,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+fn maintenance_order_contract(record: MaintenanceOrderRecord) -> MaintenanceOrder {
+    MaintenanceOrder {
+        id: record.id,
+        equipment_id: record.equipment_id,
+        equipment_name: record.equipment_name,
+        kind: record.kind,
+        status: record.status,
+        priority: record.priority,
+        summary: record.summary,
+        detail: record.detail,
+        due_on: record.due_on,
+        reported_by: record.reported_by,
+        completed_at: record.completed_at,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+#[tauri::command]
+fn get_gym_settings(state: State<'_, AppState>) -> Result<GymSettings, ApiError> {
+    let session = state.authorize(Permission::ViewSettings)?;
+    let db = state.db()?;
+    db.gym_settings(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(gym_settings_contract)
+}
+
+#[tauri::command]
+fn update_gym_settings(
+    input: UpdateGymSettingsInput,
+    state: State<'_, AppState>,
+) -> Result<GymSettings, ApiError> {
+    let session = state.authorize(Permission::ManageSettings)?;
+    let db = state.db()?;
+    let settings = db
+        .update_gym_settings(
+            &session.organization_id,
+            UpdateGymSettings {
+                business_name: input.business_name,
+                legal_name: input.legal_name,
+                tax_id: input.tax_id,
+                currency: input.currency,
+                timezone: input.timezone,
+                locale: input.locale,
+                opening_time: input.opening_time,
+                closing_time: input.closing_time,
+                slot_minutes: input.slot_minutes,
+                grace_minutes: input.grace_minutes,
+                inactivity_days: input.inactivity_days,
+                frozen_days: input.frozen_days,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "settings.updated",
+        "gym_settings",
+        "allowed",
+        "tauri",
+        Some(&settings.id),
+    );
+    Ok(gym_settings_contract(settings))
+}
+
+#[tauri::command]
+fn list_integration_links(state: State<'_, AppState>) -> Result<Vec<IntegrationLink>, ApiError> {
+    let session = state.authorize(Permission::ViewIntegrations)?;
+    let db = state.db()?;
+    db.list_integration_links(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|links| links.into_iter().map(integration_link_contract).collect())
+}
+
+#[tauri::command]
+fn upsert_integration_link(
+    input: UpsertIntegrationLinkInput,
+    state: State<'_, AppState>,
+) -> Result<IntegrationLink, ApiError> {
+    let session = state.authorize(Permission::ManageIntegrations)?;
+    let db = state.db()?;
+    let link = db
+        .upsert_integration_link(
+            &session.organization_id,
+            NewIntegrationLink {
+                module_id: input.module_id,
+                display_name: input.display_name,
+                contract_version: input.contract_version,
+                status: input.status,
+                capabilities: input.capabilities,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "integration.linked",
+        "integration_link",
+        "allowed",
+        "tauri",
+        Some(&link.id),
+    );
+    Ok(integration_link_contract(link))
+}
+
+#[tauri::command]
+fn integration_journal_summary(
+    state: State<'_, AppState>,
+) -> Result<IntegrationJournalSummary, ApiError> {
+    let session = state.authorize(Permission::ViewIntegrations)?;
+    let db = state.db()?;
+    db.integration_journal_summary(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|summary| IntegrationJournalSummary {
+            pending: summary.pending,
+            sent: summary.sent,
+            dead_letter: summary.dead_letter,
+            inbox_events: summary.inbox_events,
+            last_server_sequence: summary.last_server_sequence,
+        })
+}
+
+#[tauri::command]
+fn list_classes(state: State<'_, AppState>) -> Result<Vec<ClassSession>, ApiError> {
+    let session = state.authorize(Permission::ViewClasses)?;
+    let db = state.db()?;
+    db.list_classes(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|classes| classes.into_iter().map(class_session_contract).collect())
+}
+
+#[tauri::command]
+fn create_class(
+    input: CreateClassInput,
+    state: State<'_, AppState>,
+) -> Result<ClassSession, ApiError> {
+    let session = state.authorize(Permission::ManageClasses)?;
+    let db = state.db()?;
+    let class = db
+        .create_class(
+            &session.organization_id,
+            NewClass {
+                name: input.name,
+                coach_user_id: input.coach_user_id,
+                weekday: input.weekday,
+                start_time: input.start_time,
+                duration_minutes: input.duration_minutes,
+                capacity: input.capacity,
+                room: input.room,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "class.created",
+        "class",
+        "allowed",
+        "tauri",
+        Some(&class.id),
+    );
+    Ok(class_session_contract(class))
+}
+
+#[tauri::command]
+fn update_class(
+    input: UpdateClassInput,
+    state: State<'_, AppState>,
+) -> Result<ClassSession, ApiError> {
+    let session = state.authorize(Permission::ManageClasses)?;
+    let db = state.db()?;
+    let class = db
+        .update_class(
+            &session.organization_id,
+            &input.class_id,
+            UpdateClass {
+                name: input.name,
+                coach_user_id: input.coach_user_id,
+                weekday: input.weekday,
+                start_time: input.start_time,
+                duration_minutes: input.duration_minutes,
+                capacity: input.capacity,
+                room: input.room,
+                status: input.status,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "class.updated",
+        "class",
+        "allowed",
+        "tauri",
+        Some(&class.id),
+    );
+    Ok(class_session_contract(class))
+}
+
+#[tauri::command]
+fn list_class_bookings(
+    class_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ClassBooking>, ApiError> {
+    let session = state.authorize(Permission::ViewClasses)?;
+    let db = state.db()?;
+    db.list_class_bookings(&session.organization_id, &class_id)
+        .map_err(operations_api_error)
+        .map(|bookings| bookings.into_iter().map(class_booking_contract).collect())
+}
+
+#[tauri::command]
+fn book_class(input: BookClassInput, state: State<'_, AppState>) -> Result<ClassBooking, ApiError> {
+    let session = state.authorize(Permission::ManageReservations)?;
+    let db = state.db()?;
+    let booking = db
+        .book_class(
+            &session.organization_id,
+            &input.class_id,
+            &input.member_id,
+            input.note,
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "class.booking.created",
+        "class_booking",
+        "allowed",
+        "tauri",
+        Some(&booking.id),
+    );
+    Ok(class_booking_contract(booking))
+}
+
+#[tauri::command]
+fn update_class_booking(
+    input: UpdateClassBookingInput,
+    state: State<'_, AppState>,
+) -> Result<ClassBooking, ApiError> {
+    let session = state.authorize(Permission::ManageReservations)?;
+    let db = state.db()?;
+    let booking = db
+        .update_class_booking(&session.organization_id, &input.booking_id, &input.status)
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "class.booking.updated",
+        "class_booking",
+        "allowed",
+        "tauri",
+        Some(&booking.id),
+    );
+    Ok(class_booking_contract(booking))
+}
+
+#[tauri::command]
+fn list_campaigns(state: State<'_, AppState>) -> Result<Vec<Campaign>, ApiError> {
+    let session = state.authorize(Permission::ViewMarketing)?;
+    let db = state.db()?;
+    db.list_campaigns(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|campaigns| campaigns.into_iter().map(campaign_contract).collect())
+}
+
+#[tauri::command]
+fn create_campaign(
+    input: CreateCampaignInput,
+    state: State<'_, AppState>,
+) -> Result<Campaign, ApiError> {
+    let session = state.authorize(Permission::ManageMarketing)?;
+    let db = state.db()?;
+    let campaign = db
+        .create_campaign(
+            &session.organization_id,
+            NewCampaign {
+                name: input.name,
+                channel: input.channel,
+                audience: input.audience,
+                status: input.status,
+                starts_on: input.starts_on,
+                ends_on: input.ends_on,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "campaign.created",
+        "campaign",
+        "allowed",
+        "tauri",
+        Some(&campaign.id),
+    );
+    Ok(campaign_contract(campaign))
+}
+
+#[tauri::command]
+fn update_campaign(
+    input: UpdateCampaignInput,
+    state: State<'_, AppState>,
+) -> Result<Campaign, ApiError> {
+    let session = state.authorize(Permission::ManageMarketing)?;
+    let db = state.db()?;
+    let campaign = db
+        .update_campaign(
+            &session.organization_id,
+            &input.campaign_id,
+            NewCampaign {
+                name: input.name,
+                channel: input.channel,
+                audience: input.audience,
+                status: input.status,
+                starts_on: input.starts_on,
+                ends_on: input.ends_on,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "campaign.updated",
+        "campaign",
+        "allowed",
+        "tauri",
+        Some(&campaign.id),
+    );
+    Ok(campaign_contract(campaign))
+}
+
+#[tauri::command]
+fn marketing_funnel(
+    inactivity_days: Option<i64>,
+    expiry_days: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<MarketingFunnel, ApiError> {
+    let session = state.authorize(Permission::ViewMarketing)?;
+    let db = state.db()?;
+    let settings = db
+        .gym_settings(&session.organization_id)
+        .map_err(operations_api_error)?;
+    let inactivity_days = inactivity_days.unwrap_or(settings.inactivity_days);
+    let expiry_days = expiry_days.unwrap_or(30);
+    db.marketing_funnel(&session.organization_id, inactivity_days, expiry_days)
+        .map_err(operations_api_error)
+        .map(|funnel| MarketingFunnel {
+            prospects_total: funnel.prospects_total,
+            prospects_converted: funnel.prospects_converted,
+            conversion_bps: funnel.conversion_bps,
+            stages: funnel
+                .stages
+                .into_iter()
+                .map(|stage| FunnelStage {
+                    status: stage.status,
+                    count: stage.count,
+                })
+                .collect(),
+            active_campaigns: funnel.active_campaigns,
+            expiring_memberships: funnel.expiring_memberships,
+            inactive_members: funnel.inactive_members,
+        })
+}
+
+#[tauri::command]
+fn list_equipment(state: State<'_, AppState>) -> Result<Vec<Equipment>, ApiError> {
+    let session = state.authorize(Permission::ViewMaintenance)?;
+    let db = state.db()?;
+    db.list_equipment(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|items| items.into_iter().map(equipment_contract).collect())
+}
+
+#[tauri::command]
+fn create_equipment(
+    input: CreateEquipmentInput,
+    state: State<'_, AppState>,
+) -> Result<Equipment, ApiError> {
+    let session = state.authorize(Permission::ManageMaintenance)?;
+    let db = state.db()?;
+    let equipment = db
+        .create_equipment(
+            &session.organization_id,
+            NewEquipment {
+                name: input.name,
+                code: input.code,
+                area: input.area,
+                acquired_on: input.acquired_on,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "equipment.created",
+        "equipment",
+        "allowed",
+        "tauri",
+        Some(&equipment.id),
+    );
+    Ok(equipment_contract(equipment))
+}
+
+#[tauri::command]
+fn update_equipment(
+    input: UpdateEquipmentInput,
+    state: State<'_, AppState>,
+) -> Result<Equipment, ApiError> {
+    let session = state.authorize(Permission::ManageMaintenance)?;
+    let db = state.db()?;
+    let equipment = db
+        .update_equipment(
+            &session.organization_id,
+            &input.equipment_id,
+            UpdateEquipment {
+                name: input.name,
+                code: input.code,
+                area: input.area,
+                status: input.status,
+                acquired_on: input.acquired_on,
+                notes: input.notes,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "equipment.updated",
+        "equipment",
+        "allowed",
+        "tauri",
+        Some(&equipment.id),
+    );
+    Ok(equipment_contract(equipment))
+}
+
+#[tauri::command]
+fn list_maintenance_orders(
+    status: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<MaintenanceOrder>, ApiError> {
+    let session = state.authorize(Permission::ViewMaintenance)?;
+    let db = state.db()?;
+    db.list_maintenance_orders(&session.organization_id, status.as_deref())
+        .map_err(operations_api_error)
+        .map(|orders| orders.into_iter().map(maintenance_order_contract).collect())
+}
+
+#[tauri::command]
+fn create_maintenance_order(
+    input: CreateMaintenanceOrderInput,
+    state: State<'_, AppState>,
+) -> Result<MaintenanceOrder, ApiError> {
+    let session = state.authorize(Permission::ManageMaintenance)?;
+    let db = state.db()?;
+    let order = db
+        .create_maintenance_order(
+            &session.organization_id,
+            NewMaintenanceOrder {
+                equipment_id: input.equipment_id,
+                kind: input.kind,
+                priority: input.priority,
+                summary: input.summary,
+                detail: input.detail,
+                due_on: input.due_on,
+                reported_by: input.reported_by,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "maintenance.order.created",
+        "maintenance_order",
+        "allowed",
+        "tauri",
+        Some(&order.id),
+    );
+    Ok(maintenance_order_contract(order))
+}
+
+#[tauri::command]
+fn update_maintenance_order(
+    input: UpdateMaintenanceOrderInput,
+    state: State<'_, AppState>,
+) -> Result<MaintenanceOrder, ApiError> {
+    let session = state.authorize(Permission::ManageMaintenance)?;
+    let db = state.db()?;
+    let order = db
+        .update_maintenance_order(
+            &session.organization_id,
+            &input.order_id,
+            MaintenanceOrderUpdate {
+                status: input.status,
+                priority: input.priority,
+                summary: input.summary,
+                detail: input.detail,
+                due_on: input.due_on,
+            },
+        )
+        .map_err(operations_api_error)?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "maintenance.order.updated",
+        "maintenance_order",
+        "allowed",
+        "tauri",
+        Some(&order.id),
+    );
+    Ok(maintenance_order_contract(order))
 }
 
 fn backup_api_error(error: gym_backup::BackupError) -> ApiError {
@@ -3715,6 +4536,7 @@ pub fn run() {
             list_staff,
             create_staff,
             update_staff,
+            update_staff_permissions,
             list_membership_plans,
             create_membership_plan,
             update_membership_plan,
@@ -3761,7 +4583,28 @@ pub fn run() {
             list_cash_movements,
             record_cash_movement,
             list_audit_events,
-            verify_audit_chain
+            verify_audit_chain,
+            get_gym_settings,
+            update_gym_settings,
+            list_integration_links,
+            upsert_integration_link,
+            integration_journal_summary,
+            list_classes,
+            create_class,
+            update_class,
+            list_class_bookings,
+            book_class,
+            update_class_booking,
+            list_campaigns,
+            create_campaign,
+            update_campaign,
+            marketing_funnel,
+            list_equipment,
+            create_equipment,
+            update_equipment,
+            list_maintenance_orders,
+            create_maintenance_order,
+            update_maintenance_order
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fitness Gym");
@@ -3835,6 +4678,8 @@ mod auth_tests {
                 name: "Ana".into(),
                 role,
             },
+            organization_name: "Gimnasio Centro".into(),
+            permission_overrides: Vec::new(),
             last_seen: Instant::now(),
         }
     }
@@ -3866,9 +4711,9 @@ mod auth_tests {
     }
 
     #[test]
-    fn cashier_session_cannot_manage_backups() {
+    fn receptionist_session_cannot_manage_backups() {
         let mut auth = AuthState {
-            session: Some(active_session(Role::Cashier)),
+            session: Some(active_session(Role::Receptionist)),
             ..AuthState::default()
         };
 
@@ -3877,13 +4722,15 @@ mod auth_tests {
     }
 
     #[test]
-    fn manager_creates_cashiers_and_accounting_only() {
+    fn manager_creates_operational_roles_only() {
         let manager = active_session(Role::Manager).session;
 
-        ensure_staff_role_allowed(&manager, None, Role::Cashier)
-            .expect("manager can create cashiers");
-        ensure_staff_role_allowed(&manager, None, Role::Accounting)
-            .expect("manager can create accounting");
+        ensure_staff_role_allowed(&manager, None, Role::Receptionist)
+            .expect("manager can create receptionists");
+        ensure_staff_role_allowed(&manager, None, Role::Advisor)
+            .expect("manager can create advisors");
+        ensure_staff_role_allowed(&manager, None, Role::Trainer)
+            .expect("manager can create trainers");
 
         let error = ensure_staff_role_allowed(&manager, None, Role::Manager)
             .expect_err("manager cannot create another manager");
@@ -3894,11 +4741,11 @@ mod auth_tests {
     fn manager_cannot_manage_managers_or_the_owner() {
         let manager = active_session(Role::Manager).session;
 
-        let error = ensure_staff_role_allowed(&manager, Some("manager"), Role::Cashier)
+        let error = ensure_staff_role_allowed(&manager, Some("manager"), Role::Receptionist)
             .expect_err("manager cannot edit another manager");
         assert_eq!(error.code, ErrorCode::Unauthorized);
 
-        let error = ensure_staff_role_allowed(&manager, Some("owner"), Role::Cashier)
+        let error = ensure_staff_role_allowed(&manager, Some("owner"), Role::Receptionist)
             .expect_err("manager cannot edit the owner");
         assert_eq!(error.code, ErrorCode::InvalidRequest);
     }

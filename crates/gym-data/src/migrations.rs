@@ -275,4 +275,51 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP INDEX IF EXISTS idx_member_credentials_member; \
                DROP TABLE IF EXISTS member_credentials;",
     },
+    Migration {
+        version: 20,
+        name: "roles_permissions",
+        up: include_str!("../migrations/0020_roles_permissions.sql"),
+        down: "DROP INDEX IF EXISTS idx_staff_permission_overrides_user; \
+               DROP TABLE IF EXISTS staff_permission_overrides; \
+               DROP INDEX IF EXISTS idx_staff_one_membership_per_user; \
+               DROP INDEX IF EXISTS idx_staff_one_active_owner; \
+               DROP INDEX IF EXISTS idx_staff_user; \
+               DROP INDEX IF EXISTS idx_staff_organization; \
+               CREATE TABLE staff_memberships_v19 ( \
+                   id TEXT PRIMARY KEY NOT NULL, \
+                   organization_id TEXT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, \
+                   user_id TEXT NOT NULL, \
+                   role TEXT NOT NULL CHECK (role IN ('owner', 'manager', 'cashier', 'accounting')), \
+                   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')), \
+                   created_at TEXT NOT NULL, \
+                   UNIQUE (organization_id, user_id) \
+               ) STRICT; \
+               INSERT INTO staff_memberships_v19 (id, organization_id, user_id, role, status, created_at) \
+               SELECT id, organization_id, user_id, role, status, created_at FROM staff_memberships; \
+               DROP TABLE staff_memberships; \
+               ALTER TABLE staff_memberships_v19 RENAME TO staff_memberships; \
+               CREATE INDEX idx_staff_organization ON staff_memberships (organization_id); \
+               CREATE INDEX idx_staff_user ON staff_memberships (organization_id, user_id); \
+               CREATE UNIQUE INDEX idx_staff_one_active_owner ON staff_memberships (organization_id) WHERE role = 'owner' AND status = 'active'; \
+                CREATE UNIQUE INDEX idx_staff_one_membership_per_user ON staff_memberships (organization_id, user_id);",
+    },
+    Migration {
+        version: 21,
+        name: "gym_operations",
+        up: include_str!("../migrations/0021_gym_operations.sql"),
+        down: "DROP INDEX IF EXISTS idx_maintenance_orders_organization; \
+               DROP TABLE IF EXISTS maintenance_orders; \
+               DROP INDEX IF EXISTS idx_equipment_organization; \
+               DROP TABLE IF EXISTS equipment; \
+               DROP INDEX IF EXISTS idx_campaigns_organization; \
+               DROP TABLE IF EXISTS campaigns; \
+               DROP INDEX IF EXISTS idx_class_bookings_member; \
+               DROP INDEX IF EXISTS idx_class_bookings_class; \
+               DROP TABLE IF EXISTS class_bookings; \
+               DROP INDEX IF EXISTS idx_classes_organization; \
+               DROP TABLE IF EXISTS classes; \
+               DROP INDEX IF EXISTS idx_integration_links_organization; \
+               DROP TABLE IF EXISTS integration_links; \
+               DROP TABLE IF EXISTS gym_settings;",
+    },
 ];

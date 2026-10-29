@@ -3,7 +3,7 @@
  * Keep both sides in sync; `CONTRACT_VERSION` guards breaking changes.
  */
 
-export const CONTRACT_VERSION = "2.14.0";
+export const CONTRACT_VERSION = "3.1.0";
 
 export type HealthStatus = "ok" | "degraded" | "down";
 
@@ -176,18 +176,53 @@ export interface AttendanceReport {
   members: AttendanceMember[];
 }
 
-export type StaffRole = "owner" | "manager" | "cashier" | "accounting";
+export type StaffRole =
+  | "owner"
+  | "manager"
+  | "receptionist"
+  | "advisor"
+  | "trainer";
 
 export type Permission =
-  | "manageSettings"
-  | "manageStaff"
-  | "viewFinance"
-  | "operatePos"
-  | "manageInventory"
-  | "manageCatalog"
-  | "manageBackups"
+  | "viewMembers"
   | "manageMembers"
-  | "viewAudit";
+  | "viewAssignedMembers"
+  | "viewAccess"
+  | "operateAccess"
+  | "manageAccessSnapshots"
+  | "viewSales"
+  | "operatePos"
+  | "superviseCash"
+  | "viewClasses"
+  | "manageClasses"
+  | "manageReservations"
+  | "viewMarketing"
+  | "manageProspects"
+  | "manageMarketing"
+  | "viewInventory"
+  | "manageInventory"
+  | "viewCatalog"
+  | "manageCatalog"
+  | "viewFinance"
+  | "manageFinance"
+  | "exportFinance"
+  | "viewReports"
+  | "viewCommercialReports"
+  | "viewCashReports"
+  | "exportReports"
+  | "viewStaff"
+  | "manageStaff"
+  | "managePermissions"
+  | "viewSettings"
+  | "manageOperationalSettings"
+  | "manageSettings"
+  | "viewAudit"
+  | "manageBackups"
+  | "viewIntegrations"
+  | "manageIntegrations"
+  | "viewMaintenance"
+  | "manageMaintenance"
+  | "reportMaintenanceIssue";
 
 export interface SetupState {
   configured: boolean;
@@ -198,6 +233,7 @@ export interface SetupState {
 export interface SessionSummary {
   userId: string;
   organizationId: string;
+  organizationName: string;
   name: string;
   role: StaffRole;
   permissions: Permission[];
@@ -214,6 +250,18 @@ export interface RecoveryCode {
 
 export type StaffStatus = "active" | "revoked";
 
+export type PermissionEffect = "allow" | "deny";
+
+export interface PermissionOverride {
+  permission: Permission;
+  effect: PermissionEffect;
+}
+
+export interface UpdateStaffPermissionsInput {
+  userId: string;
+  overrides: PermissionOverride[];
+}
+
 export interface StaffSummary {
   userId: string;
   name: string;
@@ -221,6 +269,7 @@ export interface StaffSummary {
   status: StaffStatus;
   lastLoginAt: string | null;
   createdAt: string;
+  permissionOverrides: PermissionOverride[];
 }
 
 export type CatalogStatus = "active" | "archived";
@@ -757,6 +806,250 @@ export interface FinancialReportExport {
   fileName: string;
   path: string;
   bytes: number;
+}
+
+export interface GymSettings {
+  id: string;
+  businessName: string;
+  legalName: string | null;
+  taxId: string | null;
+  currency: string;
+  timezone: string;
+  locale: string;
+  openingTime: string;
+  closingTime: string;
+  slotMinutes: number;
+  graceMinutes: number;
+  inactivityDays: number;
+  frozenDays: number;
+  updatedAt: string;
+}
+
+export interface UpdateGymSettingsInput {
+  businessName: string;
+  legalName?: string | null;
+  taxId?: string | null;
+  currency: string;
+  timezone: string;
+  locale: string;
+  openingTime: string;
+  closingTime: string;
+  slotMinutes: number;
+  graceMinutes: number;
+  inactivityDays: number;
+  frozenDays: number;
+}
+
+export interface IntegrationLink {
+  id: string;
+  moduleId: string;
+  displayName: string;
+  contractVersion: string;
+  status: string;
+  capabilities: string[];
+  lastSeenAt: string | null;
+  lastEventAt: string | null;
+  lastSnapshotAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertIntegrationLinkInput {
+  moduleId: string;
+  displayName: string;
+  contractVersion: string;
+  status: string;
+  capabilities?: string[];
+  notes?: string | null;
+}
+
+export interface IntegrationJournalSummary {
+  pending: number;
+  sent: number;
+  deadLetter: number;
+  inboxEvents: number;
+  lastServerSequence: number;
+}
+
+export interface ClassSession {
+  id: string;
+  name: string;
+  coachUserId: string | null;
+  coachName: string | null;
+  weekday: number;
+  startTime: string;
+  durationMinutes: number;
+  capacity: number;
+  room: string | null;
+  status: string;
+  notes: string | null;
+  booked: number;
+  attended: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateClassInput {
+  name: string;
+  coachUserId?: string | null;
+  weekday: number;
+  startTime: string;
+  durationMinutes: number;
+  capacity: number;
+  room?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateClassInput {
+  classId: string;
+  name: string;
+  coachUserId?: string | null;
+  weekday: number;
+  startTime: string;
+  durationMinutes: number;
+  capacity: number;
+  room?: string | null;
+  status: string;
+  notes?: string | null;
+}
+
+export interface ClassBooking {
+  id: string;
+  classId: string;
+  className: string;
+  memberId: string;
+  memberName: string;
+  status: string;
+  note: string | null;
+  bookedAt: string;
+  updatedAt: string;
+}
+
+export interface BookClassInput {
+  classId: string;
+  memberId: string;
+  note?: string | null;
+}
+
+export interface UpdateClassBookingInput {
+  bookingId: string;
+  status: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  channel: string;
+  audience: string;
+  status: string;
+  startsOn: string | null;
+  endsOn: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCampaignInput {
+  name: string;
+  channel: string;
+  audience: string;
+  status: string;
+  startsOn?: string | null;
+  endsOn?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateCampaignInput {
+  campaignId: string;
+  name: string;
+  channel: string;
+  audience: string;
+  status: string;
+  startsOn?: string | null;
+  endsOn?: string | null;
+  notes?: string | null;
+}
+
+export interface FunnelStage {
+  status: string;
+  count: number;
+}
+
+export interface MarketingFunnel {
+  prospectsTotal: number;
+  prospectsConverted: number;
+  conversionBps: number;
+  stages: FunnelStage[];
+  activeCampaigns: number;
+  expiringMemberships: number;
+  inactiveMembers: number;
+}
+
+export interface Equipment {
+  id: string;
+  name: string;
+  code: string | null;
+  area: string | null;
+  status: string;
+  acquiredOn: string | null;
+  notes: string | null;
+  openOrders: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateEquipmentInput {
+  name: string;
+  code?: string | null;
+  area?: string | null;
+  acquiredOn?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateEquipmentInput {
+  equipmentId: string;
+  name: string;
+  code?: string | null;
+  area?: string | null;
+  status: string;
+  acquiredOn?: string | null;
+  notes?: string | null;
+}
+
+export interface MaintenanceOrder {
+  id: string;
+  equipmentId: string | null;
+  equipmentName: string | null;
+  kind: string;
+  status: string;
+  priority: string;
+  summary: string;
+  detail: string | null;
+  dueOn: string | null;
+  reportedBy: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMaintenanceOrderInput {
+  equipmentId?: string | null;
+  kind: string;
+  priority: string;
+  summary: string;
+  detail?: string | null;
+  dueOn?: string | null;
+  reportedBy?: string | null;
+}
+
+export interface UpdateMaintenanceOrderInput {
+  orderId: string;
+  status: string;
+  priority: string;
+  summary: string;
+  detail?: string | null;
+  dueOn?: string | null;
 }
 
 export interface SaleItem {

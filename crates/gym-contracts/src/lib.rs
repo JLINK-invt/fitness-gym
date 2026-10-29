@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Version of the local command/event contract. Bump it on breaking changes.
-pub const CONTRACT_VERSION: &str = "2.14.0";
+pub const CONTRACT_VERSION: &str = "3.1.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,14 +258,15 @@ pub struct AttendanceReport {
     pub members: Vec<AttendanceMember>,
 }
 
-/// Roles enabled for local staff in V1.
+/// Roles enabled for local staff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StaffRole {
     Owner,
     Manager,
-    Cashier,
-    Accounting,
+    Receptionist,
+    Advisor,
+    Trainer,
 }
 
 /// Public bootstrap state used by the login/setup screen. It never exposes
@@ -285,6 +286,9 @@ pub struct SetupState {
 pub struct SessionSummary {
     pub user_id: String,
     pub organization_id: String,
+    /// Display name of the gym this installation serves. Used as the window
+    /// title in the desktop shell.
+    pub organization_name: String,
     pub name: String,
     pub role: StaffRole,
     pub permissions: Vec<String>,
@@ -313,6 +317,27 @@ pub enum StaffStatus {
     Revoked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionEffect {
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOverride {
+    pub permission: String,
+    pub effect: PermissionEffect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStaffPermissionsInput {
+    pub user_id: String,
+    pub overrides: Vec<PermissionOverride>,
+}
+
 /// Staff member visible to owner and manager screens. Password hashes are
 /// never part of this contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,6 +349,7 @@ pub struct StaffSummary {
     pub status: StaffStatus,
     pub last_login_at: Option<String>,
     pub created_at: String,
+    pub permission_overrides: Vec<PermissionOverride>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1320,6 +1346,325 @@ impl ApiError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GymSettings {
+    pub id: String,
+    pub business_name: String,
+    pub legal_name: Option<String>,
+    pub tax_id: Option<String>,
+    pub currency: String,
+    pub timezone: String,
+    pub locale: String,
+    pub opening_time: String,
+    pub closing_time: String,
+    pub slot_minutes: i64,
+    pub grace_minutes: i64,
+    pub inactivity_days: i64,
+    pub frozen_days: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGymSettingsInput {
+    pub business_name: String,
+    #[serde(default)]
+    pub legal_name: Option<String>,
+    #[serde(default)]
+    pub tax_id: Option<String>,
+    pub currency: String,
+    pub timezone: String,
+    pub locale: String,
+    pub opening_time: String,
+    pub closing_time: String,
+    pub slot_minutes: i64,
+    pub grace_minutes: i64,
+    pub inactivity_days: i64,
+    pub frozen_days: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationLink {
+    pub id: String,
+    pub module_id: String,
+    pub display_name: String,
+    pub contract_version: String,
+    pub status: String,
+    pub capabilities: Vec<String>,
+    pub last_seen_at: Option<String>,
+    pub last_event_at: Option<String>,
+    pub last_snapshot_at: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertIntegrationLinkInput {
+    pub module_id: String,
+    pub display_name: String,
+    pub contract_version: String,
+    pub status: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationJournalSummary {
+    pub pending: i64,
+    pub sent: i64,
+    pub dead_letter: i64,
+    pub inbox_events: i64,
+    pub last_server_sequence: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassSession {
+    pub id: String,
+    pub name: String,
+    pub coach_user_id: Option<String>,
+    pub coach_name: Option<String>,
+    pub weekday: i64,
+    pub start_time: String,
+    pub duration_minutes: i64,
+    pub capacity: i64,
+    pub room: Option<String>,
+    pub status: String,
+    pub notes: Option<String>,
+    pub booked: i64,
+    pub attended: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateClassInput {
+    pub name: String,
+    #[serde(default)]
+    pub coach_user_id: Option<String>,
+    pub weekday: i64,
+    pub start_time: String,
+    pub duration_minutes: i64,
+    pub capacity: i64,
+    #[serde(default)]
+    pub room: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateClassInput {
+    pub class_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub coach_user_id: Option<String>,
+    pub weekday: i64,
+    pub start_time: String,
+    pub duration_minutes: i64,
+    pub capacity: i64,
+    #[serde(default)]
+    pub room: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassBooking {
+    pub id: String,
+    pub class_id: String,
+    pub class_name: String,
+    pub member_id: String,
+    pub member_name: String,
+    pub status: String,
+    pub note: Option<String>,
+    pub booked_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookClassInput {
+    pub class_id: String,
+    pub member_id: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateClassBookingInput {
+    pub booking_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Campaign {
+    pub id: String,
+    pub name: String,
+    pub channel: String,
+    pub audience: String,
+    pub status: String,
+    pub starts_on: Option<String>,
+    pub ends_on: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCampaignInput {
+    pub name: String,
+    pub channel: String,
+    pub audience: String,
+    pub status: String,
+    #[serde(default)]
+    pub starts_on: Option<String>,
+    #[serde(default)]
+    pub ends_on: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCampaignInput {
+    pub campaign_id: String,
+    pub name: String,
+    pub channel: String,
+    pub audience: String,
+    pub status: String,
+    #[serde(default)]
+    pub starts_on: Option<String>,
+    #[serde(default)]
+    pub ends_on: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunnelStage {
+    pub status: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketingFunnel {
+    pub prospects_total: i64,
+    pub prospects_converted: i64,
+    pub conversion_bps: i64,
+    pub stages: Vec<FunnelStage>,
+    pub active_campaigns: i64,
+    pub expiring_memberships: i64,
+    pub inactive_members: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Equipment {
+    pub id: String,
+    pub name: String,
+    pub code: Option<String>,
+    pub area: Option<String>,
+    pub status: String,
+    pub acquired_on: Option<String>,
+    pub notes: Option<String>,
+    pub open_orders: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEquipmentInput {
+    pub name: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub area: Option<String>,
+    #[serde(default)]
+    pub acquired_on: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEquipmentInput {
+    pub equipment_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub area: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub acquired_on: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaintenanceOrder {
+    pub id: String,
+    pub equipment_id: Option<String>,
+    pub equipment_name: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub priority: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub due_on: Option<String>,
+    pub reported_by: Option<String>,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMaintenanceOrderInput {
+    #[serde(default)]
+    pub equipment_id: Option<String>,
+    pub kind: String,
+    pub priority: String,
+    pub summary: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub due_on: Option<String>,
+    #[serde(default)]
+    pub reported_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMaintenanceOrderInput {
+    pub order_id: String,
+    pub status: String,
+    pub priority: String,
+    pub summary: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub due_on: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1376,6 +1721,7 @@ mod tests {
         let session = SessionSummary {
             user_id: "user-1".into(),
             organization_id: "org-1".into(),
+            organization_name: "Gimnasio Centro".into(),
             name: "Ana".into(),
             role: StaffRole::Owner,
             permissions: vec!["manageSettings".into()],
@@ -1388,6 +1734,7 @@ mod tests {
             session: SessionSummary {
                 user_id: "user-1".into(),
                 organization_id: "org-1".into(),
+                organization_name: "Gimnasio Centro".into(),
                 name: "Ana".into(),
                 role: StaffRole::Owner,
                 permissions: vec!["manageSettings".into()],
