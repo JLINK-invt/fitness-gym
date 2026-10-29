@@ -1,9 +1,9 @@
 # Contrato local · sincronización (Phase 3)
 
-- **Versión de contrato:** 2.14.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** journal local implementado; transporte de red pendiente
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v16 (`0016_sync_journal.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Alcance
 

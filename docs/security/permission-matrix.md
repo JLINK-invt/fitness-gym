@@ -8,26 +8,75 @@ acciones. **El backend siempre revalida.**
 
 | Rol | Uso previsto |
 | --- | --- |
-| `owner` | Dueño del gimnasio; configuración, personal, finanzas y backups |
-| `manager` | Encargado; operación, personal, inventario, catálogo y backups |
-| `cashier` | Mostrador; cobros y ajustes operativos de inventario |
-| `accounting` | Contabilidad; consulta de finanzas, historial de caja y auditoría, sin operar caja |
+| `owner` | Dueño del gimnasio; control total, permisos y backups |
+| `manager` | Gerente; supervisa operación, personal, configuración y reportes |
+| `receptionist` | Recepción; socios, accesos, cobros, caja, reservas y prospectos |
+| `advisor` | Asesor; seguimiento comercial, socios, reservas y marketing |
+| `trainer` | Entrenador; socios asignados, clases y reportes de mantenimiento |
+
+`accountant` y `cashier` ya no existen. La migración `v20` convierte
+`cashier` en `receptionist` y desactiva las cuentas `accounting` para que el
+Dueño las reasigne.
 
 ## Matriz
 
-| Permiso | Owner | Manager | Cashier | Accounting |
-| --- | :---: | :---: | :---: | :---: |
-| `ManageSettings` | ✅ | — | — | — |
-| `ManageStaff` | ✅ | ✅ | — | — |
-| `ViewFinance` | ✅ | ✅ | — | ✅ |
-| `OperatePos` | ✅ | ✅ | ✅ | — |
-| `ManageInventory` | ✅ | ✅ | ✅ | — |
-| `ManageCatalog` | ✅ | ✅ | — | — |
-| `ManageBackups` | ✅ | ✅ | — | — |
-| `ViewAudit` | ✅ | ✅ | — | ✅ |
+| Permiso | Owner | Manager | Receptionist | Advisor | Trainer |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| `viewMembers` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `manageMembers` | ✅ | ✅ | ✅ | ✅ | — |
+| `viewAssignedMembers` | ✅ | — | — | — | ✅ |
+| `viewAccess` | ✅ | ✅ | ✅ | — | — |
+| `operateAccess` | ✅ | ✅ | ✅ | — | — |
+| `manageAccessSnapshots` | ✅ | ✅ | — | — | — |
+| `viewSales` | ✅ | ✅ | ✅ | ✅ | — |
+| `operatePos` | ✅ | ✅ | ✅ | — | — |
+| `superviseCash` | ✅ | ✅ | — | — | — |
+| `viewClasses` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `manageClasses` | ✅ | ✅ | — | — | ✅ |
+| `manageReservations` | ✅ | ✅ | ✅ | ✅ | — |
+| `viewMarketing` | ✅ | ✅ | ✅ | ✅ | — |
+| `manageProspects` | ✅ | ✅ | ✅ | ✅ | — |
+| `manageMarketing` | ✅ | ✅ | — | ✅ | — |
+| `viewInventory` | ✅ | ✅ | ✅ | — | — |
+| `manageInventory` | ✅ | ✅ | ✅ | — | — |
+| `viewCatalog` | ✅ | ✅ | ✅ | ✅ | — |
+| `manageCatalog` | ✅ | ✅ | — | — | — |
+| `viewFinance` | ✅ | ✅ | — | — | — |
+| `manageFinance` | ✅ | — | — | — | — |
+| `exportFinance` | ✅ | ✅ | — | — | — |
+| `viewReports` | ✅ | ✅ | ✅ | ✅ | — |
+| `viewCommercialReports` | ✅ | ✅ | — | ✅ | — |
+| `viewCashReports` | ✅ | ✅ | ✅ | — | — |
+| `exportReports` | ✅ | ✅ | — | — | — |
+| `viewStaff` | ✅ | ✅ | — | — | — |
+| `manageStaff` | ✅ | ✅ | — | — | — |
+| `managePermissions` | ✅ | — | — | — | — |
+| `viewSettings` | ✅ | ✅ | — | — | — |
+| `manageOperationalSettings` | ✅ | ✅ | — | — | — |
+| `manageSettings` | ✅ | ✅ | — | — | — |
+| `viewAudit` | ✅ | ✅ | — | — | — |
+| `manageBackups` | ✅ | — | — | — | — |
+| `viewIntegrations` | ✅ | ✅ | — | — | — |
+| `manageIntegrations` | ✅ | ✅ | — | — | — |
+| `viewMaintenance` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `manageMaintenance` | ✅ | ✅ | — | — | — |
+| `reportMaintenanceIssue` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 `CoreError::Forbidden`.
+
+## Overrides por usuario
+
+- La plantilla del rol define el punto de partida.
+- El Dueño puede conceder (`allow`) o denegar (`deny`) permisos concretos por
+  colaborador desde **Colaboradores**.
+- Los overrides viven en `staff_permission_overrides` y se aplican al iniciar
+  sesión; la sesión abierta conserva los permisos con los que nació.
+- `managePermissions` y `manageBackups` son **solo del Dueño**: no se pueden
+  conceder a otro rol ni mediante override.
+- El Dueño no puede quitarse permisos a sí mismo ni bloquear su propia cuenta.
+- Un Gerente administra colaboradores, pero no permisos; esa capacidad queda
+  reservada al Dueño.
 
 ## Reglas de alcance
 
@@ -48,18 +97,21 @@ Regla: **denegado por defecto**. Un permiso ausente se rechaza con
 
 | Acción | Permiso | Reglas adicionales |
 | --- | --- | --- |
-| Ver reportes financieros | `ViewFinance` | Solo lectura; exportaciones auditadas |
-| Cobrar, cancelar o reembolsar | `OperatePos` | Reembolso/cancelación con motivo y auditoría |
-| Abrir o cerrar turno de caja | `OperatePos` | Un solo turno abierto; cierre con efectivo contado y motivo obligatorio si hay diferencia |
-| Registrar ingreso o gasto de caja | `OperatePos` | Monto positivo, método, categoría y evidencia; movimiento append-only |
-| Consultar historial de turnos | `ViewFinance` | Solo lectura; incluye fondo, esperado, contado, diferencia, motivo y movimientos |
-| Ajustar inventario | `ManageInventory` | Motivo obligatorio; auditar diferencia y actor |
-| Crear o modificar catálogo | `ManageCatalog` | Precios append-only; editar un precio crea una versión nueva |
-| Crear/editar personal | `ManageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
-| Crear/restaurar backup | `ManageBackups` | Confirmación explícita; registrar archivo y resultado |
-| Ver auditoría | `ViewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
-| Cambiar configuración | `ManageSettings` | Incluye moneda, zona horaria y política de sesión |
-| Generar código de recuperación del dueño | `ManageSettings` | Solo el rol `owner`; invalida el código anterior y se audita |
+| Ver reportes financieros | `viewFinance` | Solo lectura; exportaciones auditadas |
+| Cobrar, cancelar o reembolsar | `operatePos` | Reembolso/cancelación con motivo y auditoría |
+| Abrir o cerrar turno de caja | `operatePos` | Un solo turno abierto; cierre con efectivo contado y motivo obligatorio si hay diferencia |
+| Supervisar caja sin operar | `superviseCash` | Consulta y respaldo operativo del Gerente |
+| Registrar ingreso o gasto de caja | `operatePos` | Monto positivo, método, categoría y evidencia; movimiento append-only |
+| Consultar historial de turnos | `viewFinance` | Solo lectura; incluye fondo, esperado, contado, diferencia, motivo y movimientos |
+| Ajustar inventario | `manageInventory` | Motivo obligatorio; auditar diferencia y actor |
+| Crear o modificar catálogo | `manageCatalog` | Precios append-only; editar un precio crea una versión nueva |
+| Crear/editar personal | `manageStaff` | No se puede crear ni elevar a `owner`; el dueño solo nace en la configuración inicial |
+| Editar permisos por usuario | `managePermissions` | Solo el Dueño; no puede modificar sus propios permisos |
+| Crear/restaurar backup | `manageBackups` | Solo el Dueño; confirmación explícita y auditoría |
+| Ver auditoría | `viewAudit` | Solo lectura; no se puede editar ni borrar desde la UI |
+| Cambiar configuración | `manageSettings` | Incluye moneda, zona horaria y política de sesión |
+| Generar código de recuperación del dueño | `manageSettings` | Solo el rol `owner`; invalida el código anterior y se audita |
+| Administrar finanzas | `manageFinance` | Solo el Dueño; no se asigna automáticamente al Gerente |
 
 ## Auditoría mínima
 
@@ -74,25 +126,22 @@ Cada comando sensible debe registrar en `audit_events`:
 ## Pruebas esperadas
 
 - Matriz completa por rol (unitarias en `gym-core`).
+- Overrides `allow`/`deny`, incluido el rechazo de permisos solo del Dueño.
 - Denegación de comando sensible con membresía revocada.
 - Denegación de acceso a recurso de otra organización.
 - Registro de denegaciones con actor y correlación.
 
 ## Estado de implementación
 
+- Fase 4.1: contrato `3.1.0`, esquema `v21`, cinco roles, overrides por usuario,
+  menú agrupado y editor de permisos en **Colaboradores**.
 - Aplicado en auth, personal, acceso, backups, catálogo, ventas, caja,
-  inventario, reportes y exportaciones: permisos, membresía activa, validación
-  de recurso y auditoría append-only.
-- `OperatePos` cubre abrir/cerrar caja, registrar ingresos/gastos, cobrar y
-  consultar ventas recientes; contabilidad consulta historial y movimientos con
-  `ViewFinance` pero no opera caja.
-- `ViewAudit` solo permite consultar y verificar la cadena; no existe comando de
+  inventario, reportes, exportaciones, configuración, complementos, clases,
+  marketing, finanzas y mantenimiento.
+- `viewAudit` solo permite consultar y verificar la cadena; no existe comando de
   edición o borrado.
-- Pendiente al construir cada módulo: recepción, socios y analítica.
 
-## Pendientes de endurecimiento (Phase 5)
+## Pendientes de endurecimiento (Fase 5)
 
-- Definir permisos de socios, entrenadores y marketing en la misma versión desktop.
-- Evaluar separar `ManageInventory` en consulta vs ajuste.
 - Añadir aprobación de dos personas para cambios de configuración críticos.
 - Exportación inmutable o copia externa de auditoría (hash chain ya implementada).
