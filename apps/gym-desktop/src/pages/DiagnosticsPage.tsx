@@ -18,8 +18,7 @@ export function DiagnosticsPage() {
   if (!inTauri) {
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">Diagnóstico del core</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-600">
+        <p className="max-w-2xl text-sm text-slate-600">
           La interfaz está corriendo en el navegador. El chequeo de salud, la SQLite
           cifrada y los backups requieren el proceso Tauri.
         </p>
@@ -40,8 +39,7 @@ pnpm tauri dev`}
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Diagnóstico del core</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Health local de Tauri, backend Rust, SQLCipher y contratos.
           </p>
         </div>

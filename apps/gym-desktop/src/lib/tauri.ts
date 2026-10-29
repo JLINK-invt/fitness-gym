@@ -65,12 +65,34 @@ import type {
   UpdateMemberInput,
   UpdateMembershipPlanInput,
   UpdateProspectInput,
+  UpdateStaffPermissionsInput,
   CancelMembershipInput,
   CreateMemberInput,
   CreateMembershipInput,
   CreateMembershipPlanInput,
   CreateProspectInput,
   PauseMembershipInput,
+  BookClassInput,
+  Campaign,
+  ClassBooking,
+  ClassSession,
+  CreateCampaignInput,
+  CreateClassInput,
+  CreateEquipmentInput,
+  CreateMaintenanceOrderInput,
+  Equipment,
+  GymSettings,
+  IntegrationJournalSummary,
+  IntegrationLink,
+  MaintenanceOrder,
+  MarketingFunnel,
+  UpdateCampaignInput,
+  UpdateClassBookingInput,
+  UpdateClassInput,
+  UpdateEquipmentInput,
+  UpdateGymSettingsInput,
+  UpdateMaintenanceOrderInput,
+  UpsertIntegrationLinkInput,
 } from "@gym/contracts";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -95,6 +117,8 @@ export const api = {
     invoke<StaffSummary>("create_staff", { name, role, password }),
   updateStaff: (userId: string, role: StaffRole, status: StaffStatus) =>
     invoke<StaffSummary>("update_staff", { userId, role, status }),
+  updateStaffPermissions: (input: UpdateStaffPermissionsInput) =>
+    invoke<StaffSummary>("update_staff_permissions", { input }),
   membershipDashboard: () =>
     invoke<MembershipDashboard>("membership_dashboard"),
   listMembershipPlans: () =>
@@ -222,4 +246,47 @@ export const api = {
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),
+  getGymSettings: () => invoke<GymSettings>("get_gym_settings"),
+  updateGymSettings: (input: UpdateGymSettingsInput) =>
+    invoke<GymSettings>("update_gym_settings", { input }),
+  listIntegrationLinks: () =>
+    invoke<IntegrationLink[]>("list_integration_links"),
+  upsertIntegrationLink: (input: UpsertIntegrationLinkInput) =>
+    invoke<IntegrationLink>("upsert_integration_link", { input }),
+  integrationJournalSummary: () =>
+    invoke<IntegrationJournalSummary>("integration_journal_summary"),
+  listClasses: () => invoke<ClassSession[]>("list_classes"),
+  createClass: (input: CreateClassInput) =>
+    invoke<ClassSession>("create_class", { input }),
+  updateClass: (input: UpdateClassInput) =>
+    invoke<ClassSession>("update_class", { input }),
+  listClassBookings: (classId: string) =>
+    invoke<ClassBooking[]>("list_class_bookings", { classId }),
+  bookClass: (input: BookClassInput) =>
+    invoke<ClassBooking>("book_class", { input }),
+  updateClassBooking: (input: UpdateClassBookingInput) =>
+    invoke<ClassBooking>("update_class_booking", { input }),
+  listCampaigns: () => invoke<Campaign[]>("list_campaigns"),
+  createCampaign: (input: CreateCampaignInput) =>
+    invoke<Campaign>("create_campaign", { input }),
+  updateCampaign: (input: UpdateCampaignInput) =>
+    invoke<Campaign>("update_campaign", { input }),
+  marketingFunnel: (options?: { inactivityDays?: number; expiryDays?: number }) =>
+    invoke<MarketingFunnel>("marketing_funnel", {
+      inactivityDays: options?.inactivityDays ?? null,
+      expiryDays: options?.expiryDays ?? null,
+    }),
+  listEquipment: () => invoke<Equipment[]>("list_equipment"),
+  createEquipment: (input: CreateEquipmentInput) =>
+    invoke<Equipment>("create_equipment", { input }),
+  updateEquipment: (input: UpdateEquipmentInput) =>
+    invoke<Equipment>("update_equipment", { input }),
+  listMaintenanceOrders: (status?: string) =>
+    invoke<MaintenanceOrder[]>("list_maintenance_orders", {
+      status: status ?? null,
+    }),
+  createMaintenanceOrder: (input: CreateMaintenanceOrderInput) =>
+    invoke<MaintenanceOrder>("create_maintenance_order", { input }),
+  updateMaintenanceOrder: (input: UpdateMaintenanceOrderInput) =>
+    invoke<MaintenanceOrder>("update_maintenance_order", { input }),
 };

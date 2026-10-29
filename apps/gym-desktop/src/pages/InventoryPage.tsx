@@ -190,8 +190,7 @@ export function InventoryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Inventario</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="text-sm text-slate-600">
           Existencias y valor derivados de movimientos inmutables. Recibe o ajusta
           stock sin editar el historial.
         </p>

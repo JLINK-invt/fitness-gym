@@ -74,10 +74,10 @@ export function ReportsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Reportes</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Cierre de ventas, métodos de pago, margen por producto, ajustes de
-            inventario y diferencia de caja. Cada exportación queda auditada.
+            inventario y diferencia de caja. El CSV incluye la razón social y el
+            RFC configurados en General. Cada exportación queda auditada.
           </p>
         </div>
         <button

@@ -327,8 +327,7 @@ export function SalesPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Ventas</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Cobra productos y servicios con el precio vigente del catálogo.
           </p>
         </div>

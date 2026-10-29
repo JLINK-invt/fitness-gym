@@ -1,11 +1,32 @@
+import type {
+  Campaign,
+  ClassBooking,
+  ClassSession,
+  Equipment,
+  GymSettings,
+  IntegrationLink,
+  MaintenanceOrder,
+  MarketingFunnel,
+  Permission,
+  PermissionEffect,
+  StaffRole,
+} from "@gym/contracts";
+
+import {
+  ownerOnlyPermissions,
+  permissionLabels,
+  rolePermissions,
+} from "./permissions";
+
 type Organization = { id: string; name: string };
 type Owner = { id: string; name: string; password: string; recoveryCode: string };
 type Session = {
   userId: string;
   organizationId: string;
+  organizationName: string;
   name: string;
-  role: "owner" | "manager" | "cashier" | "accounting";
-  permissions: string[];
+  role: StaffRole;
+  permissions: Permission[];
 };
 type AccessEvent = {
   eventId: string;
@@ -77,10 +98,11 @@ type StaffMember = {
   id: string;
   name: string;
   password: string;
-  role: "manager" | "cashier" | "accounting";
+  role: StaffRole;
   status: "active" | "revoked";
   lastLoginAt: string | null;
   createdAt: string;
+  permissionOverrides: { permission: Permission; effect: PermissionEffect }[];
 };
 type Backup = {
   id: string;
@@ -392,6 +414,13 @@ type StoredMembershipPaymentAttempt = {
     membershipPaymentIdempotency: Map<string, StoredMembershipPaymentAttempt>;
     membershipReceiptSequence: number;
     memberSequence: number;
+    gymSettings: GymSettings | null;
+    integrationLinks: IntegrationLink[];
+    classes: ClassSession[];
+    classBookings: ClassBooking[];
+    campaigns: Campaign[];
+    equipment: Equipment[];
+    maintenanceOrders: MaintenanceOrder[];
   } = {
     organizations: [],
     owner: null,
@@ -427,6 +456,13 @@ type StoredMembershipPaymentAttempt = {
     membershipPaymentIdempotency: new Map(),
     membershipReceiptSequence: 0,
     memberSequence: 0,
+    gymSettings: null,
+    integrationLinks: [],
+    classes: [],
+    classBookings: [],
+    campaigns: [],
+    equipment: [],
+    maintenanceOrders: [],
   };
 
   const now = () => new Date().toISOString();
@@ -440,36 +476,22 @@ type StoredMembershipPaymentAttempt = {
   };
   const normalizeRecoveryCode = (value: string) =>
     value.replace(/[\s-]/g, "").toUpperCase();
-  const permissionsFor = (role: Session["role"]) => {
-    switch (role) {
-      case "owner":
-        return [
-          "manageSettings",
-          "manageStaff",
-          "viewFinance",
-          "operatePos",
-          "manageInventory",
-          "manageCatalog",
-          "manageBackups",
-          "manageMembers",
-          "viewAudit",
-        ];
-      case "manager":
-        return [
-          "manageStaff",
-          "viewFinance",
-          "operatePos",
-          "manageInventory",
-          "manageCatalog",
-          "manageBackups",
-          "manageMembers",
-          "viewAudit",
-        ];
-      case "cashier":
-        return ["operatePos", "manageInventory", "manageMembers"];
-      case "accounting":
-        return ["viewFinance", "viewAudit"];
+  const permissionsFor = (
+    role: StaffRole,
+    overrides: { permission: Permission; effect: PermissionEffect }[] = [],
+  ) => {
+    const permissions = new Set<Permission>(rolePermissions[role]);
+    for (const override of overrides) {
+      if (ownerOnlyPermissions.includes(override.permission)) {
+        continue;
+      }
+      if (override.effect === "allow") {
+        permissions.add(override.permission);
+      } else {
+        permissions.delete(override.permission);
+      }
     }
+    return [...permissions];
   };
   const requireSession = () => {
     if (!state.session) {
@@ -477,14 +499,14 @@ type StoredMembershipPaymentAttempt = {
     }
     return state.session;
   };
-  const requirePermission = (permission: string) => {
+  const requirePermission = (permission: Permission) => {
     const session = requireSession();
     if (!session.permissions.includes(permission)) {
       throw apiError("unauthorized", "Tu rol no permite realizar esta acción.");
     }
     return session;
   };
-  const requireAnyPermission = (permissions: string[]) => {
+  const requireAnyPermission = (permissions: Permission[]) => {
     const session = requireSession();
     if (!permissions.some((permission) => session.permissions.includes(permission))) {
       throw apiError("unauthorized", "Tu rol no permite realizar esta acción.");
@@ -500,6 +522,7 @@ type StoredMembershipPaymentAttempt = {
           status: "active" as const,
           lastLoginAt: null,
           createdAt: now(),
+          permissionOverrides: [],
         }
       : null;
   const staffSummary = (member: StaffMember) => ({
@@ -509,6 +532,7 @@ type StoredMembershipPaymentAttempt = {
     status: member.status,
     lastLoginAt: member.lastLoginAt,
     createdAt: member.createdAt,
+    permissionOverrides: member.permissionOverrides,
   });
 
   const dateOnly = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -758,7 +782,7 @@ type StoredMembershipPaymentAttempt = {
   const health = () => ({
     service: "gym-desktop",
     version: "0.1.0",
-    contractVersion: "2.14.0",
+    contractVersion: "3.1.0",
     status: "ok",
     modules: [
       { name: "gym-core", status: "ok" },
@@ -769,7 +793,7 @@ type StoredMembershipPaymentAttempt = {
       path: "/tmp/fitness-gym-e2e/fitness-gym.db",
       encrypted: true,
       cipherVersion: "4.6.1 community",
-      schemaVersion: 19,
+      schemaVersion: 21,
       integrityOk: true,
       organizations: state.organizations.length,
     },
@@ -1359,6 +1383,7 @@ type StoredMembershipPaymentAttempt = {
           state.session = {
             userId: owner.id,
             organizationId: state.organizations[0]!.id,
+            organizationName: state.organizations[0]!.name,
             name: owner.name,
             role: "owner",
             permissions: permissionsFor("owner"),
@@ -1420,6 +1445,7 @@ type StoredMembershipPaymentAttempt = {
           state.session = {
             userId: state.owner.id,
             organizationId: state.organizations[0]!.id,
+            organizationName: state.organizations[0]!.name,
             name: state.owner.name,
             role: "owner",
             permissions: permissionsFor("owner"),
@@ -1462,6 +1488,7 @@ type StoredMembershipPaymentAttempt = {
             state.session = {
               userId: owner.id,
               organizationId: state.organizations[0]!.id,
+              organizationName: state.organizations[0]!.name,
               name: owner.name,
               role: "owner",
               permissions: permissionsFor("owner"),
@@ -1471,9 +1498,10 @@ type StoredMembershipPaymentAttempt = {
             state.session = {
               userId: member.id,
               organizationId: state.organizations[0]!.id,
+              organizationName: state.organizations[0]!.name,
               name: member.name,
               role: member.role,
-              permissions: permissionsFor(member.role),
+              permissions: permissionsFor(member.role, member.permissionOverrides),
             };
           }
           if (state.session) {
@@ -1504,10 +1532,7 @@ type StoredMembershipPaymentAttempt = {
           const session = requirePermission("manageStaff");
           const all = [...(ownerStaff() ? [ownerStaff()!] : []), ...state.staff.map(staffSummary)];
           return all.filter(
-            (member) =>
-              session.role !== "manager" ||
-              member.role === "cashier" ||
-              member.role === "accounting",
+            (member) => session.role !== "manager" || member.role !== "manager",
           );
         }
 
@@ -1522,7 +1547,7 @@ type StoredMembershipPaymentAttempt = {
           if (password.length < 8) {
             throw apiError("invalidRequest", "La contraseña debe tener al menos 8 caracteres.");
           }
-          if (!["manager", "cashier", "accounting"].includes(role)) {
+          if (!["manager", "receptionist", "advisor", "trainer"].includes(role)) {
             throw apiError("invalidRequest", "Rol inválido.");
           }
           if (
@@ -1532,7 +1557,7 @@ type StoredMembershipPaymentAttempt = {
             throw apiError("invalidRequest", "Ya existe una persona con ese nombre.");
           }
           if (session.role === "manager" && role === "manager") {
-            throw apiError("unauthorized", "Un encargado no puede crear otro encargado.");
+            throw apiError("unauthorized", "Un gerente no puede crear otro gerente.");
           }
           const member: StaffMember = {
             id: uuid(),
@@ -1542,6 +1567,7 @@ type StoredMembershipPaymentAttempt = {
             status: "active",
             lastLoginAt: null,
             createdAt: now(),
+            permissionOverrides: [],
           };
           state.staff.push(member);
           recordAudit({
@@ -1564,7 +1590,7 @@ type StoredMembershipPaymentAttempt = {
           }
           const role = String(args.role ?? "");
           const status = String(args.status ?? "");
-          if (!["manager", "cashier", "accounting"].includes(role)) {
+          if (!["manager", "receptionist", "advisor", "trainer"].includes(role)) {
             throw apiError("invalidRequest", "Rol inválido.");
           }
           if (status !== "active" && status !== "revoked") {
@@ -1576,7 +1602,7 @@ type StoredMembershipPaymentAttempt = {
           ) {
             throw apiError(
               "unauthorized",
-              "Solo puedes administrar cajeros y contabilidad.",
+              "Solo puedes administrar recepción, asesoría y entrenamiento.",
             );
           }
           member.role = role as StaffMember["role"];
@@ -1584,6 +1610,51 @@ type StoredMembershipPaymentAttempt = {
           recordAudit({
             actor: state.session,
             action: "staff.updated",
+            resource: "staff_membership",
+          });
+          return staffSummary(member);
+        }
+
+        case "update_staff_permissions": {
+          const session = requirePermission("managePermissions");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const userId = String(input.userId ?? "");
+          if (userId === session.userId) {
+            throw apiError(
+              "invalidRequest",
+              "No puedes modificar tus propios permisos.",
+            );
+          }
+          const member = state.staff.find((item) => item.id === userId);
+          if (!member) {
+            throw apiError("invalidRequest", "El colaborador no existe.");
+          }
+          const allPermissions = Object.keys(permissionLabels) as Permission[];
+          const rawOverrides = Array.isArray(input.overrides)
+            ? input.overrides
+            : [];
+          const overrides = rawOverrides.map((entry) => {
+            const candidate = entry as Record<string, unknown>;
+            const permission = String(candidate.permission ?? "") as Permission;
+            const effect = String(candidate.effect ?? "");
+            if (!allPermissions.includes(permission)) {
+              throw apiError("invalidRequest", "Permiso inválido.");
+            }
+            if (ownerOnlyPermissions.includes(permission)) {
+              throw apiError(
+                "invalidRequest",
+                "Ese permiso solo puede tenerlo el dueño.",
+              );
+            }
+            if (effect !== "allow" && effect !== "deny") {
+              throw apiError("invalidRequest", "Efecto de permiso inválido.");
+            }
+            return { permission, effect: effect as PermissionEffect };
+          });
+          member.permissionOverrides = overrides;
+          recordAudit({
+            actor: state.session,
+            action: "staff.permissions_updated",
             resource: "staff_membership",
           });
           return staffSummary(member);
@@ -3902,7 +3973,7 @@ type StoredMembershipPaymentAttempt = {
             createdAt,
             sizeBytes: 118784,
             checksum: "9f2c4e7a1b8d3f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
-            schemaVersion: 19,
+            schemaVersion: 21,
           };
           state.backups.unshift(backup);
           state.secrets.set(fileName, passphrase);
@@ -3961,6 +4032,667 @@ type StoredMembershipPaymentAttempt = {
                     index > 0 && event.sequence !== ordered[index - 1]!.sequence + 1,
                 )?.sequence ?? null,
           };
+        }
+
+        case "get_gym_settings": {
+          requirePermission("viewSettings");
+          if (!state.gymSettings) {
+            state.gymSettings = {
+              id: uuid(),
+              businessName: state.organizations[0]?.name ?? "Fitness Gym",
+              legalName: null,
+              taxId: null,
+              currency: "MXN",
+              timezone: "America/Mexico_City",
+              locale: "es-MX",
+              openingTime: "06:00",
+              closingTime: "22:00",
+              slotMinutes: 60,
+              graceMinutes: 10,
+              inactivityDays: 30,
+              frozenDays: 0,
+              updatedAt: now(),
+            };
+          }
+          return { ...state.gymSettings };
+        }
+
+        case "update_gym_settings": {
+          requirePermission("manageSettings");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const businessName = String(input.businessName ?? "").trim();
+          if (!businessName) {
+            throw apiError("invalidRequest", "El nombre comercial es obligatorio.");
+          }
+          const slotMinutes = Number(input.slotMinutes ?? 60);
+          const graceMinutes = Number(input.graceMinutes ?? 10);
+          const inactivityDays = Number(input.inactivityDays ?? 30);
+          const frozenDays = Number(input.frozenDays ?? 0);
+          if (slotMinutes < 15 || slotMinutes > 240) {
+            throw apiError("invalidRequest", "La duración de turno debe estar entre 15 y 240 minutos.");
+          }
+          if (graceMinutes < 0 || graceMinutes > 120) {
+            throw apiError("invalidRequest", "La tolerancia debe estar entre 0 y 120 minutos.");
+          }
+          if (inactivityDays < 1 || inactivityDays > 365) {
+            throw apiError("invalidRequest", "La inactividad debe estar entre 1 y 365 días.");
+          }
+          if (frozenDays < 0 || frozenDays > 365) {
+            throw apiError("invalidRequest", "Los días congelados deben estar entre 0 y 365.");
+          }
+          state.gymSettings = {
+            id: state.gymSettings?.id ?? uuid(),
+            businessName,
+            legalName: String(input.legalName ?? "").trim() || null,
+            taxId: String(input.taxId ?? "").trim() || null,
+            currency: String(input.currency ?? "MXN").trim() || "MXN",
+            timezone: String(input.timezone ?? "America/Mexico_City").trim(),
+            locale: String(input.locale ?? "es-MX").trim(),
+            openingTime: String(input.openingTime ?? "06:00").trim(),
+            closingTime: String(input.closingTime ?? "22:00").trim(),
+            slotMinutes,
+            graceMinutes,
+            inactivityDays,
+            frozenDays,
+            updatedAt: now(),
+          };
+          recordAudit({
+            actor: state.session,
+            action: "settings.updated",
+            resource: "gym_settings",
+          });
+          return { ...state.gymSettings };
+        }
+
+        case "list_integration_links": {
+          requirePermission("viewIntegrations");
+          return state.integrationLinks.map((link) => ({
+            ...link,
+            capabilities: [...link.capabilities],
+          }));
+        }
+
+        case "upsert_integration_link": {
+          requirePermission("manageIntegrations");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const moduleId = String(input.moduleId ?? "").trim();
+          const displayName = String(input.displayName ?? "").trim();
+          const contractVersion = String(input.contractVersion ?? "").trim();
+          const status = String(input.status ?? "connected").trim();
+          if (!moduleId || !displayName || !contractVersion) {
+            throw apiError("invalidRequest", "Los datos de la integración están incompletos.");
+          }
+          if (!["connected", "degraded", "disconnected"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de integración inválido.");
+          }
+          const capabilities = Array.isArray(input.capabilities)
+            ? input.capabilities.map((value) => String(value).trim()).filter(Boolean).slice(0, 12)
+            : [];
+          const existing = state.integrationLinks.find((link) => link.moduleId === moduleId);
+          const updatedAt = now();
+          const link: IntegrationLink = {
+            id: existing?.id ?? uuid(),
+            moduleId,
+            displayName,
+            contractVersion,
+            status,
+            capabilities,
+            lastSeenAt: existing?.lastSeenAt ?? updatedAt,
+            lastEventAt: existing?.lastEventAt ?? null,
+            lastSnapshotAt: existing?.lastSnapshotAt ?? null,
+            notes: String(input.notes ?? "").trim() || null,
+            createdAt: existing?.createdAt ?? updatedAt,
+            updatedAt,
+          };
+          if (existing) {
+            Object.assign(existing, link);
+          } else {
+            state.integrationLinks.push(link);
+          }
+          recordAudit({
+            actor: state.session,
+            action: "integration.linked",
+            resource: "integration_link",
+            correlationId: link.id,
+          });
+          return { ...link, capabilities: [...link.capabilities] };
+        }
+
+        case "integration_journal_summary": {
+          requirePermission("viewIntegrations");
+          return {
+            pending: 0,
+            sent: 0,
+            deadLetter: 0,
+            inboxEvents: 0,
+            lastServerSequence: 0,
+          };
+        }
+
+        case "list_classes": {
+          requirePermission("viewClasses");
+          return state.classes.map((item) => ({ ...item }));
+        }
+
+        case "create_class": {
+          requirePermission("manageClasses");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          const weekday = Number(input.weekday ?? 0);
+          const startTime = String(input.startTime ?? "").trim();
+          const durationMinutes = Number(input.durationMinutes ?? 60);
+          const capacity = Number(input.capacity ?? 1);
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre de la clase es obligatorio.");
+          }
+          if (weekday < 0 || weekday > 6) {
+            throw apiError("invalidRequest", "El día de la semana es inválido.");
+          }
+          if (!startTime) {
+            throw apiError("invalidRequest", "La hora de inicio es obligatoria.");
+          }
+          if (durationMinutes < 15 || durationMinutes > 480) {
+            throw apiError("invalidRequest", "La duración debe estar entre 15 y 480 minutos.");
+          }
+          if (capacity < 1 || capacity > 500) {
+            throw apiError("invalidRequest", "La capacidad debe estar entre 1 y 500.");
+          }
+          const coachUserId = String(input.coachUserId ?? "").trim() || null;
+          const coachName = coachUserId
+            ? state.staff.find((member) => member.id === coachUserId)?.name ?? null
+            : null;
+          const createdAt = now();
+          const session: ClassSession = {
+            id: uuid(),
+            name,
+            coachUserId,
+            coachName,
+            weekday,
+            startTime,
+            durationMinutes,
+            capacity,
+            room: String(input.room ?? "").trim() || null,
+            status: "active",
+            notes: String(input.notes ?? "").trim() || null,
+            booked: 0,
+            attended: 0,
+            createdAt,
+            updatedAt: createdAt,
+          };
+          state.classes.push(session);
+          recordAudit({
+            actor: state.session,
+            action: "class.created",
+            resource: "class",
+            correlationId: session.id,
+          });
+          return { ...session };
+        }
+
+        case "update_class": {
+          requirePermission("manageClasses");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const session = state.classes.find(
+            (item) => item.id === String(input.classId ?? ""),
+          );
+          if (!session) {
+            throw apiError("notFound", "La clase no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const status = String(input.status ?? "");
+          const capacity = Number(input.capacity ?? session.capacity);
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre de la clase es obligatorio.");
+          }
+          if (!["active", "paused", "cancelled"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de clase inválido.");
+          }
+          if (capacity < session.booked) {
+            throw apiError("invalidRequest", "La capacidad no puede ser menor a las reservas actuales.");
+          }
+          const coachUserId = String(input.coachUserId ?? "").trim() || null;
+          session.name = name;
+          session.coachUserId = coachUserId;
+          session.coachName = coachUserId
+            ? state.staff.find((member) => member.id === coachUserId)?.name ?? null
+            : null;
+          session.weekday = Number(input.weekday ?? session.weekday);
+          session.startTime = String(input.startTime ?? session.startTime).trim();
+          session.durationMinutes = Number(input.durationMinutes ?? session.durationMinutes);
+          session.capacity = capacity;
+          session.room = String(input.room ?? "").trim() || null;
+          session.status = status;
+          session.notes = String(input.notes ?? "").trim() || null;
+          session.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "class.updated",
+            resource: "class",
+            correlationId: session.id,
+          });
+          return { ...session };
+        }
+
+        case "list_class_bookings": {
+          requirePermission("viewClasses");
+          const classId = String(args.classId ?? "");
+          return state.classBookings
+            .filter((booking) => booking.classId === classId)
+            .map((booking) => ({ ...booking }));
+        }
+
+        case "book_class": {
+          requirePermission("manageReservations");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const classId = String(input.classId ?? "");
+          const memberId = String(input.memberId ?? "");
+          const session = state.classes.find((item) => item.id === classId);
+          if (!session) {
+            throw apiError("notFound", "La clase no existe.");
+          }
+          if (session.status !== "active") {
+            throw apiError("invalidRequest", "Solo las clases activas aceptan reservas.");
+          }
+          const member = state.members.find((item) => item.id === memberId);
+          if (!member) {
+            throw apiError("notFound", "El socio no existe.");
+          }
+          const existing = state.classBookings.find(
+            (booking) => booking.classId === classId && booking.memberId === memberId,
+          );
+          if (existing && existing.status !== "cancelled") {
+            throw apiError("invalidRequest", "El socio ya tiene una reserva en esta clase.");
+          }
+          const activeBookings = state.classBookings.filter(
+            (booking) =>
+              booking.classId === classId &&
+              (booking.status === "booked" || booking.status === "attended"),
+          ).length;
+          if (activeBookings >= session.capacity) {
+            throw apiError("invalidRequest", "La clase no tiene cupo disponible.");
+          }
+          const bookedAt = now();
+          if (existing) {
+            existing.status = "booked";
+            existing.note = String(input.note ?? "").trim() || null;
+            existing.bookedAt = bookedAt;
+            existing.updatedAt = bookedAt;
+            session.booked += 1;
+          } else {
+            const booking: ClassBooking = {
+              id: uuid(),
+              classId,
+              className: session.name,
+              memberId,
+              memberName: `${member.firstName} ${member.lastName}`.trim(),
+              status: "booked",
+              note: String(input.note ?? "").trim() || null,
+              bookedAt,
+              updatedAt: bookedAt,
+            };
+            state.classBookings.push(booking);
+            session.booked += 1;
+          }
+          recordAudit({
+            actor: state.session,
+            action: "class.booking.created",
+            resource: "class_booking",
+          });
+          const booking = state.classBookings.find(
+            (item) => item.classId === classId && item.memberId === memberId,
+          )!;
+          return { ...booking };
+        }
+
+        case "update_class_booking": {
+          requirePermission("manageReservations");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const booking = state.classBookings.find(
+            (item) => item.id === String(input.bookingId ?? ""),
+          );
+          if (!booking) {
+            throw apiError("notFound", "La reserva no existe.");
+          }
+          const status = String(input.status ?? "");
+          if (!["booked", "attended", "cancelled", "no_show"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de reserva inválido.");
+          }
+          const previous = booking.status;
+          booking.status = status;
+          booking.updatedAt = now();
+          const session = state.classes.find((item) => item.id === booking.classId);
+          if (session) {
+            const counted = (value: string) => value === "booked" || value === "attended";
+            if (counted(previous) && !counted(status)) {
+              session.booked = Math.max(0, session.booked - 1);
+            }
+            if (!counted(previous) && counted(status)) {
+              session.booked += 1;
+            }
+            if (status === "attended" && previous !== "attended") {
+              session.attended += 1;
+            } else if (previous === "attended" && status !== "attended") {
+              session.attended = Math.max(0, session.attended - 1);
+            }
+          }
+          recordAudit({
+            actor: state.session,
+            action: "class.booking.updated",
+            resource: "class_booking",
+            correlationId: booking.id,
+          });
+          return { ...booking };
+        }
+
+        case "list_campaigns": {
+          requirePermission("viewMarketing");
+          return state.campaigns.map((campaign) => ({ ...campaign }));
+        }
+
+        case "create_campaign": {
+          requirePermission("manageMarketing");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          const channel = String(input.channel ?? "").trim();
+          const audience = String(input.audience ?? "").trim();
+          const status = String(input.status ?? "draft").trim();
+          if (!name || !audience) {
+            throw apiError("invalidRequest", "El nombre y la audiencia son obligatorios.");
+          }
+          if (!["whatsapp", "sms", "email", "in_app", "referral"].includes(channel)) {
+            throw apiError("invalidRequest", "Canal de campaña inválido.");
+          }
+          if (!["draft", "active", "paused", "completed"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de campaña inválido.");
+          }
+          const createdAt = now();
+          const campaign: Campaign = {
+            id: uuid(),
+            name,
+            channel,
+            audience,
+            status,
+            startsOn: String(input.startsOn ?? "").trim() || null,
+            endsOn: String(input.endsOn ?? "").trim() || null,
+            notes: String(input.notes ?? "").trim() || null,
+            createdAt,
+            updatedAt: createdAt,
+          };
+          state.campaigns.push(campaign);
+          recordAudit({
+            actor: state.session,
+            action: "campaign.created",
+            resource: "campaign",
+            correlationId: campaign.id,
+          });
+          return { ...campaign };
+        }
+
+        case "update_campaign": {
+          requirePermission("manageMarketing");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const campaign = state.campaigns.find(
+            (item) => item.id === String(input.campaignId ?? ""),
+          );
+          if (!campaign) {
+            throw apiError("notFound", "La campaña no existe.");
+          }
+          const name = String(input.name ?? "").trim();
+          const channel = String(input.channel ?? "").trim();
+          const audience = String(input.audience ?? "").trim();
+          const status = String(input.status ?? "");
+          if (!name || !audience) {
+            throw apiError("invalidRequest", "El nombre y la audiencia son obligatorios.");
+          }
+          if (!["whatsapp", "sms", "email", "in_app", "referral"].includes(channel)) {
+            throw apiError("invalidRequest", "Canal de campaña inválido.");
+          }
+          if (!["draft", "active", "paused", "completed"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de campaña inválido.");
+          }
+          campaign.name = name;
+          campaign.channel = channel;
+          campaign.audience = audience;
+          campaign.status = status;
+          campaign.startsOn = String(input.startsOn ?? "").trim() || null;
+          campaign.endsOn = String(input.endsOn ?? "").trim() || null;
+          campaign.notes = String(input.notes ?? "").trim() || null;
+          campaign.updatedAt = now();
+          recordAudit({
+            actor: state.session,
+            action: "campaign.updated",
+            resource: "campaign",
+            correlationId: campaign.id,
+          });
+          return { ...campaign };
+        }
+
+        case "marketing_funnel": {
+          requirePermission("viewMarketing");
+          const inactivityDays = Math.max(
+            1,
+            Math.min(365, Number(args.inactivityDays ?? state.gymSettings?.inactivityDays ?? 30)),
+          );
+          const expiryDays = Math.max(1, Math.min(365, Number(args.expiryDays ?? 30)));
+          const stageOrder = ["new", "contacted", "trial", "converted", "lost"];
+          const stages = stageOrder.map((status) => ({
+            status,
+            count: state.prospects.filter((prospect) => prospect.status === status).length,
+          }));
+          const total = stages.reduce((sum, stage) => sum + stage.count, 0);
+          const converted = stages.find((stage) => stage.status === "converted")?.count ?? 0;
+          const conversionBps = total === 0 ? 0 : Math.round((converted * 10000) / total);
+          const today = new Date();
+          const expiryLimit = new Date(today);
+          expiryLimit.setDate(expiryLimit.getDate() + expiryDays);
+          const expiryLimitIso = expiryLimit.toISOString().slice(0, 10);
+          const todayIso = today.toISOString().slice(0, 10);
+          const expiringMemberships = state.memberships.filter(
+            (membership) =>
+              membership.status === "active" &&
+              membership.endDate >= todayIso &&
+              membership.endDate <= expiryLimitIso,
+          ).length;
+          const inactivityCutoff = new Date(today);
+          inactivityCutoff.setDate(inactivityCutoff.getDate() - inactivityDays);
+          const cutoffIso = inactivityCutoff.toISOString();
+          const activeMembers = state.members.filter((member) => member.status === "active");
+          const inactiveMembers = activeMembers.filter(
+            (member) =>
+              !state.accessLog.some(
+                (entry) =>
+                  entry.memberId === member.id &&
+                  entry.allowed &&
+                  entry.occurredAt >= cutoffIso,
+              ),
+          ).length;
+          const funnel: MarketingFunnel = {
+            prospectsTotal: total,
+            prospectsConverted: converted,
+            conversionBps,
+            stages,
+            activeCampaigns: state.campaigns.filter((campaign) => campaign.status === "active")
+              .length,
+            expiringMemberships,
+            inactiveMembers,
+          };
+          return funnel;
+        }
+
+        case "list_equipment": {
+          requirePermission("viewMaintenance");
+          return state.equipment.map((item) => ({ ...item }));
+        }
+
+        case "create_equipment": {
+          requirePermission("manageMaintenance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const name = String(input.name ?? "").trim();
+          if (!name) {
+            throw apiError("invalidRequest", "El nombre del equipo es obligatorio.");
+          }
+          const createdAt = now();
+          const item: Equipment = {
+            id: uuid(),
+            name,
+            code: String(input.code ?? "").trim() || null,
+            area: String(input.area ?? "").trim() || null,
+            status: "operational",
+            acquiredOn: String(input.acquiredOn ?? "").trim() || null,
+            notes: String(input.notes ?? "").trim() || null,
+            openOrders: 0,
+            createdAt,
+            updatedAt: createdAt,
+          };
+          state.equipment.push(item);
+          recordAudit({
+            actor: state.session,
+            action: "equipment.created",
+            resource: "equipment",
+            correlationId: item.id,
+          });
+          return { ...item };
+        }
+
+        case "update_equipment": {
+          requirePermission("manageMaintenance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const item = state.equipment.find(
+            (equipment) => equipment.id === String(input.equipmentId ?? ""),
+          );
+          if (!item) {
+            throw apiError("notFound", "El equipo no existe.");
+          }
+          const status = String(input.status ?? "");
+          if (!["operational", "maintenance", "out_of_service"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de equipo inválido.");
+          }
+          item.name = String(input.name ?? "").trim() || item.name;
+          item.code = String(input.code ?? "").trim() || null;
+          item.area = String(input.area ?? "").trim() || null;
+          item.status = status;
+          item.acquiredOn = String(input.acquiredOn ?? "").trim() || null;
+          item.notes = String(input.notes ?? "").trim() || null;
+          item.updatedAt = now();
+          item.openOrders = state.maintenanceOrders.filter(
+            (order) =>
+              order.equipmentId === item.id &&
+              (order.status === "open" || order.status === "in_progress"),
+          ).length;
+          recordAudit({
+            actor: state.session,
+            action: "equipment.updated",
+            resource: "equipment",
+            correlationId: item.id,
+          });
+          return { ...item };
+        }
+
+        case "list_maintenance_orders": {
+          requirePermission("viewMaintenance");
+          const status = String(args.status ?? "").trim();
+          return state.maintenanceOrders
+            .filter((order) => !status || order.status === status)
+            .map((order) => ({ ...order }));
+        }
+
+        case "create_maintenance_order": {
+          requirePermission("manageMaintenance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const kind = String(input.kind ?? "").trim();
+          const priority = String(input.priority ?? "normal").trim();
+          const summary = String(input.summary ?? "").trim();
+          if (!["preventive", "corrective"].includes(kind)) {
+            throw apiError("invalidRequest", "Tipo de orden inválido.");
+          }
+          if (!["low", "normal", "high"].includes(priority)) {
+            throw apiError("invalidRequest", "Prioridad de orden inválida.");
+          }
+          if (!summary) {
+            throw apiError("invalidRequest", "El resumen de la orden es obligatorio.");
+          }
+          const equipmentId = String(input.equipmentId ?? "").trim() || null;
+          const equipment = equipmentId
+            ? state.equipment.find((item) => item.id === equipmentId)
+            : null;
+          if (equipmentId && !equipment) {
+            throw apiError("notFound", "El equipo no existe.");
+          }
+          const createdAt = now();
+          const order: MaintenanceOrder = {
+            id: uuid(),
+            equipmentId,
+            equipmentName: equipment?.name ?? null,
+            kind,
+            status: "open",
+            priority,
+            summary,
+            detail: String(input.detail ?? "").trim() || null,
+            dueOn: String(input.dueOn ?? "").trim() || null,
+            reportedBy: String(input.reportedBy ?? "").trim() || state.session?.name || null,
+            completedAt: null,
+            createdAt,
+            updatedAt: createdAt,
+          };
+          state.maintenanceOrders.push(order);
+          if (equipment) {
+            equipment.openOrders += 1;
+          }
+          recordAudit({
+            actor: state.session,
+            action: "maintenance.order.created",
+            resource: "maintenance_order",
+            correlationId: order.id,
+          });
+          return { ...order };
+        }
+
+        case "update_maintenance_order": {
+          requirePermission("manageMaintenance");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const order = state.maintenanceOrders.find(
+            (item) => item.id === String(input.orderId ?? ""),
+          );
+          if (!order) {
+            throw apiError("notFound", "La orden de mantenimiento no existe.");
+          }
+          const status = String(input.status ?? "");
+          const priority = String(input.priority ?? "");
+          const summary = String(input.summary ?? "").trim();
+          if (!["open", "in_progress", "completed", "cancelled"].includes(status)) {
+            throw apiError("invalidRequest", "Estado de orden inválido.");
+          }
+          if (!["low", "normal", "high"].includes(priority)) {
+            throw apiError("invalidRequest", "Prioridad de orden inválida.");
+          }
+          if (!summary) {
+            throw apiError("invalidRequest", "El resumen de la orden es obligatorio.");
+          }
+          const wasOpen = order.status === "open" || order.status === "in_progress";
+          order.status = status;
+          order.priority = priority;
+          order.summary = summary;
+          order.detail = String(input.detail ?? "").trim() || null;
+          order.dueOn = String(input.dueOn ?? "").trim() || null;
+          order.completedAt = status === "completed" ? now() : null;
+          order.updatedAt = now();
+          const isOpen = status === "open" || status === "in_progress";
+          const equipment = order.equipmentId
+            ? state.equipment.find((item) => item.id === order.equipmentId)
+            : null;
+          if (equipment) {
+            equipment.openOrders = Math.max(
+              0,
+              equipment.openOrders + (isOpen ? 1 : 0) - (wasOpen ? 1 : 0),
+            );
+          }
+          recordAudit({
+            actor: state.session,
+            action: "maintenance.order.updated",
+            resource: "maintenance_order",
+            correlationId: order.id,
+          });
+          return { ...order };
         }
 
         default:

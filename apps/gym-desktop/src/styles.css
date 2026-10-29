@@ -22,6 +22,31 @@ body {
   color: var(--color-ink-900);
 }
 
+.chrome-tab[data-merge="true"] {
+  position: relative;
+  z-index: 1;
+}
+
+.chrome-tab[data-merge="true"]::before,
+.chrome-tab[data-merge="true"]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  height: 3px;
+  pointer-events: none;
+}
+
+.chrome-tab[data-merge="true"]::before {
+  left: -3px;
+  background: radial-gradient(circle at 100% 100%, #fff 2.5px, transparent 3px);
+}
+
+.chrome-tab[data-merge="true"]::after {
+  right: -3px;
+  background: radial-gradient(circle at 0 100%, #fff 2.5px, transparent 3px);
+}
+
 @media print {
   body * {
     visibility: hidden;

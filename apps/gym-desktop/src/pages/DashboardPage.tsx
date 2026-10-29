@@ -100,10 +100,7 @@ export function DashboardPage() {
     return (
       <div className="space-y-6">
         <header>
-          <h1 className="text-xl font-semibold tracking-tight">Panel</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Resumen operativo del gimnasio.
-          </p>
+          <p className="text-sm text-slate-600">Resumen operativo del gimnasio.</p>
         </header>
         <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
           <h2 className="text-base font-semibold">Inventario restringido</h2>
@@ -127,8 +124,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">Panel</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="text-sm text-slate-600">
           Existencias, valor y rotación básica de los últimos {ROTATION_DAYS} días.
         </p>
       </header>

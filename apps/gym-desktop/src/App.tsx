@@ -11,12 +11,18 @@ import { AuthPage } from "./pages/AuthPage";
 import { BackupsPage } from "./pages/BackupsPage";
 import { CashPage } from "./pages/CashPage";
 import { CatalogPage } from "./pages/CatalogPage";
+import { ClassesPage } from "./pages/ClassesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
+import { FinancePage } from "./pages/FinancePage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { InventoryPage } from "./pages/InventoryPage";
+import { MaintenancePage } from "./pages/MaintenancePage";
+import { MarketingPage } from "./pages/MarketingPage";
 import { MembersPage } from "./pages/MembersPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SalesPage } from "./pages/SalesPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { api, isTauriRuntime } from "./lib/tauri";
 
@@ -80,7 +86,7 @@ export function App() {
         <Route
           path="cash"
           element={
-            <Guarded anyPermission={["operatePos", "viewFinance"]}>
+            <Guarded anyPermission={["operatePos", "superviseCash", "viewFinance"]}>
               <CashPage />
             </Guarded>
           }
@@ -88,7 +94,7 @@ export function App() {
         <Route
           path="sales"
           element={
-            <Guarded permission="operatePos">
+            <Guarded permission="viewSales">
               <SalesPage />
             </Guarded>
           }
@@ -96,7 +102,7 @@ export function App() {
         <Route
           path="inventory"
           element={
-            <Guarded permission="manageInventory">
+            <Guarded permission="viewInventory">
               <InventoryPage />
             </Guarded>
           }
@@ -104,7 +110,7 @@ export function App() {
         <Route
           path="members"
           element={
-            <Guarded permission="manageMembers">
+            <Guarded permission="viewMembers">
               <MembersPage />
             </Guarded>
           }
@@ -112,15 +118,23 @@ export function App() {
         <Route
           path="access"
           element={
-            <Guarded anyPermission={["operatePos", "manageMembers"]}>
+            <Guarded permission="viewAccess">
               <AccessPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="classes"
+          element={
+            <Guarded permission="viewClasses">
+              <ClassesPage />
             </Guarded>
           }
         />
         <Route
           path="catalog"
           element={
-            <Guarded permission="manageCatalog">
+            <Guarded permission="viewCatalog">
               <CatalogPage />
             </Guarded>
           }
@@ -128,15 +142,55 @@ export function App() {
         <Route
           path="reports"
           element={
-            <Guarded permission="viewFinance">
+            <Guarded permission="viewReports">
               <ReportsPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="marketing"
+          element={
+            <Guarded permission="viewMarketing">
+              <MarketingPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="finance"
+          element={
+            <Guarded permission="viewFinance">
+              <FinancePage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <Guarded permission="viewSettings">
+              <SettingsPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="maintenance"
+          element={
+            <Guarded permission="viewMaintenance">
+              <MaintenancePage />
+            </Guarded>
+          }
+        />
+        <Route
+          path="integrations"
+          element={
+            <Guarded permission="viewIntegrations">
+              <IntegrationsPage />
             </Guarded>
           }
         />
         <Route
           path="staff"
           element={
-            <Guarded permission="manageStaff">
+            <Guarded permission="viewStaff">
               <StaffPage />
             </Guarded>
           }
