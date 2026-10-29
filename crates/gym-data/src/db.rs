@@ -31,7 +31,8 @@ pub use operations::{
     CampaignRecord, ClassBookingRecord, ClassRecord, EquipmentRecord, FunnelStageRecord,
     GymSettingsRecord, IntegrationJournalSummary, IntegrationLinkRecord, MaintenanceOrderRecord,
     MaintenanceOrderUpdate, MarketingFunnelRecord, NewCampaign, NewClass, NewEquipment,
-    NewIntegrationLink, NewMaintenanceOrder, UpdateClass, UpdateEquipment, UpdateGymSettings,
+    NewIntegrationLink, NewMaintenanceOrder, SettingsChangeRequestRecord, UpdateClass,
+    UpdateEquipment, UpdateGymSettings,
 };
 pub use reports::{NewReportSchedule, ReportRunRecord, ReportScheduleRecord};
 
@@ -567,6 +568,8 @@ pub struct AuditEventRecord {
     pub origin: String,
     pub correlation_id: Option<String>,
     pub created_at: String,
+    pub prev_hash: Option<String>,
+    pub event_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4081,7 +4084,8 @@ impl Db {
         self.with_connection(|conn| {
             let mut statement = conn.prepare(
                 "SELECT a.id, a.sequence, a.actor_id, u.name, a.action,
-                        a.resource, a.result, a.origin, a.correlation_id, a.created_at
+                        a.resource, a.result, a.origin, a.correlation_id, a.created_at,
+                        a.prev_hash, a.event_hash
                  FROM audit_events a
                  LEFT JOIN users u ON u.id = a.actor_id
                  WHERE a.organization_id = ?1
@@ -4100,6 +4104,43 @@ impl Db {
                     origin: row.get(7)?,
                     correlation_id: row.get(8)?,
                     created_at: row.get(9)?,
+                    prev_hash: row.get(10)?,
+                    event_hash: row.get(11)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    /// Returns the full audit trail in chain order for external verification.
+    pub fn list_audit_events_for_export(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<AuditEventRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT a.id, a.sequence, a.actor_id, u.name, a.action,
+                        a.resource, a.result, a.origin, a.correlation_id, a.created_at,
+                        a.prev_hash, a.event_hash
+                 FROM audit_events a
+                 LEFT JOIN users u ON u.id = a.actor_id
+                 WHERE a.organization_id = ?1
+                 ORDER BY a.sequence ASC",
+            )?;
+            let rows = statement.query_map(params![organization_id], |row| {
+                Ok(AuditEventRecord {
+                    id: row.get(0)?,
+                    sequence: row.get(1)?,
+                    actor_id: row.get(2)?,
+                    actor_name: row.get(3)?,
+                    action: row.get(4)?,
+                    resource: row.get(5)?,
+                    result: row.get(6)?,
+                    origin: row.get(7)?,
+                    correlation_id: row.get(8)?,
+                    created_at: row.get(9)?,
+                    prev_hash: row.get(10)?,
+                    event_hash: row.get(11)?,
                 })
             })?;
             rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
@@ -5114,7 +5155,7 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 21);
+        assert_eq!(second_status.schema_version, 22);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
@@ -5177,7 +5218,7 @@ mod tests {
         }
 
         let db = Db::open(&path, &key).expect("migrates to current schema");
-        assert_eq!(db.status().expect("status").schema_version, 21);
+        assert_eq!(db.status().expect("status").schema_version, 22);
         let staff = db.list_staff("org").expect("lists migrated staff");
         assert_eq!(staff.len(), 3);
         assert_eq!(
@@ -5378,6 +5419,115 @@ mod tests {
                 .expect_err("missing staff"),
             DataError::StaffNotFound
         ));
+    }
+
+    #[test]
+    fn critical_settings_changes_require_a_second_active_user() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
+            .expect("creates owner");
+        let manager = db
+            .create_staff(
+                &organization_id,
+                "Marta Gerente",
+                "$argon2id$manager",
+                "manager",
+            )
+            .expect("creates manager");
+        let settings = db.gym_settings(&organization_id).expect("settings");
+        let proposed = UpdateGymSettings {
+            business_name: "Gimnasio Centro Norte".into(),
+            legal_name: Some("Centro Norte SA".into()),
+            tax_id: Some("CNN010101ABC".into()),
+            currency: settings.currency.clone(),
+            timezone: settings.timezone.clone(),
+            locale: settings.locale.clone(),
+            opening_time: settings.opening_time.clone(),
+            closing_time: settings.closing_time.clone(),
+            slot_minutes: settings.slot_minutes,
+            grace_minutes: settings.grace_minutes,
+            inactivity_days: settings.inactivity_days,
+            frozen_days: settings.frozen_days,
+        };
+
+        let request = db
+            .request_settings_change(&organization_id, &owner.id, "Ana Pérez", proposed.clone())
+            .expect("requests change");
+        assert_eq!(request.status, "pending");
+        assert_eq!(request.proposed.business_name, "Gimnasio Centro Norte");
+        assert!(db
+            .request_settings_change(
+                &organization_id,
+                &manager.user_id,
+                "Marta Gerente",
+                proposed.clone(),
+            )
+            .is_err());
+
+        assert!(db
+            .review_settings_change_request(
+                &organization_id,
+                &request.id,
+                &owner.id,
+                "Ana Pérez",
+                true,
+            )
+            .is_err());
+
+        let reviewed = db
+            .review_settings_change_request(
+                &organization_id,
+                &request.id,
+                &manager.user_id,
+                "Marta Gerente",
+                true,
+            )
+            .expect("manager approves");
+        assert_eq!(reviewed.status, "approved");
+        assert_eq!(
+            reviewed.reviewed_by.as_deref(),
+            Some(manager.user_id.as_str())
+        );
+        assert_eq!(
+            db.gym_settings(&organization_id)
+                .expect("settings")
+                .business_name,
+            "Gimnasio Centro Norte"
+        );
+
+        let rejected = db
+            .request_settings_change(
+                &organization_id,
+                &owner.id,
+                "Ana Pérez",
+                UpdateGymSettings {
+                    business_name: "Nombre Rechazado".into(),
+                    ..proposed
+                },
+            )
+            .expect("requests second change");
+        let rejected = db
+            .review_settings_change_request(
+                &organization_id,
+                &rejected.id,
+                &manager.user_id,
+                "Marta Gerente",
+                false,
+            )
+            .expect("manager rejects");
+        assert_eq!(rejected.status, "rejected");
+        assert_eq!(
+            db.gym_settings(&organization_id)
+                .expect("settings")
+                .business_name,
+            "Gimnasio Centro Norte"
+        );
     }
 
     #[test]

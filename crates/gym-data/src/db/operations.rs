@@ -1,4 +1,5 @@
 use rusqlite::{params, OptionalExtension, Row};
+use serde::{Deserialize, Serialize};
 
 use super::{enqueue_sync_event, normalize_optional_text, required_text, Db};
 use crate::error::DataError;
@@ -21,7 +22,8 @@ pub struct GymSettingsRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateGymSettings {
     pub business_name: String,
     pub legal_name: Option<String>,
@@ -35,6 +37,51 @@ pub struct UpdateGymSettings {
     pub grace_minutes: i64,
     pub inactivity_days: i64,
     pub frozen_days: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsChangeRequestRecord {
+    pub id: String,
+    pub requested_by: String,
+    pub requested_by_name: String,
+    pub status: String,
+    pub proposed: UpdateGymSettings,
+    pub created_at: String,
+    pub reviewed_by: Option<String>,
+    pub reviewed_by_name: Option<String>,
+    pub reviewed_at: Option<String>,
+}
+
+struct ValidatedGymSettings {
+    business_name: String,
+    legal_name: Option<String>,
+    tax_id: Option<String>,
+    currency: String,
+    timezone: String,
+    locale: String,
+    opening_time: String,
+    closing_time: String,
+    slot_minutes: i64,
+    grace_minutes: i64,
+    inactivity_days: i64,
+    frozen_days: i64,
+}
+
+fn validate_gym_settings(update: &UpdateGymSettings) -> Result<ValidatedGymSettings, DataError> {
+    Ok(ValidatedGymSettings {
+        business_name: required_text(&update.business_name, "business name", 1, 120)?,
+        legal_name: normalize_optional_text(update.legal_name.clone(), 160, "legal name")?,
+        tax_id: normalize_optional_text(update.tax_id.clone(), 40, "tax id")?,
+        currency: validate_currency(&update.currency)?,
+        timezone: required_text(&update.timezone, "timezone", 1, 60)?,
+        locale: required_text(&update.locale, "locale", 2, 20)?,
+        opening_time: validate_time(&update.opening_time, "opening time")?,
+        closing_time: validate_time(&update.closing_time, "closing time")?,
+        slot_minutes: validate_range(update.slot_minutes, 15, 240, "slot minutes")?,
+        grace_minutes: validate_range(update.grace_minutes, 0, 120, "grace minutes")?,
+        inactivity_days: validate_range(update.inactivity_days, 1, 365, "inactivity days")?,
+        frozen_days: validate_range(update.frozen_days, 0, 365, "frozen days")?,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,65 +333,187 @@ impl Db {
         update: UpdateGymSettings,
     ) -> Result<GymSettingsRecord, DataError> {
         self.gym_settings(organization_id)?;
-        let business_name = required_text(&update.business_name, "business name", 1, 120)?;
-        let legal_name = normalize_optional_text(update.legal_name, 160, "legal name")?;
-        let tax_id = normalize_optional_text(update.tax_id, 40, "tax id")?;
-        let currency = validate_currency(&update.currency)?;
-        let timezone = required_text(&update.timezone, "timezone", 1, 60)?;
-        let locale = required_text(&update.locale, "locale", 2, 20)?;
-        let opening_time = validate_time(&update.opening_time, "opening time")?;
-        let closing_time = validate_time(&update.closing_time, "closing time")?;
-        let slot_minutes = validate_range(update.slot_minutes, 15, 240, "slot minutes")?;
-        let grace_minutes = validate_range(update.grace_minutes, 0, 120, "grace minutes")?;
-        let inactivity_days = validate_range(update.inactivity_days, 1, 365, "inactivity days")?;
-        let frozen_days = validate_range(update.frozen_days, 0, 365, "frozen days")?;
+        let settings = validate_gym_settings(&update)?;
         let now = chrono::Utc::now().to_rfc3339();
         {
             let mut guard = self.lock()?;
             let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
             let transaction = conn.transaction()?;
-            transaction.execute(
-                "UPDATE gym_settings
-                 SET business_name = ?1, legal_name = ?2, tax_id = ?3, currency = ?4,
-                     timezone = ?5, locale = ?6, opening_time = ?7, closing_time = ?8,
-                     slot_minutes = ?9, grace_minutes = ?10, inactivity_days = ?11,
-                     frozen_days = ?12, updated_at = ?13
-                 WHERE organization_id = ?14",
-                params![
-                    business_name,
-                    legal_name,
-                    tax_id,
-                    currency,
-                    timezone,
-                    locale,
-                    opening_time,
-                    closing_time,
-                    slot_minutes,
-                    grace_minutes,
-                    inactivity_days,
-                    frozen_days,
-                    now,
-                    organization_id
-                ],
-            )?;
-            enqueue_sync_event(
-                &transaction,
-                organization_id,
-                "settings.updated",
-                "gym_settings",
-                organization_id,
-                &format!("settings:{organization_id}:{now}"),
-                &serde_json::json!({
-                    "businessName": business_name,
-                    "currency": currency,
-                    "timezone": timezone,
-                    "updatedAt": now,
-                }),
-                &now,
-            )?;
+            apply_gym_settings(&transaction, organization_id, &settings, &now)?;
             transaction.commit()?;
         }
         self.with_connection(|conn| load_gym_settings(conn, organization_id))
+    }
+
+    pub fn request_settings_change(
+        &self,
+        organization_id: &str,
+        requested_by: &str,
+        requested_by_name: &str,
+        update: UpdateGymSettings,
+    ) -> Result<SettingsChangeRequestRecord, DataError> {
+        self.gym_settings(organization_id)?;
+        let settings = validate_gym_settings(&update)?;
+        let proposed_json = serde_json::to_string(&UpdateGymSettings {
+            business_name: settings.business_name,
+            legal_name: settings.legal_name,
+            tax_id: settings.tax_id,
+            currency: settings.currency,
+            timezone: settings.timezone,
+            locale: settings.locale,
+            opening_time: settings.opening_time,
+            closing_time: settings.closing_time,
+            slot_minutes: settings.slot_minutes,
+            grace_minutes: settings.grace_minutes,
+            inactivity_days: settings.inactivity_days,
+            frozen_days: settings.frozen_days,
+        })
+        .map_err(|error| DataError::InvalidValue(error.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let id = uuid::Uuid::new_v4().to_string();
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let pending: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM settings_change_requests
+                     WHERE organization_id = ?1 AND status = 'pending'",
+                    params![organization_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if pending.is_some() {
+                return Err(DataError::InvalidValue(
+                    "ya existe un cambio de configuración pendiente de aprobación".into(),
+                ));
+            }
+            conn.execute(
+                "INSERT INTO settings_change_requests
+                     (id, organization_id, requested_by, requested_by_name, status,
+                      proposed_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6)",
+                params![
+                    id,
+                    organization_id,
+                    requested_by,
+                    requested_by_name,
+                    proposed_json,
+                    now
+                ],
+            )?;
+        }
+        self.get_settings_change_request(organization_id, &id)
+    }
+
+    pub fn list_settings_change_requests(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<SettingsChangeRequestRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, requested_by, requested_by_name, status, proposed_json,
+                        created_at, reviewed_by, reviewed_by_name, reviewed_at
+                 FROM settings_change_requests
+                 WHERE organization_id = ?1
+                 ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC",
+            )?;
+            let rows = statement.query_map(params![organization_id], settings_change_row)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    pub fn get_settings_change_request(
+        &self,
+        organization_id: &str,
+        request_id: &str,
+    ) -> Result<SettingsChangeRequestRecord, DataError> {
+        self.with_connection(|conn| {
+            conn.query_row(
+                "SELECT id, requested_by, requested_by_name, status, proposed_json,
+                        created_at, reviewed_by, reviewed_by_name, reviewed_at
+                 FROM settings_change_requests
+                 WHERE organization_id = ?1 AND id = ?2",
+                params![organization_id, request_id],
+                settings_change_row,
+            )
+            .optional()?
+            .ok_or_else(|| DataError::InvalidValue("the settings request does not exist".into()))
+        })
+    }
+
+    pub fn review_settings_change_request(
+        &self,
+        organization_id: &str,
+        request_id: &str,
+        reviewed_by: &str,
+        reviewed_by_name: &str,
+        approve: bool,
+    ) -> Result<SettingsChangeRequestRecord, DataError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        {
+            let mut guard = self.lock()?;
+            let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+            let transaction = conn.transaction()?;
+            let (requested_by, status, proposed_json): (String, String, String) = transaction
+                .query_row(
+                    "SELECT requested_by, status, proposed_json
+                     FROM settings_change_requests
+                     WHERE organization_id = ?1 AND id = ?2",
+                    params![organization_id, request_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    DataError::InvalidValue("the settings request does not exist".into())
+                })?;
+            if status != "pending" {
+                return Err(DataError::InvalidValue(
+                    "the settings request is no longer pending".into(),
+                ));
+            }
+            if requested_by == reviewed_by {
+                return Err(DataError::InvalidValue(
+                    "the requester cannot approve their own settings change".into(),
+                ));
+            }
+            for user_id in [requested_by.as_str(), reviewed_by] {
+                let active: Option<i64> = transaction
+                    .query_row(
+                        "SELECT 1 FROM staff_memberships
+                         WHERE organization_id = ?1 AND user_id = ?2 AND status = 'active'",
+                        params![organization_id, user_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if active.is_none() {
+                    return Err(DataError::InvalidValue(
+                        "both users must be active staff members".into(),
+                    ));
+                }
+            }
+            let proposed: UpdateGymSettings = serde_json::from_str(&proposed_json)
+                .map_err(|error| DataError::InvalidValue(error.to_string()))?;
+            let settings = validate_gym_settings(&proposed)?;
+            let status = if approve { "approved" } else { "rejected" };
+            if approve {
+                apply_gym_settings(&transaction, organization_id, &settings, &now)?;
+            }
+            transaction.execute(
+                "UPDATE settings_change_requests
+                 SET status = ?1, reviewed_by = ?2, reviewed_by_name = ?3, reviewed_at = ?4
+                 WHERE organization_id = ?5 AND id = ?6 AND status = 'pending'",
+                params![
+                    status,
+                    reviewed_by,
+                    reviewed_by_name,
+                    now,
+                    organization_id,
+                    request_id
+                ],
+            )?;
+            transaction.commit()?;
+        }
+        self.get_settings_change_request(organization_id, request_id)
     }
 
     pub fn list_integration_links(
@@ -1571,6 +1740,72 @@ fn validate_date(value: Option<String>, field: &str) -> Result<Option<String>, D
     chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map(|date| Some(date.format("%Y-%m-%d").to_string()))
         .map_err(|_| DataError::InvalidValue(format!("the {field} must use YYYY-MM-DD")))
+}
+
+fn settings_change_row(row: &Row<'_>) -> rusqlite::Result<SettingsChangeRequestRecord> {
+    let proposed_json: String = row.get(4)?;
+    let proposed = serde_json::from_str(&proposed_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SettingsChangeRequestRecord {
+        id: row.get(0)?,
+        requested_by: row.get(1)?,
+        requested_by_name: row.get(2)?,
+        status: row.get(3)?,
+        proposed,
+        created_at: row.get(5)?,
+        reviewed_by: row.get(6)?,
+        reviewed_by_name: row.get(7)?,
+        reviewed_at: row.get(8)?,
+    })
+}
+
+fn apply_gym_settings(
+    transaction: &rusqlite::Transaction<'_>,
+    organization_id: &str,
+    settings: &ValidatedGymSettings,
+    now: &str,
+) -> Result<(), DataError> {
+    transaction.execute(
+        "UPDATE gym_settings
+         SET business_name = ?1, legal_name = ?2, tax_id = ?3, currency = ?4,
+             timezone = ?5, locale = ?6, opening_time = ?7, closing_time = ?8,
+             slot_minutes = ?9, grace_minutes = ?10, inactivity_days = ?11,
+             frozen_days = ?12, updated_at = ?13
+         WHERE organization_id = ?14",
+        params![
+            settings.business_name,
+            settings.legal_name,
+            settings.tax_id,
+            settings.currency,
+            settings.timezone,
+            settings.locale,
+            settings.opening_time,
+            settings.closing_time,
+            settings.slot_minutes,
+            settings.grace_minutes,
+            settings.inactivity_days,
+            settings.frozen_days,
+            now,
+            organization_id
+        ],
+    )?;
+    enqueue_sync_event(
+        transaction,
+        organization_id,
+        "settings.updated",
+        "gym_settings",
+        organization_id,
+        &format!("settings:{organization_id}:{now}"),
+        &serde_json::json!({
+            "businessName": settings.business_name,
+            "currency": settings.currency,
+            "timezone": settings.timezone,
+            "updatedAt": now,
+        }),
+        now,
+    )?;
+    Ok(())
 }
 
 fn load_gym_settings(

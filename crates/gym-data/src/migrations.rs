@@ -322,4 +322,12 @@ pub const MIGRATIONS: &[Migration] = &[
                DROP TABLE IF EXISTS integration_links; \
                DROP TABLE IF EXISTS gym_settings;",
     },
+    Migration {
+        version: 22,
+        name: "critical_settings_approval",
+        up: include_str!("../migrations/0022_critical_settings_approval.sql"),
+        down: "DROP INDEX IF EXISTS idx_settings_change_organization_created; \
+               DROP INDEX IF EXISTS idx_settings_change_one_pending; \
+               DROP TABLE IF EXISTS settings_change_requests;",
+    },
 ];
