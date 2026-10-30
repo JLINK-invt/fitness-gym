@@ -767,6 +767,40 @@ export interface FinancialReport {
   inventoryAdjustments: InventoryAdjustmentTotal[];
 }
 
+export interface SyncClientSettings {
+  baseUrl: string;
+  clientCertPath: string;
+  clientKeyPath: string;
+  caCertPath: string;
+}
+
+export interface UpdateSyncClientSettingsInput {
+  baseUrl: string;
+  clientCertPath: string;
+  clientKeyPath: string;
+  caCertPath: string;
+}
+
+export interface SyncRunReport {
+  pushed: number;
+  accepted: number;
+  retried: number;
+  deadLettered: number;
+  pulled: number;
+  applied: number;
+  duplicates: number;
+  transportError: string | null;
+}
+
+export interface AuditExport {
+  fileName: string;
+  path: string;
+  bytes: number;
+  checksum: string;
+  events: number;
+  integrityValid: boolean;
+}
+
 export interface NewReportScheduleInput {
   cadence: "daily" | "weekly" | "monthly";
   lookbackDays: number;
@@ -838,6 +872,23 @@ export interface UpdateGymSettingsInput {
   graceMinutes: number;
   inactivityDays: number;
   frozenDays: number;
+}
+
+export interface SettingsChangeRequest {
+  id: string;
+  requestedBy: string;
+  requestedByName: string;
+  status: "pending" | "approved" | "rejected";
+  proposed: UpdateGymSettingsInput;
+  createdAt: string;
+  reviewedBy: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+}
+
+export interface ReviewSettingsChangeInput {
+  id: string;
+  approve: boolean;
 }
 
 export interface IntegrationLink {

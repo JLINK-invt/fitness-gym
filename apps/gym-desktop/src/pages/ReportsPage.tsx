@@ -11,7 +11,9 @@ import type {
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useOutletContext } from "react-router-dom";
 
+import type { LayoutContext } from "../components/Layout";
 import { formatDateTime } from "../lib/format";
 import { api } from "../lib/tauri";
 
@@ -41,6 +43,8 @@ function dayEnd(value: string): string {
 
 export function ReportsPage() {
   const queryClient = useQueryClient();
+  const { session } = useOutletContext<LayoutContext>();
+  const canExport = session.permissions.includes("exportReports");
   const today = new Date();
   const monthAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1_000);
   const [fromDate, setFromDate] = useState(inputDate(monthAgo));
@@ -57,7 +61,7 @@ export function ReportsPage() {
 
   const exportCsv = useMutation({
     mutationFn: () =>
-      api.exportFinancialReportCsv({
+      api.exportReportCsv({
         from: dayStart(fromDate),
         to: dayEnd(toDate),
       }),
@@ -80,14 +84,20 @@ export function ReportsPage() {
             RFC configurados en General. Cada exportación queda auditada.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => exportCsv.mutate()}
-          disabled={!rangeValid || report.isLoading || exportCsv.isPending}
-          className={primaryButton}
-        >
-          {exportCsv.isPending ? "Exportando…" : "Exportar CSV"}
-        </button>
+        {canExport ? (
+          <button
+            type="button"
+            onClick={() => exportCsv.mutate()}
+            disabled={!rangeValid || report.isLoading || exportCsv.isPending}
+            className={primaryButton}
+          >
+            {exportCsv.isPending ? "Exportando…" : "Exportar CSV"}
+          </button>
+        ) : (
+          <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+            Puedes consultar los reportes, pero tu rol no permite exportarlos.
+          </p>
+        )}
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -188,7 +198,7 @@ export function ReportsPage() {
         </>
       ) : null}
 
-      <ScheduledReports />
+      <ScheduledReports canExport={canExport} />
     </div>
   );
 }
@@ -393,7 +403,7 @@ function Adjustments({
   );
 }
 
-function ScheduledReports() {
+function ScheduledReports({ canExport }: { canExport: boolean }) {
   const queryClient = useQueryClient();
   const [cadence, setCadence] =
     useState<"daily" | "weekly" | "monthly">("weekly");
@@ -446,14 +456,20 @@ function ScheduledReports() {
             cada ejecución.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => runDue.mutate()}
-          disabled={runDue.isPending}
-          className={primaryButton}
-        >
-          {runDue.isPending ? "Ejecutando…" : "Ejecutar pendientes"}
-        </button>
+        {canExport ? (
+          <button
+            type="button"
+            onClick={() => runDue.mutate()}
+            disabled={runDue.isPending}
+            className={primaryButton}
+          >
+            {runDue.isPending ? "Ejecutando…" : "Ejecutar pendientes"}
+          </button>
+        ) : (
+          <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+            Programar y ejecutar reportes requiere permiso de exportación.
+          </p>
+        )}
       </div>
 
       <form
@@ -491,7 +507,7 @@ function ScheduledReports() {
         <div className="flex items-end">
           <button
             type="submit"
-            disabled={create.isPending}
+            disabled={create.isPending || !canExport}
             className={primaryButton}
           >
             {create.isPending ? "Creando…" : "Programar"}
@@ -532,7 +548,7 @@ function ScheduledReports() {
                   <button
                     type="button"
                     onClick={() => toggle.mutate(schedule)}
-                    disabled={toggle.isPending}
+                    disabled={toggle.isPending || !canExport}
                     className="rounded-lg border border-slate-300 px-2.5 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                   >
                     {schedule.enabled ? "Desactivar" : "Activar"}

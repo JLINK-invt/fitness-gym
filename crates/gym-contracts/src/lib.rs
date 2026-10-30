@@ -1067,6 +1067,48 @@ pub struct FinancialReportExport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SyncClientSettings {
+    pub base_url: String,
+    pub client_cert_path: String,
+    pub client_key_path: String,
+    pub ca_cert_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSyncClientSettingsInput {
+    pub base_url: String,
+    pub client_cert_path: String,
+    pub client_key_path: String,
+    pub ca_cert_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRunReport {
+    pub pushed: u64,
+    pub accepted: u64,
+    pub retried: u64,
+    pub dead_lettered: u64,
+    pub pulled: u64,
+    pub applied: u64,
+    pub duplicates: u64,
+    pub transport_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditExport {
+    pub file_name: String,
+    pub path: String,
+    pub bytes: u64,
+    pub checksum: String,
+    pub events: u64,
+    pub integrity_valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NewReportScheduleInput {
     pub cadence: String,
     pub lookback_days: i64,
@@ -1382,6 +1424,27 @@ pub struct UpdateGymSettingsInput {
     pub grace_minutes: i64,
     pub inactivity_days: i64,
     pub frozen_days: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsChangeRequest {
+    pub id: String,
+    pub requested_by: String,
+    pub requested_by_name: String,
+    pub status: String,
+    pub proposed: UpdateGymSettingsInput,
+    pub created_at: String,
+    pub reviewed_by: Option<String>,
+    pub reviewed_by_name: Option<String>,
+    pub reviewed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSettingsChangeInput {
+    pub id: String,
+    pub approve: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

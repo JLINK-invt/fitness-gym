@@ -7,10 +7,15 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+mtls = ["dep:reqwest"]
+
 [dependencies]
 chrono.workspace = true
 gym-data.workspace = true
 serde.workspace = true
+reqwest = { workspace = true, optional = true }
 serde_json.workspace = true
 thiserror.workspace = true
 

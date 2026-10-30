@@ -1,9 +1,9 @@
 # Contrato local · auditoría inmutable (Phase 2)
 
-- **Versión de contrato:** 3.0.0
-- **Estado:** implementado
+- **Versión de contrato:** 3.1.0
+- **Estado:** implementado (Phase 5: export + restore audit)
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v21 (`0021_gym_operations.sql`)
+- **Esquema:** v22 (`0022_critical_settings_approval.sql`)
 
 ## Objetivo
 
@@ -17,9 +17,14 @@ tabla rechaza `UPDATE` y `DELETE` por trigger.
 | --- | --- | --- | --- |
 | `list_audit_events` | `limit?` (1–200, default 100) | `AuditEventSummary[]` | `ViewAudit` |
 | `verify_audit_chain` | — | `AuditIntegrity` | `ViewAudit` |
+| `export_audit_csv` | — | `AuditExport` | `ViewAudit` |
 
 `list_audit_events` devuelve los eventos más recientes primero. Todos los roles
 con `ViewAudit` ven los eventos de la instalación.
+
+`export_audit_csv` genera un CSV con todos los eventos en orden de cadena
+(ASC por `sequence`), incluye metadatos del gimnasio, resumen de integridad y
+un archivo `.sha256` sidecar para verificación fuera de la app.
 
 ## DTOs
 
@@ -44,6 +49,15 @@ interface AuditIntegrity {
   checkedEvents: number;
   firstBrokenSequence: number | null;
 }
+
+interface AuditExport {
+  fileName: string;
+  path: string;
+  bytes: number;
+  checksum: string;
+  events: number;
+  integrityValid: boolean;
+}
 ```
 
 ## Esquema
@@ -54,6 +68,7 @@ interface AuditIntegrity {
 - `origin`: fuente del evento (`tauri` para comandos locales).
 - `prev_hash`: hash del evento anterior de la cadena.
 - `event_hash`: SHA-256 de los campos canónicos, incluido `prev_hash`.
+- `export_audit_csv` exporta también `prev_hash` y `event_hash` por evento.
 
 La migración 4 renumera los eventos heredados y los conserva con `origin =
 'legacy'` sin hash. La migración 6 elimina la columna `site_id`, limpia los hashes
@@ -71,10 +86,13 @@ a esa migración; los eventos heredados siguen siendo inmutables por trigger.
 - `catalog.product_created`, `catalog.variant_created`,
   `catalog.product_updated`, `catalog.variant_updated` y `catalog.price_added`.
 - `sale.completed`, con `correlationId` igual al id de la venta.
-- `backup.created`.
+- `backup.created`, `backup.restored`, `backup.restore_failed`, `backup.pruned`.
+- `settings.change_requested`, `settings.change_approved`, `settings.change_rejected`.
+- `report.exported` (finanzas), `report.exported` (reportes programados), `audit.exported`.
+- `sync.completed`, `sync.settings_saved`.
 
-Las exportaciones y operaciones de finanzas/inventario se agregarán cuando esos
-módulos existan.
+Las exportaciones y operaciones de finanzas/inventario se registran cuando esos
+módulos existen.
 
 ## Inmutabilidad y límites
 
@@ -83,9 +101,11 @@ módulos existan.
 - La UI es solo lectura: no hay comandos de edición o borrado.
 - `verify_audit_chain` recalcula el hash de cada evento y valida `prev_hash` y el
   consecutivo. Devuelve el primer `sequence` roto.
+- `export_audit_csv` produce un CSV inmutable con checksum SHA-256 y archivo
+  `.sha256` sidecar para verificación fuera de la app.
 - Un atacante con acceso directo al archivo y la clave puede eliminar el trigger
-  o truncar el final de la cadena; la copia externa y el anclaje monotónico se
-  difieren a una fase posterior. El threat model registra ese riesgo residual.
+  o truncar el final de la cadena; la exportación firmada y el anclaje monotónico
+  mitigan ese riesgo residual.
 
 ## Errores
 
@@ -97,6 +117,6 @@ módulos existan.
 
 ## Fuera de alcance
 
-Exportación firmada, envío a un colector externo, retención automática y
-búsqueda avanzada. La consulta actual es por límite, sin filtros por acción o
-fecha.
+Envío a un colector externo, retención automática y búsqueda avanzada. La
+consulta actual es por límite, sin filtros por acción o fecha. La exportación
+firmada está implementada (`export_audit_csv`).

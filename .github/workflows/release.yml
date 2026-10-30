@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Etiqueta de la versión (vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Firmar · ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+          - platform: windows-x86_64
+          - platform: macos-aarch64
+          - platform: macos-x86_64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
+      - name: Preparar configuración firmada
+        env:
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "apps/gym-desktop/src-tauri/tauri.release.conf.json";
+            const pubkey = process.env.TAURI_UPDATER_PUBKEY;
+            if (!pubkey) {
+              console.error("Falta el secreto TAURI_UPDATER_PUBKEY");
+              process.exit(1);
+            }
+            const config = JSON.parse(fs.readFileSync(path, "utf8"));
+            config.plugins.updater.pubkey = pubkey;
+            fs.writeFileSync(path, JSON.stringify(config, null, 2));
+          '
+
+      - name: Publicar instaladores firmados
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/gym-desktop
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Fitness Gym ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            Instaladores firmados de Fitness Gym.
+
+            La actualización automática verifica la firma minisign y no permite
+            versiones anteriores a la instalada.
+          releaseDraft: true
+          prerelease: false
+          args: --config src-tauri/tauri.release.conf.json

@@ -386,7 +386,7 @@ mod tests {
 
         let status = db.status().expect("status");
         assert_eq!(status.schema_version, MIGRATIONS.last().unwrap().version);
-        assert_eq!(status.schema_version, 21);
+        assert_eq!(status.schema_version, 22);
         drop(db);
         let _ = std::fs::remove_file(path);
     }

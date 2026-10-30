@@ -295,6 +295,14 @@ async (page) => {
   await carlosRow.getByRole("button", { name: "Permisos", exact: true }).waitFor();
   pass("conceder y revertir un permiso granular a un colaborador");
 
+  await page.getByLabel("Nombre", { exact: true }).fill("Marta Gerente");
+  await page.getByLabel("Rol de la nueva cuenta").selectOption("manager");
+  await page.getByLabel("Contraseña inicial").fill("clave-marta-123");
+  await page.getByRole("button", { name: "Crear acceso" }).click();
+  await page.getByText("Acceso creado. Ya puede iniciar sesión.").waitFor();
+  await page.getByText("Marta Gerente").waitFor();
+  pass("crear acceso de gerencia para aprobar cambios críticos");
+
   await signOut();
   await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
   await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
@@ -495,9 +503,33 @@ async (page) => {
   await gotoSection("Configuración", "General");
   await page.getByRole("heading", { name: "Identidad" }).waitFor();
   await page.getByLabel("Nombre comercial").fill("Gimnasio E2E Centro");
-  await page.getByRole("button", { name: "Guardar configuración" }).click();
-  await page.getByText(/Configuración guardada/).waitFor();
-  pass("guardar la configuración operativa del gimnasio");
+  await page.getByRole("button", { name: "Solicitar cambio" }).click();
+  await page.getByText(/Solicitud enviada/).waitFor();
+  pass("solicitar un cambio crítico de configuración");
+
+  await signOut();
+  await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
+  await page.getByLabel("Nombre", { exact: true }).fill("Marta Gerente");
+  await page.getByLabel("Contraseña").fill("clave-marta-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await sectionNav.waitFor();
+  await gotoSection("Configuración", "General");
+  await page.getByRole("heading", { name: "Cambio de configuración pendiente" }).waitFor();
+  await page.getByRole("button", { name: "Aprobar y aplicar" }).click();
+  await page.getByText(/Cambio aprobado/).waitFor();
+  pass("aprobar el cambio con una segunda persona y aplicar la configuración");
+
+  await signOut();
+  await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
+  await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
+  await page.getByLabel("Contraseña").fill("clave-segura-123");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await sectionNav.waitFor();
+  await gotoSection("Configuración", "General");
+  if ((await page.getByLabel("Nombre comercial").inputValue()) !== "Gimnasio E2E Centro") {
+    throw new Error("La configuración aprobada no se aplicó.");
+  }
+  pass("verificar la configuración aplicada tras la aprobación");
 
   await gotoSection("Configuración", "Mantenimiento");
   await page.getByRole("heading", { name: "Equipos" }).waitFor();
@@ -525,6 +557,14 @@ async (page) => {
   await page.getByRole("cell", { name: "POS E2E" }).waitFor();
   pass("conectar un complemento y ver el journal de sincronización");
 
+  await page.getByRole("heading", { name: "Sincronización con el servidor" }).waitFor();
+  if ((await page.getByLabel("Dirección del servidor").inputValue()) !== "https://sync.e2e.test") {
+    throw new Error("La configuración de sincronización no se cargó.");
+  }
+  await page.getByRole("button", { name: "Sincronizar ahora" }).click();
+  await page.getByText(/Enviados 3/).waitFor();
+  pass("sincronizar con el servidor mutual TLS y ver el reporte");
+
   await gotoSection("Configuración", "Auditoría");
   await page.getByRole("heading", { name: "Auditoría" }).waitFor();
   await page.getByText("report.exported").first().waitFor();
@@ -532,7 +572,10 @@ async (page) => {
   if ((await page.locator("tbody tr").count()) === 0) {
     throw new Error("La auditoría no mostró eventos.");
   }
-  pass("auditoría lista eventos y verifica la cadena");
+  await page.getByRole("button", { name: "Exportar auditoría" }).click();
+  await page.getByText(/Exportaste/).waitFor();
+  await page.getByText(/SHA-256:/).waitFor();
+  pass("auditoría lista eventos, verifica la cadena y exporta con checksum");
 
   await gotoSection("Configuración", "Colaboradores");
   const staffRow = page.locator("tbody tr", { hasText: "Carlos Caja" });

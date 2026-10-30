@@ -143,5 +143,9 @@ Cada comando sensible debe registrar en `audit_events`:
 
 ## Pendientes de endurecimiento (Fase 5)
 
-- Añadir aprobación de dos personas para cambios de configuración críticos.
-- Exportación inmutable o copia externa de auditoría (hash chain ya implementada).
+- ✅ Aprobación de dos personas para cambios de configuración críticos (migración 0022, comandos `request_settings_change`, `list_settings_change_requests`, `review_settings_change`).
+- ✅ Exportación inmutable de auditoría con checksum SHA-256 y archivo `.sha256` (comando `export_audit_csv`).
+- ✅ Permisos de exportación (`exportFinance`, `exportReports`) aplicados en backend; `export_financial_report_csv` y `export_report_csv` separados.
+- ✅ Auditoría de restore de backups (comando `restore_backup` registra `backup.restored` / `backup.restore_failed`).
+- ✅ Retención de backups: se conservan los 15 más recientes y solo se podan los mayores de 30 días (comando `create_backup`).
+- ✅ Actualizaciones firmadas (minisign): plugin `updater` con verificador `check()`/`downloadAndInstall()`, anti-downgrade por versión semántica.

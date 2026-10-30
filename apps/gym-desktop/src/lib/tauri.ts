@@ -10,6 +10,7 @@ import type {
   AttendanceInput,
   AttendanceReport,
   AuditEventSummary,
+  AuditExport,
   AddCatalogPriceInput,
   AddCatalogVariantInput,
   AuditIntegrity,
@@ -51,11 +52,16 @@ import type {
   RenewMembershipInput,
   RestoreOutcome,
   ResumeMembershipInput,
+  ReviewSettingsChangeInput,
   Sale,
   SaleReturn,
   SessionSummary,
   SetReportScheduleEnabledInput,
+  SettingsChangeRequest,
   SetupState,
+  SyncClientSettings,
+  SyncRunReport,
+  UpdateSyncClientSettingsInput,
   StaffRole,
   StaffStatus,
   StaffSummary,
@@ -219,6 +225,8 @@ export const api = {
     invoke<PaymentCharge[]>("list_payment_charges", { input }),
   financialReport: (input: FinancialReportInput) =>
     invoke<FinancialReport>("financial_report", { input }),
+  exportReportCsv: (input: FinancialReportInput) =>
+    invoke<FinancialReportExport>("export_report_csv", { input }),
   exportFinancialReportCsv: (input: FinancialReportInput) =>
     invoke<FinancialReportExport>("export_financial_report_csv", { input }),
   listInventory: () => invoke<InventoryItem[]>("list_inventory"),
@@ -246,9 +254,18 @@ export const api = {
   listAuditEvents: (limit = 100) =>
     invoke<AuditEventSummary[]>("list_audit_events", { limit }),
   verifyAuditChain: () => invoke<AuditIntegrity>("verify_audit_chain"),
+  exportAuditCsv: () => invoke<AuditExport>("export_audit_csv"),
   getGymSettings: () => invoke<GymSettings>("get_gym_settings"),
-  updateGymSettings: (input: UpdateGymSettingsInput) =>
-    invoke<GymSettings>("update_gym_settings", { input }),
+  requestSettingsChange: (input: UpdateGymSettingsInput) =>
+    invoke<SettingsChangeRequest>("request_settings_change", { input }),
+  listSettingsChangeRequests: () =>
+    invoke<SettingsChangeRequest[]>("list_settings_change_requests"),
+  reviewSettingsChange: (input: ReviewSettingsChangeInput) =>
+    invoke<SettingsChangeRequest>("review_settings_change", { input }),
+  getSyncSettings: () => invoke<SyncClientSettings>("get_sync_settings"),
+  saveSyncSettings: (input: UpdateSyncClientSettingsInput) =>
+    invoke<SyncClientSettings>("save_sync_settings", { input }),
+  runSyncNow: () => invoke<SyncRunReport>("run_sync_now"),
   listIntegrationLinks: () =>
     invoke<IntegrationLink[]>("list_integration_links"),
   upsertIntegrationLink: (input: UpsertIntegrationLinkInput) =>

@@ -1,7 +1,12 @@
-import type { IntegrationJournalSummary, IntegrationLink } from "@gym/contracts";
+import type {
+  IntegrationJournalSummary,
+  IntegrationLink,
+  SyncClientSettings,
+  SyncRunReport,
+} from "@gym/contracts";
 import { CONTRACT_VERSION, errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "../components/Layout";
@@ -30,6 +35,14 @@ export function IntegrationsPage() {
   const [capabilities, setCapabilities] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [syncSettings, setSyncSettings] = useState<SyncClientSettings>({
+    baseUrl: "",
+    clientCertPath: "",
+    clientKeyPath: "",
+    caCertPath: "",
+  });
+  const [syncReport, setSyncReport] = useState<SyncRunReport | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const links = useQuery<IntegrationLink[]>({
     queryKey: ["integration-links"],
@@ -38,6 +51,39 @@ export function IntegrationsPage() {
   const journal = useQuery<IntegrationJournalSummary>({
     queryKey: ["integration-journal"],
     queryFn: api.integrationJournalSummary,
+  });
+  const sync = useQuery<SyncClientSettings>({
+    queryKey: ["sync-settings"],
+    queryFn: api.getSyncSettings,
+  });
+
+  useEffect(() => {
+    if (sync.data) {
+      setSyncSettings(sync.data);
+    }
+  }, [sync.data]);
+
+  const saveSync = useMutation({
+    mutationFn: () => api.saveSyncSettings(syncSettings),
+    onSuccess: (saved) => {
+      setSyncError(null);
+      setSyncSettings(saved);
+      void queryClient.invalidateQueries({ queryKey: ["sync-settings"] });
+    },
+    onError: (cause) => setSyncError(errorMessage(cause)),
+  });
+
+  const syncNow = useMutation({
+    mutationFn: api.runSyncNow,
+    onSuccess: (report) => {
+      setSyncError(null);
+      setSyncReport(report);
+      void queryClient.invalidateQueries({ queryKey: ["integration-journal"] });
+    },
+    onError: (cause) => {
+      setSyncReport(null);
+      setSyncError(errorMessage(cause));
+    },
   });
 
   const upsert = useMutation({
@@ -174,6 +220,121 @@ export function IntegrationsPage() {
         </form>
       )}
 
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Sincronización con el servidor
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Conexión mutual TLS: el certificado identifica al gimnasio y su nombre común
+              debe coincidir con el identificador de la organización.
+            </p>
+          </div>
+          {canManage && (
+            <button
+              type="button"
+              className={primaryButton}
+              onClick={() => syncNow.mutate()}
+              disabled={syncNow.isPending || syncSettings.baseUrl === ""}
+            >
+              {syncNow.isPending ? "Sincronizando…" : "Sincronizar ahora"}
+            </button>
+          )}
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="block text-xs font-medium text-slate-600">
+            Dirección del servidor
+            <input
+              className={`${fieldClass} mt-1`}
+              value={syncSettings.baseUrl}
+              onChange={(event) =>
+                setSyncSettings((current) => ({ ...current, baseUrl: event.target.value }))
+              }
+              placeholder="https://sync.ejemplo.mx"
+              disabled={!canManage}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Certificado del cliente
+            <input
+              className={`${fieldClass} mt-1`}
+              value={syncSettings.clientCertPath}
+              onChange={(event) =>
+                setSyncSettings((current) => ({
+                  ...current,
+                  clientCertPath: event.target.value,
+                }))
+              }
+              placeholder="/etc/gym-sync/cliente.pem"
+              disabled={!canManage}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Llave privada del cliente
+            <input
+              className={`${fieldClass} mt-1`}
+              value={syncSettings.clientKeyPath}
+              onChange={(event) =>
+                setSyncSettings((current) => ({
+                  ...current,
+                  clientKeyPath: event.target.value,
+                }))
+              }
+              placeholder="/etc/gym-sync/cliente.key"
+              disabled={!canManage}
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Autoridad certificadora
+            <input
+              className={`${fieldClass} mt-1`}
+              value={syncSettings.caCertPath}
+              onChange={(event) =>
+                setSyncSettings((current) => ({
+                  ...current,
+                  caCertPath: event.target.value,
+                }))
+              }
+              placeholder="/etc/gym-sync/autoridad.pem"
+              disabled={!canManage}
+            />
+          </label>
+        </div>
+
+        {canManage && (
+          <button
+            className={`${primaryButton} mt-4`}
+            onClick={() => saveSync.mutate()}
+            disabled={saveSync.isPending}
+          >
+            {saveSync.isPending ? "Guardando…" : "Guardar conexión"}
+          </button>
+        )}
+
+        {syncError && (
+          <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {syncError}
+          </p>
+        )}
+
+        {syncReport && (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            <p>
+              Enviados {syncReport.pushed} · aceptados {syncReport.accepted} · recibidos{" "}
+              {syncReport.pulled} · aplicados {syncReport.applied} · reintentos{" "}
+              {syncReport.retried} · dead letter {syncReport.deadLettered}
+            </p>
+            {syncReport.transportError && (
+              <p className="mt-1 text-xs">
+                El transporte falló: {syncReport.transportError}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Módulos conectados</h2>
         <div className="mt-4 overflow-x-auto">
