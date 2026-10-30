@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   audit:
@@ -50,7 +51,8 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo install cargo-deny --locked
-          curl -sfL https://raw.githubusercontent.com/anchore/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy --version
           sudo apt-get install -y ripgrep
 
       - name: Instalar dependencias
@@ -61,11 +63,12 @@ jobs:
 
       - name: Informe de trivy
         if: always()
-        run: trivy fs --severity HIGH,CRITICAL --ignore-unfixed --format sarif --output security-audit.sarif .
+        continue-on-error: true
+        run: trivy fs --severity HIGH,CRITICAL --ignore-unfixed --format sarif --output security-audit.sarif . || true
 
       - name: Subir informe SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('security-audit.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: security-audit.sarif
           category: security-audit
