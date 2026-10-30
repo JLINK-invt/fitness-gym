@@ -121,8 +121,7 @@ export function CatalogPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Catálogo</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="text-sm text-slate-600">
           Precios e impuestos configurables. Cambiar un precio crea una versión nueva y
           conserva las ventas anteriores.
         </p>

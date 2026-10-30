@@ -1,9 +1,9 @@
 # Contrato local · inventario y valoración (Phase 3)
 
-- **Versión de contrato:** 2.14.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v15 (`0015_payment_charges.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Comandos
 

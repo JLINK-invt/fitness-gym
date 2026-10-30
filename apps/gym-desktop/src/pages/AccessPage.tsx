@@ -109,8 +109,7 @@ export function AccessPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Accesos y asistencia</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="text-sm text-slate-600">
           Publica la nómina firmada, prueba decisiones locales y revisa la
           asistencia y ocupación por hora.
         </p>

@@ -1,4 +1,10 @@
-import type { StaffRole, StaffStatus, StaffSummary } from "@gym/contracts";
+import type {
+  Permission,
+  PermissionEffect,
+  StaffRole,
+  StaffStatus,
+  StaffSummary,
+} from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -6,24 +12,32 @@ import { useOutletContext } from "react-router-dom";
 
 import type { LayoutContext } from "../components/Layout";
 import { RecoveryCodePanel } from "../components/RecoveryCodePanel";
+import {
+  effectivePermission,
+  ownerOnlyPermissions,
+  permissionGroups,
+  permissionLabels,
+  roleDescriptions,
+  roleLabels,
+  rolePermissions,
+} from "../lib/permissions";
 import { api } from "../lib/tauri";
 
-const roleLabels: Record<StaffRole, string> = {
-  owner: "Dueño",
-  manager: "Encargado",
-  cashier: "Cajero",
-  accounting: "Contabilidad",
-};
+type DraftEffect = PermissionEffect | "inherit";
 
 export function StaffPage() {
   const { session } = useOutletContext<LayoutContext>();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
-  const [role, setRole] = useState<StaffRole>("cashier");
+  const [role, setRole] = useState<StaffRole>("receptionist");
   const [password, setPassword] = useState("");
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Record<string, DraftEffect>>({});
 
   const staff = useQuery({ queryKey: ["staff"], queryFn: api.listStaff });
+  const selected = staff.data?.find((member) => member.userId === selectedId) ?? null;
+  const canManagePermissions = session.permissions.includes("managePermissions");
 
   const generateRecovery = useMutation({
     mutationFn: api.generateOwnerRecovery,
@@ -54,14 +68,44 @@ export function StaffPage() {
     },
   });
 
+  const updatePermissions = useMutation({
+    mutationFn: ({
+      userId,
+      overrides,
+    }: {
+      userId: string;
+      overrides: { permission: Permission; effect: PermissionEffect }[];
+    }) => api.updateStaffPermissions({ userId, overrides }),
+    onSuccess: (updated) => {
+      setDraft(draftFromMember(updated));
+      void queryClient.invalidateQueries({ queryKey: ["staff"] });
+    },
+  });
+
   const canCreate = name.trim().length >= 2 && password.length >= 8;
+
+  function openPermissions(member: StaffSummary) {
+    setSelectedId(member.userId);
+    setDraft(draftFromMember(member));
+    updatePermissions.reset();
+  }
+
+  function savePermissions() {
+    if (!selected) {
+      return;
+    }
+    const overrides = Object.entries(draft)
+      .filter((entry): entry is [Permission, PermissionEffect] => entry[1] !== "inherit")
+      .map(([permission, effect]) => ({ permission, effect }));
+    updatePermissions.mutate({ userId: selected.userId, overrides });
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Equipo</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Crea accesos individuales, asigna un rol y desactiva a quien deja el gimnasio.
+        <p className="text-sm text-slate-600">
+          Crea accesos individuales, asigna roles, ajusta permisos y desactiva a
+          quien deja el gimnasio.
         </p>
       </div>
 
@@ -110,14 +154,14 @@ export function StaffPage() {
           createStaff.mutate();
         }}
       >
-        <h2 className="text-base font-semibold">Agregar empleado</h2>
+        <h2 className="text-base font-semibold">Agregar colaborador</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm">
-            <span className="font-medium text-slate-700">Nombre del empleado</span>
+            <span className="font-medium text-slate-700">Nombre</span>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Carlos Caja"
+              placeholder="Carlos Recepción"
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             />
           </label>
@@ -135,6 +179,9 @@ export function StaffPage() {
                 </option>
               ))}
             </select>
+            <span className="mt-1 block text-xs text-slate-500">
+              {roleDescriptions[role]}
+            </span>
           </label>
           <label className="text-sm">
             <span className="font-medium text-slate-700">Contraseña inicial</span>
@@ -193,10 +240,12 @@ export function StaffPage() {
               <tbody className="divide-y divide-slate-100">
                 {staff.data.map((member) => (
                   <StaffRow
-                    key={`${member.userId}-${member.role}-${member.status}`}
+                    key={`${member.userId}-${member.role}-${member.status}-${member.permissionOverrides.length}`}
                     member={member}
                     sessionRole={session.role}
                     self={member.userId === session.userId}
+                    canManagePermissions={canManagePermissions}
+                    selected={member.userId === selectedId}
                     saving={updateStaff.isPending}
                     onSave={(nextRole, status) =>
                       updateStaff.mutate({
@@ -205,6 +254,7 @@ export function StaffPage() {
                         status,
                       })
                     }
+                    onPermissions={() => openPermissions(member)}
                   />
                 ))}
               </tbody>
@@ -214,28 +264,159 @@ export function StaffPage() {
           <p className="p-6 text-sm text-slate-500">Aún no hay personal registrado.</p>
         )}
       </section>
+
+      {selected && canManagePermissions && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold">
+                Permisos de {selected.name}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Rol base: {roleLabels[selected.role]}. Los ajustes permiten
+                conceder o denegar permisos sin cambiar el rol.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedId(null)}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Cerrar
+            </button>
+          </div>
+
+          <div className="mt-5 space-y-5">
+            {permissionGroups.map((group) => (
+              <div key={group.label}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {group.label}
+                </h3>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {group.permissions.map((permission) => {
+                    const ownerOnly = ownerOnlyPermissions.includes(permission);
+                    const inherited = rolePermissions[selected.role].includes(permission);
+                    const value = draft[permission] ?? "inherit";
+                    const allowed =
+                      !ownerOnly &&
+                      effectivePermission(
+                        selected.role,
+                        Object.entries(draft)
+                          .filter(
+                            (entry): entry is [Permission, PermissionEffect] =>
+                              entry[1] !== "inherit",
+                          )
+                          .map(([key, effect]) => ({ permission: key, effect })),
+                        permission,
+                      );
+                    return (
+                      <div
+                        key={permission}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">
+                            {permissionLabels[permission]}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {ownerOnly
+                              ? "Solo el Dueño"
+                              : allowed
+                                ? "Permitido"
+                                : "Denegado"}
+                          </p>
+                        </div>
+                        <select
+                          aria-label={`Permiso ${permissionLabels[permission]} para ${selected.name}`}
+                          value={value}
+                          disabled={ownerOnly}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              [permission]: event.target.value as DraftEffect,
+                            }))
+                          }
+                          className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100"
+                        >
+                          <option value="inherit">
+                            Heredar ({inherited ? "sí" : "no"})
+                          </option>
+                          <option value="allow">Permitir</option>
+                          <option value="deny">Denegar</option>
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={updatePermissions.isPending}
+              onClick={savePermissions}
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {updatePermissions.isPending ? "Guardando…" : "Guardar permisos"}
+            </button>
+            <button
+              type="button"
+              disabled={updatePermissions.isPending}
+              onClick={() => setDraft(draftFromMember(selected))}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Restablecer cambios
+            </button>
+            {updatePermissions.isError && (
+              <p className="text-sm text-rose-700">
+                {errorMessage(updatePermissions.error)}
+              </p>
+            )}
+            {updatePermissions.isSuccess && (
+              <p className="text-sm text-emerald-700">Permisos actualizados.</p>
+            )}
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function draftFromMember(member: StaffSummary): Record<string, DraftEffect> {
+  return Object.fromEntries(
+    member.permissionOverrides.map((override) => [
+      override.permission,
+      override.effect,
+    ]),
   );
 }
 
 function roleOptions(sessionRole: StaffRole): StaffRole[] {
   return sessionRole === "owner"
-    ? ["manager", "cashier", "accounting"]
-    : ["cashier", "accounting"];
+    ? ["manager", "receptionist", "advisor", "trainer"]
+    : ["receptionist", "advisor", "trainer"];
 }
 
 function StaffRow({
   member,
   sessionRole,
   self,
+  canManagePermissions,
+  selected,
   saving,
   onSave,
+  onPermissions,
 }: {
   member: StaffSummary;
   sessionRole: StaffRole;
   self: boolean;
+  canManagePermissions: boolean;
+  selected: boolean;
   saving: boolean;
   onSave: (role: StaffRole, status: StaffStatus) => void;
+  onPermissions: () => void;
 }) {
   const [role, setRole] = useState<StaffRole>(member.role);
   const owner = member.role === "owner";
@@ -246,6 +427,7 @@ function StaffRow({
     options.unshift(member.role);
   }
   const dirty = role !== member.role;
+  const permissionCount = member.permissionOverrides.length;
 
   if (owner) {
     return (
@@ -264,8 +446,11 @@ function StaffRow({
   }
 
   return (
-    <tr>
-      <td className="px-6 py-4 font-medium">{member.name}</td>
+    <tr className={selected ? "bg-brand-50/40" : undefined}>
+      <td className="px-6 py-4 font-medium">
+        {member.name}
+        {self && <span className="ml-2 text-xs text-slate-400">(tú)</span>}
+      </td>
       <td className="px-6 py-4">
         <select
           aria-label={`Rol de ${member.name}`}
@@ -296,6 +481,15 @@ function StaffRow({
       </td>
       <td className="px-6 py-4">
         <div className="flex justify-end gap-2">
+          {canManagePermissions && !locked && (
+            <button
+              type="button"
+              onClick={onPermissions}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Permisos{permissionCount > 0 ? ` (${permissionCount})` : ""}
+            </button>
+          )}
           <button
             type="button"
             disabled={locked || saving || !dirty}

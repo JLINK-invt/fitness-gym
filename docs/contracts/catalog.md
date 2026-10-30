@@ -1,9 +1,9 @@
 # Contrato local · catálogo, precios e impuestos (Phase 3)
 
-- **Versión de contrato:** 2.0.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v6 (`0006_single_site.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Comandos
 

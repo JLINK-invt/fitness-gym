@@ -1,9 +1,9 @@
 # Contrato local · reportes y analítica (Phase 3–4)
 
-- **Versión de contrato:** 2.14.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v19 (`0019_access_attendance_reports.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Comandos
 
@@ -171,6 +171,8 @@ interface ReportRun {
 - La exportación escribe un CSV UTF-8 con saltos CRLF en
   `<app_data>/exports/reporte-<desde>-<hasta>-<marca>.csv`. Los campos de texto
   se escapan y se neutralizan fórmulas de hoja de cálculo.
+- La cabecera incluye `Gimnasio`, `Razón social` y `RFC` desde `gym_settings`;
+  son metadata para el contador, no datos contables ni cálculo de impuestos.
 - La moneda proviene de `organizations.currency`.
 - Solo `ViewFinance` (dueño, encargado y contabilidad) puede consultar,
   exportar o programar reportes. El cajero no accede a reportes.

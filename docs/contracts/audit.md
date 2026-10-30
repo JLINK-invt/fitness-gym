@@ -1,9 +1,9 @@
 # Contrato local · auditoría inmutable (Phase 2)
 
-- **Versión de contrato:** 2.2.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v8 (`0008_owner_recovery.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Objetivo
 

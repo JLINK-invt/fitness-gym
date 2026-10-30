@@ -6,13 +6,42 @@ async (page) => {
   };
   let recoveryCode = "";
 
+  const sectionNav = page.getByRole("navigation", { name: "Secciones" });
+  const sectionButton = (name) =>
+    sectionNav.getByRole("button", { name, exact: true });
+
+  const openGroup = async (name) => {
+    const button = sectionButton(name);
+    if ((await button.getAttribute("aria-expanded")) !== "true") {
+      await button.click();
+    }
+    await page.getByRole("menu").waitFor();
+  };
+
+  const gotoSection = async (group, item) => {
+    await openGroup(group);
+    await page.getByRole("menuitem", { name: item, exact: true }).click();
+  };
+
+  const signOut = async () => {
+    await page.getByRole("button", { name: /Sesión de/ }).click();
+    await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
+  };
+
+  const checkSessionRole = async (label) => {
+    await page.getByRole("button", { name: /Sesión de/ }).click();
+    await page.getByRole("menu").getByText(label, { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("menu").waitFor({ state: "hidden" });
+  };
+
   await page.addInitScript(() => {
     window.__e2eAnswers = [];
     window.prompt = () => window.__e2eAnswers.shift() ?? "clave-segura-123";
     window.confirm = () => true;
   });
 
-  await page.goto("http://localhost:1420/?e2e=1#/");
+  await page.goto("http://127.0.0.1:1420/?e2e=1#/");
   await page.reload();
   await page.getByRole("heading", { name: "Configura tu gimnasio" }).waitFor();
   if ((await page.getByText("Vista web sin runtime Tauri").count()) > 0) {
@@ -37,10 +66,40 @@ async (page) => {
     .check();
   await page.getByRole("button", { name: "Continuar" }).click();
   await page.getByRole("heading", { name: "Panel" }).waitFor();
-  await page.getByRole("link", { name: "Diagnóstico" }).click();
+  const breadcrumb = page.getByRole("navigation", { name: "Ruta" });
+  await breadcrumb.getByText("Inicio", { exact: true }).waitFor();
+  await breadcrumb.getByText("Panel", { exact: true }).waitFor();
+  if ((await sectionButton("Inicio").getAttribute("aria-current")) !== "page") {
+    throw new Error("La sección activa no se marcó como pestaña.");
+  }
+  if ((await sectionNav.getByRole("button").count()) < 3) {
+    throw new Error("El shell de escritorio no mostró las secciones del menú.");
+  }
+  await sectionButton("Configuración").click();
+  await page.getByRole("menu").waitFor();
+  if (
+    (await page.getByRole("menuitem", { name: "Diagnóstico", exact: true }).count()) ===
+    0
+  ) {
+    throw new Error("El desplegable de sección no listó sus opciones.");
+  }
+  await sectionButton("Configuración").click();
+  await page.getByRole("menu").waitFor({ state: "hidden" });
+  await sectionButton("Socios").click();
+  await page.getByRole("menu").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("menu").waitFor({ state: "hidden" });
+  pass("shell de escritorio con secciones desplegables");
+
+  await gotoSection("Configuración", "Diagnóstico");
   await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
+  await breadcrumb.getByText("Configuración", { exact: true }).waitFor();
+  await breadcrumb.getByText("Diagnóstico del core", { exact: true }).waitFor();
+  if ((await sectionButton("Configuración").getAttribute("aria-current")) !== "page") {
+    throw new Error("La ruta no reflejó la sección activa.");
+  }
   await page.getByText("Ana E2E").waitFor();
-  await page.getByText("Dueño", { exact: true }).waitFor();
+  await checkSessionRole("Dueño");
   pass("primer arranque crea al dueño y abre sesión");
 
   if ((await page.getByText("SQLCipher 4.6.1 community").count()) === 0) {
@@ -60,7 +119,7 @@ async (page) => {
   }
   pass("diagnóstico carga health y estado cifrado");
 
-  await page.getByRole("link", { name: "Backups" }).click();
+  await gotoSection("Configuración", "Backups");
   await page.getByText("Aún no hay snapshots.").waitFor();
   pass("lista de backups inicia vacía");
 
@@ -109,7 +168,7 @@ async (page) => {
   }
   pass("login posterior al restore conserva el backup");
 
-  await page.getByRole("link", { name: "Catálogo" }).click();
+  await gotoSection("Ventas y caja", "Catálogo");
   await page.getByRole("heading", { name: "Catálogo" }).waitFor();
   await page.getByLabel("Nombre del producto").fill("Membresía mensual");
   await page.getByLabel("Categoría").fill("Membresías");
@@ -154,7 +213,7 @@ async (page) => {
   await page.getByLabel("Nombre de Playera").waitFor();
   pass("crear producto rastreado por inventario");
 
-  await page.getByRole("link", { name: "Socios" }).click();
+  await gotoSection("Socios", "Socios");
   await page.getByRole("heading", { name: "Socios y membresías" }).waitFor();
   await page.getByRole("button", { name: "Planes" }).click();
   await page.getByLabel("Nombre").fill("Mensual E2E");
@@ -163,7 +222,7 @@ async (page) => {
   await page.getByText("$450.00").waitFor();
   pass("crear plan de membresía");
 
-  await page.getByRole("button", { name: "Socios", exact: true }).click();
+  await page.getByRole("main").getByRole("button", { name: "Socios", exact: true }).click();
   await page.getByRole("button", { name: "Nuevo socio" }).click();
   await page.getByLabel("Nombre", { exact: true }).fill("Luisa");
   await page.getByLabel("Apellido").fill("Socia");
@@ -189,7 +248,7 @@ async (page) => {
   await page.getByText("GYM-SOC00001-01", { exact: true }).waitFor();
   pass("emitir credencial de acceso para el socio");
 
-  await page.getByRole("link", { name: "Accesos" }).click();
+  await gotoSection("Socios", "Acceso y asistencia");
   await page.getByRole("heading", { name: "Accesos y asistencia" }).waitFor();
   await page.getByRole("button", { name: "Publicar snapshot" }).click();
   await page.getByText("Checksum").waitFor();
@@ -201,7 +260,7 @@ async (page) => {
   await page.getByRole("heading", { name: "Asistencia y ocupación" }).waitFor();
   pass("publicar snapshot y validar acceso con la credencial emitida");
 
-  await page.getByRole("link", { name: "Socios" }).click();
+  await gotoSection("Socios", "Socios");
   await page.getByRole("heading", { name: "Socios y membresías" }).waitFor();
   await page.getByRole("button", { name: "Prospectos" }).click();
   await page.getByLabel("Nombre").fill("Pedro Prospecto");
@@ -212,53 +271,79 @@ async (page) => {
   await page.getByText("Socio creado").waitFor();
   pass("convertir prospecto en socio");
 
-  await page.getByRole("link", { name: "Equipo" }).click();
-  await page.getByRole("heading", { name: "Equipo" }).waitFor();
-  await page.getByLabel("Nombre del empleado").fill("Carlos Caja");
+  await gotoSection("Configuración", "Colaboradores");
+  await page.getByRole("heading", { name: "Colaboradores" }).waitFor();
+  await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
   await page.getByLabel("Contraseña inicial").fill("clave-carlos-123");
   await page.getByRole("button", { name: "Crear acceso" }).click();
   await page.getByText("Acceso creado. Ya puede iniciar sesión.").waitFor();
   await page.getByText("Carlos Caja").waitFor();
-  pass("crear acceso de cajero");
+  pass("crear acceso de recepción");
 
-  await page.getByRole("button", { name: "Salir" }).click();
+  const carlosRow = page.locator("tbody tr", { hasText: "Carlos Caja" });
+  await carlosRow.getByRole("button", { name: /^Permisos/ }).click();
+  await page.getByRole("heading", { name: "Permisos de Carlos Caja" }).waitFor();
+  const catalogPermission = page.getByLabel(
+    "Permiso Administrar catálogo y precios para Carlos Caja",
+  );
+  await catalogPermission.selectOption("allow");
+  await page.getByRole("button", { name: "Guardar permisos" }).click();
+  await page.getByText("Permisos actualizados.").waitFor();
+  await carlosRow.getByRole("button", { name: "Permisos (1)" }).waitFor();
+  await catalogPermission.selectOption("inherit");
+  await page.getByRole("button", { name: "Guardar permisos" }).click();
+  await carlosRow.getByRole("button", { name: "Permisos", exact: true }).waitFor();
+  pass("conceder y revertir un permiso granular a un colaborador");
+
+  await signOut();
   await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
   await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
   await page.getByLabel("Contraseña").fill("clave-carlos-123");
   await page.getByRole("button", { name: "Entrar" }).click();
   await page.getByRole("heading", { name: "Panel" }).waitFor();
-  await page.getByText("Cajero", { exact: true }).waitFor();
-  if ((await page.getByRole("link", { name: "Backups" }).count()) > 0) {
-    throw new Error("El cajero no debería ver Backups.");
+  await checkSessionRole("Recepción");
+  await openGroup("Configuración");
+  const receptionMenu = page.getByRole("menu");
+  if (
+    (await receptionMenu.getByRole("menuitem", { name: "Backups", exact: true }).count()) >
+    0
+  ) {
+    throw new Error("Recepción no debería ver Backups.");
   }
-  if ((await page.getByRole("link", { name: "Equipo" }).count()) > 0) {
-    throw new Error("El cajero no debería ver Equipo.");
+  if (
+    (await receptionMenu.getByRole("menuitem", { name: "Colaboradores", exact: true }).count()) >
+    0
+  ) {
+    throw new Error("Recepción no debería ver Colaboradores.");
   }
-  if ((await page.getByRole("link", { name: "Catálogo" }).count()) > 0) {
-    throw new Error("El cajero no debería ver Catálogo.");
+  if (
+    (await receptionMenu.getByRole("menuitem", { name: "Auditoría", exact: true }).count()) >
+    0
+  ) {
+    throw new Error("Recepción no debería ver Auditoría.");
   }
-  if ((await page.getByRole("link", { name: "Auditoría" }).count()) > 0) {
-    throw new Error("El cajero no debería ver Auditoría.");
+  if ((await sectionButton("Finanzas").count()) > 0) {
+    throw new Error("Recepción no debería ver la sección Finanzas.");
   }
-  await page.getByRole("link", { name: "Accesos" }).click();
+  await gotoSection("Socios", "Acceso y asistencia");
   await page.getByRole("heading", { name: "Accesos y asistencia" }).waitFor();
-  await page.getByRole("link", { name: "Panel" }).click();
+  await gotoSection("Inicio", "Panel");
   await page.getByRole("heading", { name: "Panel", exact: true }).waitFor();
-  pass("cajero ve accesos pero no módulos administrativos");
+  pass("recepción ve accesos pero no módulos administrativos");
 
-  await page.getByRole("link", { name: "Ventas" }).click();
+  await gotoSection("Ventas y caja", "Ventas");
   await page
     .getByText("Abre la caja y registra el fondo inicial antes de cobrar.")
     .waitFor();
   pass("venta exige un turno de caja abierto");
 
-  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await gotoSection("Ventas y caja", "Caja");
   await page.getByRole("heading", { name: "Caja y turnos" }).waitFor();
   await page.getByLabel("Monto inicial").fill("500");
   await page.getByRole("button", { name: "Abrir caja" }).click();
   await page.getByText("Turno abierto", { exact: true }).waitFor();
   await page.getByText("Esperado en caja").waitFor();
-  pass("cajero abre la caja con fondo inicial");
+  pass("recepción abre la caja con fondo inicial");
 
   await page.getByLabel("Tipo").selectOption("expense");
   await page.getByLabel("Monto").fill("50");
@@ -268,9 +353,9 @@ async (page) => {
   await page.getByRole("button", { name: "Registrar movimiento" }).click();
   await page.getByText("Limpieza").waitFor();
   await page.getByText("$50.00").first().waitFor();
-  pass("cajero registra un gasto de caja con evidencia");
+  pass("recepción registra un gasto de caja con evidencia");
 
-  await page.getByRole("link", { name: "Inventario" }).click();
+  await gotoSection("Ventas y caja", "Inventario");
   await page.getByRole("heading", { name: "Inventario", exact: true }).waitFor();
   await page.getByLabel("Producto").selectOption({ label: "Playera · M · PLAY-M" });
   await page.getByLabel("Cantidad").fill("5");
@@ -280,7 +365,7 @@ async (page) => {
   await page.getByRole("button", { name: "Registrar entrada" }).click();
   await page.getByText("Compra E2E").waitFor();
   await page.getByText("$500.00").first().waitFor();
-  pass("cajero registra una entrada y el valor del inventario");
+  pass("recepción registra una entrada y el valor del inventario");
 
   const threshold = page
     .locator("tbody tr", { hasText: "Playera" })
@@ -288,7 +373,7 @@ async (page) => {
   await threshold.fill("5");
   await threshold.press("Tab");
 
-  await page.getByRole("link", { name: "Panel" }).click();
+  await gotoSection("Inicio", "Panel");
   await page.getByRole("heading", { name: "Panel", exact: true }).waitFor();
   await page.getByText("1 SKU en o bajo mínimo").waitFor();
   await page.locator("tbody").getByText("Playera").waitFor();
@@ -296,7 +381,7 @@ async (page) => {
   await page.getByText("$500.00").first().waitFor();
   pass("panel refleja existencias y alerta de mínimo");
 
-  await page.getByRole("link", { name: "Ventas" }).click();
+  await gotoSection("Ventas y caja", "Ventas");
   await page.getByRole("heading", { name: "Ventas", exact: true }).waitFor();
   await page.getByRole("button", { name: /Membresía mensual/ }).first().click();
   await page.getByLabel("Efectivo recibido").fill("500");
@@ -314,7 +399,7 @@ async (page) => {
   if ((await page.evaluate(() => window.__e2ePrintCount)) !== 1) {
     throw new Error("El ticket no invocó el diálogo de impresión del sistema.");
   }
-  pass("cajero cobra una venta en efectivo e imprime el ticket no fiscal");
+  pass("recepción cobra una venta en efectivo e imprime el ticket no fiscal");
 
   await page.getByRole("button", { name: "Devolver" }).first().click();
   await page
@@ -325,9 +410,9 @@ async (page) => {
     .fill("Cliente canceló la membresía");
   await page.getByRole("button", { name: "Registrar devolución" }).click();
   await page.getByText("Devolución registrada").waitFor();
-  pass("cajero devuelve una venta con motivo");
+  pass("recepción devuelve una venta con motivo");
 
-  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await gotoSection("Ventas y caja", "Caja");
   await page.getByText("Devoluciones efectivo").waitFor();
   await page.getByText("$450.00").first().waitFor();
   await page.getByLabel("Efectivo contado").fill("440");
@@ -341,13 +426,13 @@ async (page) => {
   await page.getByRole("button", { name: "Cerrar caja" }).click();
   await page.getByRole("heading", { name: "Turno cerrado" }).waitFor();
   await page.getByText("Faltante de cambio").waitFor();
-  pass("cajero cierra caja y audita la diferencia");
+  pass("recepción cierra caja y audita la diferencia");
 
-  await page.getByRole("button", { name: "Salir" }).click();
+  await signOut();
   await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-segura-123");
   await page.getByRole("button", { name: "Entrar" }).click();
-  await page.getByRole("link", { name: "Caja", exact: true }).click();
+  await gotoSection("Ventas y caja", "Caja");
   await page.getByRole("heading", { name: "Caja y turnos" }).waitFor();
   await page.getByRole("heading", { name: "Turnos recientes" }).waitFor();
   const shiftRows = page.locator("tbody tr");
@@ -356,7 +441,7 @@ async (page) => {
   }
   await page.getByText("$440.00").first().waitFor();
   pass("dueño consulta el historial de turnos");
-  await page.getByRole("link", { name: "Reportes" }).click();
+  await gotoSection("Inicio", "Reportes");
   await page.getByRole("heading", { name: "Reportes", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Analítica de ventas e inventario" }).waitFor();
   await page.getByText("Attach rate", { exact: true }).waitFor();
@@ -378,22 +463,84 @@ async (page) => {
   await page.getByText("completed", { exact: true }).waitFor();
   pass("programar y ejecutar reporte financiero");
 
-  await page.getByRole("link", { name: "Auditoría" }).click();
+  await gotoSection("Socios", "Clases y reservas");
+  await page.getByRole("heading", { name: "Nueva clase" }).waitFor();
+  const classForm = page.locator("form").filter({ hasText: "Nueva clase" });
+  await classForm.getByLabel("Nombre").fill("Spinning E2E");
+  await classForm.getByLabel("Sala").fill("Sala 1");
+  await classForm.getByRole("button", { name: "Crear clase" }).click();
+  await page.getByRole("button", { name: /Spinning E2E/ }).click();
+  const bookingForm = page.locator("form").filter({ hasText: "Reservar" });
+  await bookingForm.getByRole("combobox").selectOption({ label: "Pedro Prospecto" });
+  await bookingForm.getByRole("button", { name: "Reservar" }).click();
+  await page.locator("li", { hasText: "Pedro Prospecto" }).waitFor();
+  pass("crear clase y reservar un socio");
+
+  await gotoSection("Marketing", "Marketing y retención");
+  await page.getByRole("heading", { name: "Embudo de prospectos" }).waitFor();
+  const campaignForm = page.locator("section", { hasText: "Nueva campaña" });
+  await campaignForm.getByLabel("Nombre").fill("Retención E2E");
+  await campaignForm.getByLabel("Audiencia").fill("Socios por vencer");
+  await campaignForm.getByRole("button", { name: "Crear campaña" }).click();
+  await page.getByRole("cell", { name: "Retención E2E" }).waitFor();
+  pass("crear campaña y consultar el embudo comercial");
+
+  await gotoSection("Finanzas", "Finanzas");
+  await page.getByRole("heading", { name: "Cobros por método" }).waitFor();
+  await page.getByText("Venta neta").waitFor();
+  await page.getByRole("button", { name: "Exportar CSV" }).click();
+  await page.getByText(/Exportado en/).waitFor();
+  pass("consultar finanzas y exportar el periodo");
+
+  await gotoSection("Configuración", "General");
+  await page.getByRole("heading", { name: "Identidad" }).waitFor();
+  await page.getByLabel("Nombre comercial").fill("Gimnasio E2E Centro");
+  await page.getByRole("button", { name: "Guardar configuración" }).click();
+  await page.getByText(/Configuración guardada/).waitFor();
+  pass("guardar la configuración operativa del gimnasio");
+
+  await gotoSection("Configuración", "Mantenimiento");
+  await page.getByRole("heading", { name: "Equipos" }).waitFor();
+  await page.getByPlaceholder("Nombre").fill("Caminadora E2E");
+  await page.getByPlaceholder("Código").fill("EQ-001");
+  await page.getByPlaceholder("Área").fill("Cardio");
+  await page.getByRole("button", { name: "Agregar" }).click();
+  await page.getByText("Caminadora E2E · EQ-001").waitFor();
+  const orderForm = page.locator("section", { hasText: "Nueva orden" });
+  await orderForm.getByLabel("Equipo").selectOption({ label: "Caminadora E2E" });
+  await orderForm.getByLabel("Resumen").fill("Revisión E2E");
+  await orderForm.getByRole("button", { name: "Crear orden" }).click();
+  const orderRow = page.locator("tbody tr", { hasText: "Revisión E2E" });
+  await orderRow.getByRole("button", { name: "Completar" }).click();
+  await orderRow.getByText("Completada").waitFor();
+  pass("registrar equipo y cerrar una orden de mantenimiento");
+
+  await gotoSection("Configuración", "Complementos");
+  await page.getByRole("heading", { name: "Módulos conectados" }).waitFor();
+  await page.getByText("Pendientes").waitFor();
+  await page.getByLabel("Identificador").fill("pos-e2e");
+  await page.getByLabel("Nombre visible").fill("POS E2E");
+  await page.getByLabel(/Capacidades/).fill("members.read, sales.write");
+  await page.getByRole("button", { name: "Guardar integración" }).click();
+  await page.getByRole("cell", { name: "POS E2E" }).waitFor();
+  pass("conectar un complemento y ver el journal de sincronización");
+
+  await gotoSection("Configuración", "Auditoría");
   await page.getByRole("heading", { name: "Auditoría" }).waitFor();
-  await page.getByText("report.exported").waitFor();
+  await page.getByText("report.exported").first().waitFor();
   await page.getByText(/Cadena íntegra:/).waitFor();
   if ((await page.locator("tbody tr").count()) === 0) {
     throw new Error("La auditoría no mostró eventos.");
   }
   pass("auditoría lista eventos y verifica la cadena");
 
-  await page.getByRole("link", { name: "Equipo" }).click();
-  const cashierRow = page.locator("tbody tr", { hasText: "Carlos Caja" });
-  await cashierRow.getByRole("button", { name: "Desactivar" }).click();
-  await cashierRow.getByText("Inactivo").waitFor();
+  await gotoSection("Configuración", "Colaboradores");
+  const staffRow = page.locator("tbody tr", { hasText: "Carlos Caja" });
+  await staffRow.getByRole("button", { name: "Desactivar" }).click();
+  await staffRow.getByText("Inactivo").waitFor();
   pass("desactivar acceso de empleado");
 
-  await page.getByRole("button", { name: "Salir" }).click();
+  await signOut();
   await page.getByRole("heading", { name: "Entra a tu turno" }).waitFor();
   await page.getByLabel("Nombre", { exact: true }).fill("Carlos Caja");
   await page.getByLabel("Contraseña").fill("clave-carlos-123");
@@ -416,12 +563,12 @@ async (page) => {
     .getByLabel("Ya guardé el código de recuperación en un lugar seguro.")
     .check();
   await page.getByRole("button", { name: "Continuar" }).click();
-  await page.getByRole("heading", { name: "Equipo" }).waitFor();
-  await page.getByRole("link", { name: "Diagnóstico" }).click();
+  await page.getByRole("heading", { name: "Colaboradores" }).waitFor();
+  await gotoSection("Configuración", "Diagnóstico");
   await page.getByRole("heading", { name: "Diagnóstico del core" }).waitFor();
   pass("código de recuperación permite fijar contraseña y entrar");
 
-  await page.getByRole("button", { name: "Salir" }).click();
+  await signOut();
   await page.getByLabel("Nombre", { exact: true }).fill("Ana E2E");
   await page.getByLabel("Contraseña").fill("clave-nueva-456");
   await page.getByRole("button", { name: "Entrar" }).click();

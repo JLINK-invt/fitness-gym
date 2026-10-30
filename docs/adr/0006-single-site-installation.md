@@ -18,8 +18,8 @@ razonar sobre accesos y auditoría.
 1. Cada instalación representa **un solo gimnasio**. No existen `sites` ni
    `site_id` en el esquema.
 2. `staff_memberships` guarda solo el rol. El alcance de un `manager` se define
-   por roles: administra `cashier` y `accounting`, no a otros `manager` ni al
-   `owner`.
+   por roles: administra `receptionist`, `advisor` y `trainer`, no a otros
+   `manager` ni al `owner`.
 3. Los contratos suben a 2.0.0 y eliminan `SiteStatus`, `SiteSummary` y los
    campos de sede de sesión, personal y auditoría. También desaparecen los
    comandos `list_sites`, `create_site` y `update_site`.
@@ -28,7 +28,7 @@ razonar sobre accesos y auditoría.
 5. La migración 6 elimina la tabla `sites`, reconstruye `staff_memberships`,
    elimina `audit_events.site_id`, limpia los hashes y reinicia la cadena con el
    formato `fitness-gym-audit-v2`.
-6. La UI elimina la pantalla **Sedes**; **Equipo** administra personas y roles.
+6. La UI elimina la pantalla **Sedes**; **Colaboradores** administra personas y roles.
 
 ## Consecuencias
 

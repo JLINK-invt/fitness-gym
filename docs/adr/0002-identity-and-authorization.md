@@ -4,7 +4,7 @@
 - **Fecha:** 2026-10-20
 - **Decide:** Identidad, sesión y permisos
 - **Relacionado:** Phase 1, Phase 2
-- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin alcance por sede)
+- **Actualizado por:** [ADR-0006](0006-single-site-installation.md) (sin alcance por sede) y Fase 4.1 (roles y overrides)
 
 ## Contexto
 
@@ -23,9 +23,11 @@ alterar historial o un ex empleado con acceso al equipo.
 3. **Sesión en memoria** dentro del proceso Tauri. Sin tokens en el webview,
    `localStorage` ni cookies. Bloqueo automático por inactividad a los 15
    minutos (configurable por organización).
-4. **Roles V1:** `owner`, `manager`, `cashier`, `accounting`. Un usuario tiene
-   una membresía por organización. Un `manager` administra solo cajeros y
-   contabilidad; el `owner` administra a todos.
+4. **Roles V1 (Fase 4.1):** `owner`, `manager`, `receptionist`, `advisor`,
+   `trainer`. Un usuario tiene una membresía por organización. Un `manager`
+   administra recepción, asesoría y entrenamiento; el `owner` administra a todos
+   y es el único que puede editar permisos y backups. La plantilla de rol admite
+   overrides `allow`/`deny` por usuario, salvo permisos solo del Dueño.
 5. **Autorización en Rust, no en la UI.** Cada comando valida permiso, estado de
    membresía y organización antes de tocar datos. La UI solo oculta acciones; el
    backend siempre vuelve a decidir.
@@ -37,7 +39,7 @@ alterar historial o un ex empleado con acceso al equipo.
    existe usuario por defecto ni contraseña universal.
 9. **MFA y recuperación del dueño:** MFA sigue diferido a Phase 5. La
    recuperación se implementó en V1 mediante un código de un solo uso mostrado al
-   crear la cuenta y regenerable por el dueño desde **Equipo**. El código se
+   crear la cuenta y regenerable por el dueño desde **Colaboradores**. El código se
    guarda solo como hash Argon2id, se rota al usarlo y exige presencia física en
    el equipo; no hay reset por correo ni autenticador.
 

@@ -139,8 +139,7 @@ export function CashPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Caja y turnos</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Abre la caja antes de vender y cierra el turno contando el efectivo.
           </p>
         </div>

@@ -61,10 +61,11 @@ Principios de consentimiento:
 
 | Actor | Confianza | Objetivo |
 | --- | --- | --- |
-| Owner | Alta | Operar y administrar el gimnasio |
-| Manager | Media-alta | Operar el gimnasio, personal y backups |
-| Cashier | Media | Cobrar y ajustar inventario |
-| Accounting | Media | Consultar finanzas y auditoría |
+| Owner | Alta | Operar y administrar el gimnasio, permisos y backups |
+| Manager | Media-alta | Supervisar operación, personal y configuración |
+| Receptionist | Media | Cobrar, atender socios, accesos y reservas |
+| Advisor | Media | Seguimiento comercial y marketing |
+| Trainer | Media | Socios asignados y clases |
 | Ladrón de equipo | Ninguna | Extraer PII o extorsionar |
 | Malware local | Ninguna | Robar credenciales, claves o datos |
 | Contenido malicioso en el webview | Ninguna | Escalar a comandos Rust |

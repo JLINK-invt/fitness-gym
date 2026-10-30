@@ -90,15 +90,18 @@ journal de sync solo se ejercita contra un servidor falso en pruebas.
   proceso Tauri. El código en claro se muestra una sola vez.
 - El código de recuperación del dueño es de un solo uso: al recuperar la cuenta
   se rota de forma atómica y se abre una sesión nueva. El dueño puede generar
-  otro desde **Equipo**.
+  otro desde **Colaboradores**.
 - Cinco fallos bloquean el nombre o el flujo de recuperación durante cinco
   minutos; 15 minutos de inactividad cierran la sesión.
 - Los comandos operativos reciben el actor desde la sesión Rust, nunca desde un
   `userId` enviado por la UI.
-- El dueño administra todo el equipo. Un encargado solo ve y administra cajeros
-  y contabilidad; no puede crear ni editar encargados ni al dueño.
+- El dueño administra todo el equipo. Un Gerente administra recepción, asesoría
+  y entrenamiento; no puede crear ni editar otros gerentes ni al dueño.
 - El dueño no se edita desde la UI: se crea solo en la configuración inicial. Un
-  usuario tampoco puede modificar su propia membresía.
+  usuario tampoco puede modificar su propia membresía ni sus propios permisos.
+- Los permisos parten de una plantilla por rol y admiten overrides `allow`/`deny`
+  por usuario en `staff_permission_overrides`. `managePermissions` y
+  `manageBackups` quedan reservados al Dueño.
 - Revocar una cuenta impide el siguiente login; la sesión en memoria se invalida
   al expirar o al hacer logout. Restaurar un backup cierra la sesión porque la
   base restaurada puede tener otro dueño o personal revocado.
@@ -112,7 +115,7 @@ journal de sync solo se ejercita contra un servidor falso en pruebas.
 
 Cada evento sensible se agrega en una transacción que calcula el consecutivo y
 el hash del evento anterior. La tabla rechaza `UPDATE` y `DELETE`; la UI solo
-consulta y puede verificar la cadena. Todos los roles con `ViewAudit` ven los
+consulta y puede verificar la cadena. Todos los roles con `viewAudit` ven los
 eventos de la instalación. La cadena detecta alteraciones de contenido, pero no un
 truncado del final sin una copia externa; ese riesgo queda documentado.
 
@@ -120,14 +123,16 @@ El contrato completo está en [`contracts/audit.md`](contracts/audit.md).
 
 ## Personal
 
-La pantalla **Equipo** requiere `ManageStaff` y permite crear accesos, cambiar
-rol y desactivar o reactivar cuentas.
+La pantalla **Colaboradores** requiere `viewStaff` y permite crear accesos,
+cambiar rol, desactivar o reactivar cuentas y editar permisos por usuario cuando
+la sesión tiene `managePermissions`.
 
 Reglas de autorización aplicadas en Rust:
 
 - No se puede crear ni elevar una cuenta a `owner`.
-- Un `manager` solo lista y administra `cashier` y `accounting`.
+- Un `manager` solo lista y administra `receptionist`, `advisor` y `trainer`.
 - Solo puede existir una membresía por usuario.
+- Los overrides no pueden conceder permisos solo del Dueño.
 - Los comandos filtran por `organization_id` y validan el rol actual antes de
   modificarlo.
 
@@ -135,7 +140,7 @@ El contrato completo está en [`contracts/staff.md`](contracts/staff.md).
 
 ## Catálogo y precios
 
-La pantalla **Catálogo** requiere `ManageCatalog` y permite crear productos con
+La pantalla **Catálogo** requiere `manageCatalog` y permite crear productos con
 una variante inicial, editar producto o variante, archivarlos y agregar precios.
 Cada precio es una versión inmutable con monto, tasa de impuesto, indicador de
 impuesto incluido y `effective_from`; la UI muestra la versión vigente según la
@@ -159,7 +164,7 @@ está en [`contracts/sales.md`](contracts/sales.md).
 
 ## Reportes financieros
 
-La pantalla **Reportes** requiere `ViewFinance`. Rust reconstruye el cierre desde
+La pantalla **Reportes** requiere `viewFinance`. Rust reconstruye el cierre desde
 el ledger inmutable: ventas, devoluciones, desglose por método de pago, ventas
 por producto con margen, ajustes de inventario y diferencias de turnos. El costo
 sale de `inventory_movements`; los servicios usan costo cero. La exportación
@@ -171,7 +176,7 @@ elimina. El contrato completo está en
 ## Caja y turnos
 
 La pantalla **Caja** requiere `OperatePos` para abrir, consultar el turno actual
-y cerrar; solo `ViewFinance` puede listar el historial. El cajero registra el
+y cerrar; solo `viewFinance` puede listar el historial. El cajero registra el
 fondo inicial, registra ingresos y gastos con evidencia y la app impide cobrar
 sin un turno abierto. Al cerrar, cuenta el efectivo: Rust calcula el esperado
 con las ventas, movimientos y devoluciones en efectivo del turno, exige motivo
@@ -181,7 +186,7 @@ cuando hay diferencia y bloquea reaperturas. El contrato completo está en
 ## Inventario y valoración
 
 El **Panel** resume existencias, valor, SKU bajo mínimo y rotación de los
-últimos 30 días. La pantalla **Inventario** requiere `ManageInventory` y muestra
+últimos 30 días. La pantalla **Inventario** requiere `manageInventory` y muestra
 existencias, valor y costo promedio por variante pieza. El stock nunca se edita:
 entradas, ajustes, ventas y devoluciones agregan movimientos inmutables. Las
 ventas pueden dejar stock negativo. El modelo multi-ubicación se eliminó en la
@@ -207,6 +212,19 @@ secuencia de servidor. Las pruebas usan un servidor falso en memoria; el
 transporte HTTPS con mTLS, el enrolamiento y la aplicación de eventos remotos
 quedan pendientes. El contrato completo está en
 [`contracts/sync.md`](contracts/sync.md).
+
+## Operación ampliada (Fase 4.1)
+
+- `gym_settings` concentra identidad comercial, moneda y reglas de retención.
+- `integration_links` registra módulos externos con capacidades y estado; el
+  journal de sincronización resume pendientes, fallos y último evento.
+- `classes` y `class_bookings` modelan agenda semanal, cupo y asistencia; el
+  cupo ocupado se calcula por reservas `booked`/`attended`.
+- `campaigns` y el embudo de marketing derivan de prospectos, socios y
+  membresías por vencer.
+- Finanzas reutiliza el reporte financiero y su exportación CSV auditada.
+- `equipment` y `maintenance_orders` cubren preventivo/correctivo e historial.
+- Cada escritura encola un evento en `sync_outbox` y registra auditoría.
 
 ## Backups
 

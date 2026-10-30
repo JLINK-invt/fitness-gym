@@ -1,9 +1,9 @@
 # Contrato local · socios, membresías y cobros (Fase 4)
 
-- **Versión de contrato:** 2.14.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v19 (`0019_access_attendance_reports.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Permisos
 

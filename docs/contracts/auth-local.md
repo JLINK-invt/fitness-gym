@@ -1,9 +1,9 @@
 # Contrato local · autenticación y sesión (Phase 2)
 
-- **Versión de contrato:** 2.2.0
+- **Versión de contrato:** 3.0.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v8 (`0008_owner_recovery.sql`)
+- **Esquema:** v21 (`0021_gym_operations.sql`)
 
 ## Flujo
 
@@ -64,7 +64,7 @@ una sola vez; la base guarda únicamente su hash Argon2id.
 - Cinco fallos por nombre o por recuperación bloquean nuevos intentos durante
   cinco minutos.
 - La sesión expira tras 15 minutos sin actividad.
-- Roles: `owner`, `manager`, `cashier`, `accounting`.
+- Roles: `owner`, `manager`, `receptionist`, `advisor`, `trainer`.
 
 ## Errores
 
@@ -81,8 +81,8 @@ Los mensajes de credenciales inválidas no distinguen si el nombre existe.
 ## Fuera de alcance
 
 MFA, OIDC, recuperación por correo, reset de contraseñas de empleados,
-múltiples dueños, permisos personalizados y sesiones persistentes entre
+múltiples dueños, sesiones persistentes entre
 reinicios. La recuperación del dueño no depende de la red: exige el código
-entregado al crear la cuenta o uno generado después desde **Equipo**. Si se
+entregado al crear la cuenta o uno generado después desde **Colaboradores**. Si se
 pierden contraseña y código, no hay puerta trasera; solo queda restaurar un
 respaldo anterior o reiniciar una instalación de desarrollo.

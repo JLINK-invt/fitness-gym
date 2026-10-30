@@ -33,8 +33,7 @@ export function AuditPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Auditoría</h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
             Registro append-only con cadena de hashes. Solo se puede consultar; no se edita ni
             se borra desde la aplicación.
           </p>

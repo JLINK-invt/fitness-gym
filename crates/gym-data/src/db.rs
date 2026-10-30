@@ -13,6 +13,7 @@ use crate::sha256_hex;
 
 mod access;
 mod members;
+mod operations;
 mod reports;
 pub use access::{
     AccessConflictRecord, AccessEventRecord, AccessEventWriteOutcome, AccessReconciliationRecord,
@@ -25,6 +26,12 @@ pub use members::{
     MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord, MembershipPaymentRecord,
     MembershipPlanRecord, MembershipRecord, NewMember, NewMembershipPayment, NewMembershipPlan,
     NewProspect, ProspectRecord, UpdateMember, UpdateMembershipPlan, UpdateProspect,
+};
+pub use operations::{
+    CampaignRecord, ClassBookingRecord, ClassRecord, EquipmentRecord, FunnelStageRecord,
+    GymSettingsRecord, IntegrationJournalSummary, IntegrationLinkRecord, MaintenanceOrderRecord,
+    MaintenanceOrderUpdate, MarketingFunnelRecord, NewCampaign, NewClass, NewEquipment,
+    NewIntegrationLink, NewMaintenanceOrder, UpdateClass, UpdateEquipment, UpdateGymSettings,
 };
 pub use reports::{NewReportSchedule, ReportRunRecord, ReportScheduleRecord};
 
@@ -48,6 +55,7 @@ pub struct UserRecord {
 pub struct UserCredentialRecord {
     pub user_id: String,
     pub organization_id: String,
+    pub organization_name: String,
     pub name: String,
     pub password_hash: String,
     pub role: String,
@@ -68,6 +76,12 @@ pub struct StaffRecord {
     pub status: String,
     pub last_login_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionOverrideRecord {
+    pub permission: String,
+    pub effect: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -848,8 +862,10 @@ impl Db {
                  ORDER BY CASE s.role
                      WHEN 'owner' THEN 0
                      WHEN 'manager' THEN 1
-                     WHEN 'cashier' THEN 2
-                     ELSE 3
+                     WHEN 'receptionist' THEN 2
+                     WHEN 'advisor' THEN 3
+                     WHEN 'trainer' THEN 4
+                     ELSE 5
                  END, u.name COLLATE NOCASE",
             )?;
             let rows = statement.query_map(params![organization_id], |row| {
@@ -879,7 +895,7 @@ impl Db {
                 "staff name and password hash are required".into(),
             ));
         }
-        if !matches!(role, "manager" | "cashier" | "accounting") {
+        if !matches!(role, "manager" | "receptionist" | "advisor" | "trainer") {
             return Err(DataError::InvalidValue("invalid staff role".into()));
         }
 
@@ -934,7 +950,7 @@ impl Db {
         role: &str,
         status: &str,
     ) -> Result<StaffRecord, DataError> {
-        if !matches!(role, "manager" | "cashier" | "accounting") {
+        if !matches!(role, "manager" | "receptionist" | "advisor" | "trainer") {
             return Err(DataError::InvalidValue("invalid staff role".into()));
         }
         if !matches!(status, "active" | "revoked") {
@@ -3729,6 +3745,89 @@ impl Db {
         })
     }
 
+    pub fn list_permission_overrides(
+        &self,
+        organization_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<PermissionOverrideRecord>, DataError> {
+        self.with_connection(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT permission, effect
+                 FROM staff_permission_overrides
+                 WHERE organization_id = ?1 AND user_id = ?2
+                 ORDER BY permission",
+            )?;
+            let rows = statement.query_map(params![organization_id, user_id], |row| {
+                Ok(PermissionOverrideRecord {
+                    permission: row.get(0)?,
+                    effect: row.get(1)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DataError::from)
+        })
+    }
+
+    pub fn replace_permission_overrides(
+        &self,
+        organization_id: &str,
+        user_id: &str,
+        overrides: &[(String, String)],
+    ) -> Result<Vec<PermissionOverrideRecord>, DataError> {
+        let mut unique = HashMap::new();
+        for (permission, effect) in overrides {
+            if permission.trim().is_empty() || !matches!(effect.as_str(), "allow" | "deny") {
+                return Err(DataError::InvalidValue(
+                    "invalid permission override".into(),
+                ));
+            }
+            unique.insert(permission.trim().to_string(), effect.clone());
+        }
+
+        let mut guard = self.lock()?;
+        let conn = guard.as_mut().ok_or(DataError::DatabaseClosed)?;
+        let transaction = conn.transaction()?;
+        let role: Option<String> = transaction
+            .query_row(
+                "SELECT s.role
+                 FROM staff_memberships s
+                 WHERE s.organization_id = ?1 AND s.user_id = ?2",
+                params![organization_id, user_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(role) = role else {
+            return Err(DataError::StaffNotFound);
+        };
+        if role == "owner" {
+            return Err(DataError::InvalidValue(
+                "the owner permissions cannot be modified".into(),
+            ));
+        }
+
+        transaction.execute(
+            "DELETE FROM staff_permission_overrides
+             WHERE organization_id = ?1 AND user_id = ?2",
+            params![organization_id, user_id],
+        )?;
+        let now = chrono::Utc::now().to_rfc3339();
+        for (permission, effect) in &unique {
+            transaction.execute(
+                "INSERT INTO staff_permission_overrides
+                     (organization_id, user_id, permission, effect, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![organization_id, user_id, permission, effect, now],
+            )?;
+        }
+        transaction.commit()?;
+
+        let mut records: Vec<_> = unique
+            .into_iter()
+            .map(|(permission, effect)| PermissionOverrideRecord { permission, effect })
+            .collect();
+        records.sort_by(|left, right| left.permission.cmp(&right.permission));
+        Ok(records)
+    }
+
     /// Returns the active membership used for login. Lookup is scoped to the
     /// installation's organization and is case-insensitive for the name.
     pub fn find_user_credentials(
@@ -3738,8 +3837,10 @@ impl Db {
     ) -> Result<Option<UserCredentialRecord>, DataError> {
         self.with_connection(|conn| {
             conn.query_row(
-                "SELECT u.id, u.organization_id, u.name, u.password_hash, s.role
+                "SELECT u.id, u.organization_id, o.name, u.name, u.password_hash, s.role
                  FROM users u
+                 JOIN organizations o
+                   ON o.id = u.organization_id
                  JOIN staff_memberships s
                    ON s.organization_id = u.organization_id AND s.user_id = u.id
                  WHERE u.organization_id = ?1
@@ -3752,9 +3853,10 @@ impl Db {
                     Ok(UserCredentialRecord {
                         user_id: row.get(0)?,
                         organization_id: row.get(1)?,
-                        name: row.get(2)?,
-                        password_hash: row.get(3)?,
-                        role: row.get(4)?,
+                        organization_name: row.get(2)?,
+                        name: row.get(3)?,
+                        password_hash: row.get(4)?,
+                        role: row.get(5)?,
                     })
                 },
             )
@@ -5012,10 +5114,108 @@ mod tests {
         let second_status = second.status().expect("second status");
 
         assert_eq!(first_status.schema_version, second_status.schema_version);
-        assert_eq!(second_status.schema_version, 19);
+        assert_eq!(second_status.schema_version, 21);
         assert_eq!(second_status.organizations, 0);
         assert!(second_status.encrypted);
         assert!(second_status.integrity_ok);
+    }
+
+    #[test]
+    fn roles_permissions_migration_preserves_and_maps_legacy_staff() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let path = dir.path().join("gym.db");
+
+        {
+            let conn = Db::open_connection(&path, &key).expect("opens connection");
+            conn.execute_batch(
+                "CREATE TABLE schema_migrations (
+                     version INTEGER PRIMARY KEY NOT NULL,
+                     name TEXT NOT NULL,
+                     checksum TEXT NOT NULL,
+                     applied_at TEXT NOT NULL
+                 ) STRICT;",
+            )
+            .expect("creates migration table");
+            for migration in MIGRATIONS
+                .iter()
+                .filter(|migration| migration.version <= 19)
+            {
+                conn.execute_batch(migration.up)
+                    .expect("applies legacy migration");
+                conn.execute(
+                    "INSERT INTO schema_migrations (version, name, checksum, applied_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        migration.version,
+                        migration.name,
+                        hex::encode(Sha256::digest(migration.up.as_bytes())),
+                        chrono::Utc::now().to_rfc3339()
+                    ],
+                )
+                .expect("records legacy migration");
+            }
+            conn.pragma_update(None, "user_version", 19)
+                .expect("sets legacy version");
+            conn.execute_batch(
+                "INSERT INTO organizations (id, name, created_at)
+                 VALUES ('org', 'Gimnasio Centro', '2026-01-01T00:00:00Z');
+                 INSERT INTO users
+                     (id, organization_id, name, password_hash, status, created_at, updated_at)
+                 VALUES
+                     ('owner', 'org', 'Ana', 'hash', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+                     ('cashier', 'org', 'Carlos', 'hash', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+                     ('accounting', 'org', 'Luisa', 'hash', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                 INSERT INTO staff_memberships
+                     (id, organization_id, user_id, role, status, created_at)
+                 VALUES
+                     ('m-owner', 'org', 'owner', 'owner', 'active', '2026-01-01T00:00:00Z'),
+                     ('m-cashier', 'org', 'cashier', 'cashier', 'active', '2026-01-01T00:00:00Z'),
+                     ('m-accounting', 'org', 'accounting', 'accounting', 'active', '2026-01-01T00:00:00Z');",
+            )
+            .expect("seeds legacy staff");
+        }
+
+        let db = Db::open(&path, &key).expect("migrates to current schema");
+        assert_eq!(db.status().expect("status").schema_version, 21);
+        let staff = db.list_staff("org").expect("lists migrated staff");
+        assert_eq!(staff.len(), 3);
+        assert_eq!(
+            staff
+                .iter()
+                .find(|member| member.user_id == "owner")
+                .expect("owner")
+                .role,
+            "owner"
+        );
+        assert_eq!(
+            staff
+                .iter()
+                .find(|member| member.user_id == "cashier")
+                .expect("cashier")
+                .role,
+            "receptionist"
+        );
+        assert_eq!(
+            staff
+                .iter()
+                .find(|member| member.user_id == "accounting")
+                .expect("accounting")
+                .role,
+            "advisor"
+        );
+        assert_eq!(
+            staff
+                .iter()
+                .find(|member| member.user_id == "accounting")
+                .expect("accounting")
+                .status,
+            "revoked"
+        );
+        assert!(db
+            .find_user_credentials("org", "Luisa")
+            .expect("looks up disabled user")
+            .is_none());
     }
 
     #[test]
@@ -5131,15 +5331,20 @@ mod tests {
                 &organization_id,
                 "Carlos Caja",
                 "$argon2id$staff",
-                "cashier",
+                "receptionist",
             )
             .expect("creates staff");
-        assert_eq!(staff.role, "cashier");
+        assert_eq!(staff.role, "receptionist");
         assert_eq!(staff.status, "active");
         assert_eq!(db.list_staff(&organization_id).expect("lists").len(), 2);
         assert!(matches!(
-            db.create_staff(&organization_id, "carlos caja", "$argon2id$x", "cashier")
-                .expect_err("duplicate user"),
+            db.create_staff(
+                &organization_id,
+                "carlos caja",
+                "$argon2id$x",
+                "receptionist"
+            )
+            .expect_err("duplicate user"),
             DataError::UserAlreadyExists
         ));
 
@@ -5147,12 +5352,12 @@ mod tests {
             .find_user_credentials(&organization_id, "carlos caja")
             .expect("looks up staff")
             .expect("staff exists");
-        assert_eq!(credentials.role, "cashier");
+        assert_eq!(credentials.role, "receptionist");
 
         let updated = db
-            .update_staff(&organization_id, &staff.user_id, "accounting", "revoked")
+            .update_staff(&organization_id, &staff.user_id, "advisor", "revoked")
             .expect("revokes staff");
-        assert_eq!(updated.role, "accounting");
+        assert_eq!(updated.role, "advisor");
         assert_eq!(updated.status, "revoked");
         assert!(db
             .find_user_credentials(&organization_id, "Carlos Caja")
@@ -5169,9 +5374,96 @@ mod tests {
             "manager"
         );
         assert!(matches!(
-            db.update_staff(&organization_id, "missing", "cashier", "active")
+            db.update_staff(&organization_id, "missing", "receptionist", "active")
                 .expect_err("missing staff"),
             DataError::StaffNotFound
+        ));
+    }
+
+    #[test]
+    fn permission_overrides_are_replaced_and_owner_is_protected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let key = DbKey::generate();
+        let db = open_temp(&dir, &key);
+        let organization_id = db
+            .create_organization("Gimnasio Centro")
+            .expect("creates organization");
+        let owner = db
+            .create_owner(&organization_id, "Ana Pérez", "$argon2id$owner", None)
+            .expect("creates owner");
+        let staff = db
+            .create_staff(
+                &organization_id,
+                "Carlos Recepción",
+                "$argon2id$staff",
+                "receptionist",
+            )
+            .expect("creates staff");
+
+        let records = db
+            .replace_permission_overrides(
+                &organization_id,
+                &staff.user_id,
+                &[
+                    ("viewFinance".into(), "allow".into()),
+                    ("operatePos".into(), "deny".into()),
+                ],
+            )
+            .expect("replaces overrides");
+        assert_eq!(
+            records,
+            vec![
+                PermissionOverrideRecord {
+                    permission: "operatePos".into(),
+                    effect: "deny".into(),
+                },
+                PermissionOverrideRecord {
+                    permission: "viewFinance".into(),
+                    effect: "allow".into(),
+                },
+            ]
+        );
+        assert_eq!(
+            db.list_permission_overrides(&organization_id, &staff.user_id)
+                .expect("lists overrides"),
+            records
+        );
+
+        assert!(db
+            .replace_permission_overrides(&organization_id, &staff.user_id, &[])
+            .expect("clears overrides")
+            .is_empty());
+        assert!(db
+            .list_permission_overrides(&organization_id, &staff.user_id)
+            .expect("lists empty overrides")
+            .is_empty());
+
+        assert!(matches!(
+            db.replace_permission_overrides(
+                &organization_id,
+                &owner.id,
+                &[("viewFinance".into(), "allow".into())],
+            )
+            .expect_err("owner permissions are immutable"),
+            DataError::InvalidValue(_)
+        ));
+        assert!(matches!(
+            db.replace_permission_overrides(
+                &organization_id,
+                "missing",
+                &[("viewFinance".into(), "allow".into())],
+            )
+            .expect_err("missing staff"),
+            DataError::StaffNotFound
+        ));
+        assert!(matches!(
+            db.replace_permission_overrides(
+                &organization_id,
+                &staff.user_id,
+                &[("viewFinance".into(), "maybe".into())],
+            )
+            .expect_err("invalid effect"),
+            DataError::InvalidValue(_)
         ));
     }
 
