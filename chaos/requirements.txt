@@ -1,0 +1,4 @@
+# Dependencias del harness de caos.
+# El harness usa solo la biblioteca estandar para escribir JSONL, CSV y JSON.
+# Las metricas se emiten a CSV para poder importarlas en Prometheus o Grafana.
+psutil>=5.9

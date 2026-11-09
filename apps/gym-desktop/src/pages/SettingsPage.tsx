@@ -1,4 +1,4 @@
-import type { GymSettings, UpdateGymSettingsInput } from "@gym/contracts";
+import type { GymSettings, SettingsChangeRequest, UpdateGymSettingsInput } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -34,12 +34,16 @@ export function SettingsPage() {
   const { session } = useOutletContext<LayoutContext>();
   const canManage = session.permissions.includes("manageSettings");
   const [draft, setDraft] = useState<UpdateGymSettingsInput>(emptyDraft);
-  const [saved, setSaved] = useState<GymSettings | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const settings = useQuery<GymSettings>({
     queryKey: ["gym-settings"],
     queryFn: api.getGymSettings,
+  });
+  const requests = useQuery<SettingsChangeRequest[]>({
+    queryKey: ["settings-change-requests"],
+    queryFn: api.listSettingsChangeRequests,
   });
 
   useEffect(() => {
@@ -62,12 +66,37 @@ export function SettingsPage() {
     });
   }, [settings.data]);
 
-  const save = useMutation({
-    mutationFn: () => api.updateGymSettings(draft),
-    onSuccess: (updated) => {
+  const pending = requests.data?.find((request) => request.status === "pending") ?? null;
+  const canReview = canManage && pending !== null && pending.requestedBy !== session.userId;
+
+  const requestChange = useMutation({
+    mutationFn: () => api.requestSettingsChange(draft),
+    onSuccess: () => {
       setError(null);
-      setSaved(updated);
-      queryClient.setQueryData(["gym-settings"], updated);
+      setNotice(
+        "Solicitud enviada. Otra persona con permiso para administrar la configuración debe aprobarla.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["settings-change-requests"] });
+    },
+    onError: (cause) => setError(errorMessage(cause)),
+  });
+
+  const review = useMutation({
+    mutationFn: (approve: boolean) => {
+      if (!pending) {
+        throw new Error("No hay un cambio pendiente.");
+      }
+      return api.reviewSettingsChange({ id: pending.id, approve });
+    },
+    onSuccess: (request, approve) => {
+      setError(null);
+      setNotice(
+        approve
+          ? `Cambio aprobado. Configuración actualizada por ${request.reviewedByName ?? "otra persona"}.`
+          : "Cambio rechazado. La configuración anterior se mantiene.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["settings-change-requests"] });
+      void queryClient.invalidateQueries({ queryKey: ["gym-settings"] });
     },
     onError: (cause) => setError(errorMessage(cause)),
   });
@@ -97,17 +126,51 @@ export function SettingsPage() {
           {error}
         </div>
       )}
-      {saved && (
+      {notice && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-          Configuración guardada {formatDateTime(saved.updatedAt)}.
+          {notice}
         </div>
+      )}
+
+      {pending && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+          <h2 className="font-semibold">Cambio de configuración pendiente</h2>
+          <p className="mt-1 text-amber-800">
+            Solicitado por <strong>{pending.requestedByName}</strong> el{" "}
+            {formatDateTime(pending.createdAt)}. Aplica a: {pending.proposed.businessName} ·{" "}
+            {pending.proposed.openingTime}–{pending.proposed.closingTime}, turnos de{" "}
+            {pending.proposed.slotMinutes} min.
+          </p>
+          {canReview ? (
+            <div className="mt-4 flex gap-2">
+              <button
+                className={primaryButton}
+                disabled={review.isPending}
+                onClick={() => review.mutate(true)}
+              >
+                {review.isPending ? "Aplicando…" : "Aprobar y aplicar"}
+              </button>
+              <button
+                className="rounded-lg border border-amber-300 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                disabled={review.isPending}
+                onClick={() => review.mutate(false)}
+              >
+                Rechazar
+              </button>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-amber-700">
+              Necesita aprobación de otra persona con permiso para administrar la configuración.
+            </p>
+          )}
+        </section>
       )}
 
       <form
         className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
         onSubmit={(event) => {
           event.preventDefault();
-          save.mutate();
+          requestChange.mutate();
         }}
       >
         <h2 className="text-sm font-semibold text-slate-900">Identidad</h2>
@@ -241,9 +304,18 @@ export function SettingsPage() {
         </div>
 
         {canManage && (
-          <button className={`${primaryButton} mt-6`} disabled={save.isPending}>
-            {save.isPending ? "Guardando…" : "Guardar configuración"}
-          </button>
+          <div className="mt-6 space-y-2">
+            <button
+              className={primaryButton}
+              disabled={requestChange.isPending || pending !== null}
+            >
+              {requestChange.isPending ? "Enviando…" : "Solicitar cambio"}
+            </button>
+            <p className="text-xs text-slate-500">
+              Los cambios críticos requieren la aprobación de otra persona con permiso para
+              administrar la configuración.
+            </p>
+          </div>
         )}
         {!canManage && (
           <p className="mt-6 text-xs text-slate-500">

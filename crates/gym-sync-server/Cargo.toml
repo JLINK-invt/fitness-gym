@@ -1,0 +1,39 @@
+[package]
+name = "gym-sync-server"
+description = "Servidor de sincronización multi-gimnasio con autenticación mutua TLS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gym-sync-server"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+gym-sync.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-pki-types.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tower.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+x509-parser.workspace = true
+
+[dev-dependencies]
+gym-sync = { workspace = true, features = ["mtls"] }
+rcgen = "0.13"
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

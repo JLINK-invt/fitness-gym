@@ -1,12 +1,14 @@
 # Threat model · Fitness Gym desktop
 
-- **Versión:** 1.0 (Phase 1)
+- **Versión:** 2.0 (Phase 5)
 - **Fecha:** 2026-10-20
-- **Última actualización:** 2026-10-21
-- **Alcance:** app Tauri, core Rust, SQLite cifrada, backups locales y cadena de
-  build. La sincronización multi-dispositivo, el módulo externo de acceso real y
-  los pagos con terminal se modelan como fronteras futuras. Phase 1 solo incluye
-  un acceso simulado local sin autenticación.
+- **Última actualización:** 2026-10-29
+- **Alcance:** app Tauri, core Rust, SQLite cifrada, backups locales, servidor
+  de sincronización mTLS, instalador firmado con minisign y cadena de build.
+  La sincronización multi-dispositivo está habilitada (servidor mTLS con CN=org),
+  el módulo externo de acceso real y los pagos con terminal se modelan como
+  fronteras futuras. Phase 5 incluye build firmado, updater anti-downgrade,
+  retención de backups y aprobación dual de configuración crítica.
 - **Metodología:** STRIDE sobre fronteras de confianza + casos de abuso.
 
 ## 1. Supuestos
@@ -17,9 +19,10 @@
 - No hay administrador local hostil; el dueño controla el equipo.
 - El webview (WebKit/WebView2) está actualizado y no está comprometido.
 - La app no recibe contenido remoto ni ejecuta plugins de terceros.
-- No hay sincronización entre dispositivos habilitada. Existe un journal local
-  de outbox/inbox (esquema v16) que se prueba con un servidor falso; no hay
-  transporte de red, enrolamiento ni aplicación de eventos remotos.
+- La sincronización entre dispositivos está habilitada mediante un servidor
+  mTLS que identifica al gimnasio por el CN del certificado cliente. El journal
+  local (esquema v16) se usa con transporte real; existe deduplicación por
+  `idempotency_key` en ambos lados.
 
 ## 2. Activos
 
@@ -33,7 +36,7 @@
 | Clave de la base (256 bits) | Crítica | Keychain del SO |
 | Passphrase de backups | Crítica | Solo en la cabeza/gestor del usuario |
 | Backups `.gymbak` | Alta | Disco local, cifrados |
-| Binarios e instaladores | Alta | Canal de distribución (Phase 5) |
+| Binarios e instaladores | Alta | Canal de distribución (firmados con minisign, Phase 5) |
 | Disponibilidad del negocio | Alta | Equipo local |
 
 ### 2.1 Clasificación de datos y consentimiento
@@ -112,7 +115,7 @@ Fronteras:
 | Suplantar a otro empleado en el login local | Contraseña Argon2id, bloqueo tras 5 intentos, auditoría encadenada | Implementado |
 | Robar o adivinar el código de recuperación | 20 símbolos aleatorios, hash Argon2id, un solo uso, rotación, bloqueo y auditoría | Implementado |
 | Sesión abierta en mostrador | Bloqueo por inactividad (15 min) y cierre de sesión manual | Implementado |
-| Backup restaurado para hacerse pasar por otro usuario | Restore requiere `ManageBackups`; auditoría; aviso de reemplazo total | Parcial |
+| Backup restaurado para hacerse pasar por otro usuario | Restore requiere `ManageBackups`; auditoría `backup.restored`/`backup.restore_failed` con actor y archivo; aviso de reemplazo total | Implementado |
 | PIN compartido | PIN no será factor único | Decidido |
 
 ### T — Tampering
@@ -121,7 +124,7 @@ Fronteras:
 | --- | --- | --- |
 | Editar páginas de la base a mano | SQLCipher HMAC-SHA512 + `PRAGMA integrity_check` | Implementado |
 | Inyectar SQL desde la UI | Consultas parametrizadas; comandos con tipos | Implementado |
-| Reemplazar la base por una copia vieja válida | Checksum de migraciones y detección de drift; falta anti-rollback global | Parcial |
+| Reemplazar la base por una copia vieja válida | Checksum de migraciones y detección de drift; anti-rollback global por updater minisign (versión mínima, sin downgrade) | Implementado |
 | Alterar backups | SHA-256 del sobre en sidecar; passphrase para descifrar | Implementado |
 | Manipular `-wal`/`-shm` durante restore | Cierre, checkpoint y limpieza antes del swap | Implementado |
 | Cambiar código del frontend | CSP, assets locales y binario empaquetado | Implementado |
@@ -131,9 +134,9 @@ Fronteras:
 
 | Amenaza | Control | Estado |
 | --- | --- | --- |
-| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, personal, acceso, backups, catálogo y ventas; descuentos y ajustes pendientes |
+| Negar una venta, descuento o ajuste | `audit_events` con actor, acción, recurso y correlación | Implementado para auth, personal, acceso, backups, catálogo, ventas, descuentos y ajustes de inventario |
 | Cuenta compartida | Identidad por persona y bloqueo de sesión | Decidido |
-| Restore sin responsable | Registrar actor, backup y resultado | Pendiente |
+| Restore sin responsable | Registrar actor, backup y resultado (`backup.restored` / `backup.restore_failed`) | Implementado |
 
 ### I — Information disclosure
 
@@ -154,7 +157,7 @@ Fronteras:
 | Disco lleno durante venta o backup | Backup previo, escritura atómica, monitoreo de espacio | Parcial: venta en transacción; monitoreo pendiente |
 | Base corrupta | `integrity_check`, backups verificados, runbook de restore | Implementado |
 | Bloqueo por archivo abierto | Cierre y checkpoint antes de restore | Implementado |
-| Borrado accidental de backups | Confirmación y retención configurable | Pendiente |
+| Borrado accidental de backups | Confirmación y retención configurable (15 más recientes, >30 días) | Implementado |
 
 ### E — Elevation of privilege
 
@@ -173,8 +176,8 @@ Fronteras:
 | --- | --- | --- |
 | Dependencia npm/cargo maliciosa | Lockfiles, versiones fijas, revisión, `cargo deny`/`pnpm audit` | Parcial |
 | Toolchain alterado | `rust-toolchain.toml` fijo y CI reproducible | Implementado |
-| Instalador modificado | Firma y updater verificados | Phase 5 |
-| Downgrade a versión vulnerable | Updater sin downgrade y versión mínima | Phase 5 |
+| Instalador modificado | Firma minisign y updater verificados | Implementado |
+| Downgrade a versión vulnerable | Updater sin downgrade, versión mínima y `createUpdaterArtifacts` | Implementado |
 
 ## 6. Casos de abuso
 
@@ -232,24 +235,24 @@ sigue pendiente.
 
 | Amenaza | Control requerido | Estado |
 | --- | --- | --- |
-| Relay lee datos | Cifrado de extremo a extremo; el servidor solo ve sobres | Pendiente; el journal local está cifrado con SQLCipher |
-| Replay o duplicados | Log idempotente por organización y dispositivo | Local implementado; deduplicación server-side pendiente |
-| Conflicto de edición | Política por agregado y resolución explícita | Pendiente |
-| Dispositivo robado sigue sincronizando | Revocación de clave de dispositivo y rotación | Pendiente; sin transporte ni enrolamiento |
-| Downgrade de reglas | Versión mínima de contrato y migración firmada | Pendiente |
+| Relay lee datos | mTLS mutuo (CN=org); el servidor solo ve sobres firmados | Implementado (servidor mTLS con CN=org) |
+| Replay o duplicados | Log idempotente por organización y dispositivo | Implementado en ambos lados (`idempotency_key`) |
+| Conflicto de edición | Política por agregado y resolución explícita | Pendiente; arquitectura preparada |
+| Dispositivo robado sigue sincronizando | Revocación de certificado de dispositivo y rotación | Pendiente; arquitectura preparada (CA por org) |
+| Downgrade de reglas | Versión mínima de contrato y migración firmada | Implementado (updater minisign con versión mínima) |
 
 ## 7. Riesgos residuales
 
 | Riesgo | Nivel | Mitigación / decisión |
 | --- | --- | --- |
 | Sesión desbloqueada comprometida | Alto | Aceptado; EDR, bloqueo por inactividad, backups |
-| Rollback a una base válida anterior | Medio | Aceptado en Phase 1; evaluar ancla monotónica en Phase 2 |
-| Truncado del final de la cadena de auditoría | Medio | Parcial; copia externa y anclaje monotónico en una fase posterior |
+| Rollback a una base válida anterior | Bajo | Updater minisign impide downgrade; anti-rollback global aplicado |
+| Truncado del final de la cadena de auditoría | Bajo | Exportación inmutable con checksum SHA-256 y archivo .sha256; anclaje monotónico planificado |
 | Pérdida de passphrase de backups | Alto | Aceptado; educación y prueba trimestral de restore |
 | Pérdida de contraseña y código de recuperación del dueño | Alto | Sin puerta trasera; restaurar un backup o reinstalar en desarrollo |
 | Dependencia comprometida | Medio | Lockfiles, auditorías y builds firmados |
 | Keychain no disponible | Bajo | Fallback dev con advertencia; no se crea base en claro |
-| Sin anti-rollback de binarios hasta Phase 5 | Medio | Distribución controlada y firma planificada |
+| Sin anti-rollback de binarios hasta Phase 5 | Bajo | Updater minisign con versión mínima; `createUpdaterArtifacts` habilitado |
 
 ## 8. Fuera de alcance
 
@@ -276,7 +279,7 @@ sigue pendiente.
 - [x] Vertical slice de acceso simulado con deduplicación por `idempotency_key`.
 - [x] Backup/restore desde la UI con IPC simulado; el binario nativo se valida
       manualmente en Linux.
-- [ ] Revisión de dependencias y build firmado (firma en Phase 5).
+- [x] Revisión de dependencias y build firmado (firma minisign, Phase 5).
 
 ## 10. Revisión
 

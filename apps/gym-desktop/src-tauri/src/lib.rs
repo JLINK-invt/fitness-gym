@@ -7,8 +7,8 @@ use gym_contracts::{
     AccessReconciliationInput, AccessReconciliationSummary, AccessRequest, AccessSnapshot,
     AddCatalogPriceInput, AddCatalogVariantInput, AdjustInventoryInput, ApiError, AttendanceDay,
     AttendanceHour, AttendanceInput, AttendanceMember, AttendancePlan, AttendanceReport,
-    AttendanceZone, AuditEventSummary, AuditIntegrity, AuditResult, BackupSummary, BookClassInput,
-    Campaign, CancelMembershipInput, CashMovement, CashMovementType, CashSession,
+    AttendanceZone, AuditEventSummary, AuditExport, AuditIntegrity, AuditResult, BackupSummary,
+    BookClassInput, Campaign, CancelMembershipInput, CashMovement, CashMovementType, CashSession,
     CashSessionStatus, CatalogPrice, CatalogPriceInput, CatalogProduct, CatalogStatus, CatalogUnit,
     CatalogVariant, ClassBooking, ClassSession, CloseCashSessionInput, CreateCampaignInput,
     CreateCatalogItemInput, CreateClassInput, CreateEquipmentInput, CreateMaintenanceOrderInput,
@@ -24,13 +24,14 @@ use gym_contracts::{
     PaymentMethod, PaymentMethodTotal, PermissionEffect, PermissionOverride, ProductSalesTotal,
     Prospect, ProspectStatus, RecordCashMovementInput, RecordInventoryEntryInput,
     RecordMembershipPaymentInput, RecoveryCode, RecoveryKit, RenewMembershipInput, ReportRun,
-    ReportSchedule, RestoreOutcome, ResumeMembershipInput, Sale, SaleItem, SaleReturn,
-    SaleReturnItem, SessionSummary, SetReportScheduleEnabledInput, SetupState, StaffRole,
-    StaffStatus, StaffSummary, UpdateCampaignInput, UpdateCatalogProductInput,
-    UpdateCatalogVariantInput, UpdateClassBookingInput, UpdateClassInput, UpdateEquipmentInput,
-    UpdateGymSettingsInput, UpdateInventoryThresholdInput, UpdateMaintenanceOrderInput,
-    UpdateMemberInput, UpdateMembershipPlanInput, UpdateProspectInput, UpdateStaffPermissionsInput,
-    UpsertIntegrationLinkInput, CONTRACT_VERSION,
+    ReportSchedule, RestoreOutcome, ResumeMembershipInput, ReviewSettingsChangeInput, Sale,
+    SaleItem, SaleReturn, SaleReturnItem, SessionSummary, SetReportScheduleEnabledInput,
+    SettingsChangeRequest, SetupState, StaffRole, StaffStatus, StaffSummary, SyncClientSettings,
+    SyncRunReport, UpdateCampaignInput, UpdateCatalogProductInput, UpdateCatalogVariantInput,
+    UpdateClassBookingInput, UpdateClassInput, UpdateEquipmentInput, UpdateGymSettingsInput,
+    UpdateInventoryThresholdInput, UpdateMaintenanceOrderInput, UpdateMemberInput,
+    UpdateMembershipPlanInput, UpdateProspectInput, UpdateStaffPermissionsInput,
+    UpdateSyncClientSettingsInput, UpsertIntegrationLinkInput, CONTRACT_VERSION,
 };
 use gym_core::{
     access::{decide_member_access, decide_simulated_access, MemberAccessContext},
@@ -44,13 +45,13 @@ use gym_core::{
 };
 use gym_data::{
     sha256_hex, AccessEventRecord, AccessEventWriteOutcome, AccessSnapshotRecord,
-    AttendanceReportRecord, CampaignRecord, CashMovementRecord, CashSessionRecord,
-    CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord, ClassBookingRecord,
-    ClassRecord, DataError, Db, DbKey, EnvKeyProvider, EquipmentRecord, FileKeyProvider,
-    FinancialReportRecord, GymSettingsRecord, IntegrationLinkRecord, InventoryAdjustmentRecord,
-    InventoryItemRecord, InventoryMovementRecord, KeyProvider, KeyringKeyProvider,
-    MaintenanceOrderRecord, MaintenanceOrderUpdate, MemberAccountRecord, MemberCredentialRecord,
-    MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
+    AttendanceReportRecord, AuditEventRecord, CampaignRecord, CashMovementRecord,
+    CashSessionRecord, CatalogPriceRecord, CatalogProductRecord, CatalogVariantRecord,
+    ClassBookingRecord, ClassRecord, DataError, Db, DbKey, EnvKeyProvider, EquipmentRecord,
+    FileKeyProvider, FinancialReportRecord, GymSettingsRecord, IntegrationLinkRecord,
+    InventoryAdjustmentRecord, InventoryItemRecord, InventoryMovementRecord, KeyProvider,
+    KeyringKeyProvider, MaintenanceOrderRecord, MaintenanceOrderUpdate, MemberAccountRecord,
+    MemberCredentialRecord, MemberRecord, MembershipChargeRecord, MembershipDashboardRecord,
     MembershipDashboardTrendRecord, MembershipPaymentReceiptRecord, MembershipPaymentRecord,
     MembershipPlanRecord, MembershipRecord, NewCampaign, NewCashMovement, NewCatalogItem,
     NewCatalogPrice, NewCatalogProductUpdate, NewCatalogVariant, NewCatalogVariantUpdate, NewClass,
@@ -59,8 +60,8 @@ use gym_data::{
     NewReportSchedule, NewSale, NewSaleItem, NewSaleReturn, NewSaleReturnItem, PaymentChargeRecord,
     PaymentMethodTotalRecord, ProductSalesRecord, ProspectRecord, ReportRunRecord,
     ReportScheduleRecord, SaleItemRecord, SaleRecord, SaleReturnItemRecord, SaleReturnRecord,
-    UpdateClass, UpdateEquipment, UpdateGymSettings, UpdateMember, UpdateMembershipPlan,
-    UpdateProspect,
+    SettingsChangeRequestRecord, UpdateClass, UpdateEquipment, UpdateGymSettings, UpdateMember,
+    UpdateMembershipPlan, UpdateProspect,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -77,6 +78,7 @@ struct AppPaths {
     db_path: PathBuf,
     backups_dir: PathBuf,
     exports_dir: PathBuf,
+    sync_settings_path: PathBuf,
 }
 
 fn load_or_migrate_key(data_dir: &Path) -> Result<DbKey, String> {
@@ -2213,7 +2215,7 @@ fn create_report_schedule(
     input: NewReportScheduleInput,
     state: State<'_, AppState>,
 ) -> Result<ReportSchedule, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize(Permission::ExportReports)?;
     let db = state.db()?;
     db.create_report_schedule(
         &session.organization_id,
@@ -2228,7 +2230,7 @@ fn create_report_schedule(
 
 #[tauri::command]
 fn list_report_schedules(state: State<'_, AppState>) -> Result<Vec<ReportSchedule>, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize_any(&[Permission::ViewReports, Permission::ViewFinance])?;
     let db = state.db()?;
     db.list_report_schedules(&session.organization_id)
         .map(|records| records.into_iter().map(report_schedule_contract).collect())
@@ -2240,7 +2242,7 @@ fn set_report_schedule_enabled(
     input: SetReportScheduleEnabledInput,
     state: State<'_, AppState>,
 ) -> Result<ReportSchedule, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize(Permission::ExportReports)?;
     let db = state.db()?;
     db.set_report_schedule_enabled(&session.organization_id, &input.schedule_id, input.enabled)
         .map(report_schedule_contract)
@@ -2252,7 +2254,7 @@ fn list_report_runs(
     limit: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReportRun>, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize_any(&[Permission::ViewReports, Permission::ViewFinance])?;
     let db = state.db()?;
     db.list_report_runs(&session.organization_id, limit.unwrap_or(50) as usize)
         .map(|records| records.into_iter().map(report_run_contract).collect())
@@ -2357,7 +2359,7 @@ fn run_report_schedule(
 
 #[tauri::command]
 fn run_due_report_schedules(state: State<'_, AppState>) -> Result<Vec<ReportRun>, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize(Permission::ExportReports)?;
     let db = state.db()?;
     let now = Utc::now().to_rfc3339();
     let schedules = db
@@ -3531,7 +3533,55 @@ fn create_backup(
         "tauri",
         Some(&backup.id),
     );
+    let pruned = prune_old_backups(&state.paths.backups_dir);
+    if pruned > 0 {
+        let _ = db.record_audit_event(
+            &session.organization_id,
+            Some(&session.user_id),
+            "backup.pruned",
+            "backup",
+            "allowed",
+            "tauri",
+            Some(&pruned.to_string()),
+        );
+    }
     Ok(backup)
+}
+
+/// Retention policy: keeps the newest backups and only removes the ones that
+/// are both beyond the retention window and older than the grace period.
+fn prune_old_backups(backups_dir: &Path) -> usize {
+    const RETAINED: usize = 15;
+    const GRACE_DAYS: i64 = 30;
+
+    let summaries = match read_backups(backups_dir) {
+        Ok(summaries) => summaries,
+        Err(_) => return 0,
+    };
+    let cutoff = Utc::now() - chrono::TimeDelta::days(GRACE_DAYS);
+    let mut removed = 0;
+    for (index, summary) in summaries.iter().enumerate() {
+        if index < RETAINED {
+            continue;
+        }
+        let created_at = match chrono::DateTime::parse_from_rfc3339(&summary.created_at) {
+            Ok(value) => value.with_timezone(&Utc),
+            Err(_) => continue,
+        };
+        if created_at > cutoff {
+            continue;
+        }
+        let candidate = backups_dir.join(&summary.file_name);
+        if candidate.file_name().and_then(|value| value.to_str())
+            != Some(summary.file_name.as_str())
+        {
+            continue;
+        }
+        if fs::remove_file(&candidate).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 #[tauri::command]
@@ -3573,6 +3623,7 @@ fn restore_backup(
         Ok(outcome) => outcome,
         Err(error) => {
             let _ = db.reopen(&state.key);
+            record_restore_audit(db, "backup.restore_failed", &file_name);
             return Err(backup_api_error(error));
         }
     };
@@ -3580,10 +3631,30 @@ fn restore_backup(
         ApiError::new(ErrorCode::Storage, "falló la reapertura tras restaurar")
             .with_details(error.to_string())
     })?;
+    record_restore_audit(db, "backup.restored", &file_name);
     // The restored database may contain a different owner or revoked staff.
     state.clear_session();
 
     Ok(outcome)
+}
+
+/// Appends the restore trail to the active database so the operation is never
+/// silent. The actor is left empty because the restored snapshot may not
+/// contain the user that triggered the restore.
+fn record_restore_audit(db: &Db, action: &str, file_name: &str) {
+    let organization_id = match db.organization() {
+        Ok(Some(organization)) => organization.id,
+        _ => return,
+    };
+    let _ = db.record_audit_event(
+        &organization_id,
+        None,
+        action,
+        "backup",
+        "allowed",
+        "tauri",
+        Some(file_name),
+    );
 }
 
 fn csv_text(value: &str) -> String {
@@ -3708,6 +3779,48 @@ fn financial_report_csv(report: &FinancialReport, settings: &GymSettings) -> Str
     rows.join("\r\n") + "\r\n"
 }
 
+fn audit_events_csv(
+    events: &[AuditEventRecord],
+    settings: &GymSettings,
+    integrity: &gym_data::AuditIntegrityRecord,
+) -> String {
+    let mut rows = vec![
+        "Auditoría inmutable".to_string(),
+        format!("Gimnasio,{}", csv_text(&settings.business_name)),
+        format!("Generado,{}", csv_text(&Utc::now().to_rfc3339())),
+        format!("Eventos,{}", events.len()),
+        format!("Cadena íntegra,{}", if integrity.valid { "sí" } else { "no" }),
+        format!("Eventos verificados,{}", integrity.checked_events),
+        format!(
+            "Primera secuencia rota,{}",
+            integrity
+                .first_broken_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_default()
+        ),
+        String::new(),
+        "Secuencia,ID,Fecha,Actor,Acción,Recurso,Resultado,Origen,Correlación,Hash previo,Hash evento"
+            .to_string(),
+    ];
+    for event in events {
+        rows.push(format!(
+            "{},{},{},{},{},{},{},{},{},{},{}",
+            event.sequence,
+            csv_text(&event.id),
+            csv_text(&event.created_at),
+            csv_text(event.actor_name.as_deref().unwrap_or("")),
+            csv_text(&event.action),
+            csv_text(&event.resource),
+            csv_text(&event.result),
+            csv_text(&event.origin),
+            csv_text(event.correlation_id.as_deref().unwrap_or("")),
+            csv_text(event.prev_hash.as_deref().unwrap_or("")),
+            csv_text(event.event_hash.as_deref().unwrap_or(""))
+        ));
+    }
+    rows.join("\r\n") + "\r\n"
+}
+
 fn report_api_error(error: DataError) -> ApiError {
     match error {
         DataError::InvalidValue(message) => ApiError::invalid(message),
@@ -3721,19 +3834,19 @@ fn financial_report(
     input: FinancialReportInput,
     state: State<'_, AppState>,
 ) -> Result<FinancialReport, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
+    let session = state.authorize_any(&[Permission::ViewFinance, Permission::ViewReports])?;
     let db = state.db()?;
     db.financial_report(&session.organization_id, &input.from, &input.to)
         .map_err(report_api_error)
         .map(financial_report_contract)
 }
 
-#[tauri::command]
-fn export_financial_report_csv(
-    input: FinancialReportInput,
-    state: State<'_, AppState>,
+fn export_financial_csv(
+    state: &AppState,
+    session: &gym_core::auth::Session,
+    input: &FinancialReportInput,
+    audit_resource: &str,
 ) -> Result<FinancialReportExport, ApiError> {
-    let session = state.authorize(Permission::ViewFinance)?;
     let db = state.db()?;
     let report = db
         .financial_report(&session.organization_id, &input.from, &input.to)
@@ -3766,7 +3879,7 @@ fn export_financial_report_csv(
         &session.organization_id,
         Some(&session.user_id),
         "report.exported",
-        "financial_report",
+        audit_resource,
         "allowed",
         "tauri",
         Some(&file_name),
@@ -3782,6 +3895,24 @@ fn export_financial_report_csv(
         path: path.to_string_lossy().into_owned(),
         bytes: csv.len() as u64,
     })
+}
+
+#[tauri::command]
+fn export_financial_report_csv(
+    input: FinancialReportInput,
+    state: State<'_, AppState>,
+) -> Result<FinancialReportExport, ApiError> {
+    let session = state.authorize(Permission::ExportFinance)?;
+    export_financial_csv(&state, &session, &input, "financial_report")
+}
+
+#[tauri::command]
+fn export_report_csv(
+    input: FinancialReportInput,
+    state: State<'_, AppState>,
+) -> Result<FinancialReportExport, ApiError> {
+    let session = state.authorize(Permission::ExportReports)?;
+    export_financial_csv(&state, &session, &input, "financial_report_export")
 }
 
 #[tauri::command]
@@ -3957,6 +4088,77 @@ fn maintenance_order_contract(record: MaintenanceOrderRecord) -> MaintenanceOrde
 }
 
 #[tauri::command]
+fn export_audit_csv(state: State<'_, AppState>) -> Result<AuditExport, ApiError> {
+    let session = state.authorize(Permission::ViewAudit)?;
+    let db = state.db()?;
+    let events = db
+        .list_audit_events_for_export(&session.organization_id)
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo leer la auditoría")
+                .with_details(error.to_string())
+        })?;
+    let integrity = db
+        .verify_audit_chain(&session.organization_id)
+        .map_err(|error| {
+            ApiError::new(ErrorCode::Storage, "no se pudo verificar la auditoría")
+                .with_details(error.to_string())
+        })?;
+    let settings = db
+        .gym_settings(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(gym_settings_contract)?;
+    let csv = audit_events_csv(&events, &settings, &integrity);
+    let checksum = sha256_hex(csv.as_bytes());
+    let generated_at = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+    let file_name = format!("auditoria-{generated_at}.csv");
+    let sidecar_name = format!("{file_name}.sha256");
+    fs::create_dir_all(&state.paths.exports_dir).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Storage,
+            "no se pudo preparar la carpeta de exportaciones",
+        )
+        .with_details(error.to_string())
+    })?;
+    let path = state.paths.exports_dir.join(&file_name);
+    let sidecar = state.paths.exports_dir.join(&sidecar_name);
+    fs::write(&path, csv.as_bytes()).map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo escribir la auditoría")
+            .with_details(error.to_string())
+    })?;
+    if let Err(error) = fs::write(&sidecar, format!("{checksum}  {file_name}\n")) {
+        let _ = fs::remove_file(&path);
+        return Err(
+            ApiError::new(ErrorCode::Storage, "no se pudo escribir el checksum")
+                .with_details(error.to_string()),
+        );
+    }
+    if let Err(error) = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "audit.exported",
+        "audit_event",
+        "allowed",
+        "tauri",
+        Some(&file_name),
+    ) {
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&sidecar);
+        return Err(
+            ApiError::new(ErrorCode::Storage, "no se pudo auditar la exportación")
+                .with_details(error.to_string()),
+        );
+    }
+    Ok(AuditExport {
+        file_name,
+        path: path.to_string_lossy().into_owned(),
+        bytes: csv.len() as u64,
+        checksum,
+        events: events.len() as u64,
+        integrity_valid: integrity.valid,
+    })
+}
+
+#[tauri::command]
 fn get_gym_settings(state: State<'_, AppState>) -> Result<GymSettings, ApiError> {
     let session = state.authorize(Permission::ViewSettings)?;
     let db = state.db()?;
@@ -3965,42 +4167,255 @@ fn get_gym_settings(state: State<'_, AppState>) -> Result<GymSettings, ApiError>
         .map(gym_settings_contract)
 }
 
+fn gym_settings_update(input: UpdateGymSettingsInput) -> UpdateGymSettings {
+    UpdateGymSettings {
+        business_name: input.business_name,
+        legal_name: input.legal_name,
+        tax_id: input.tax_id,
+        currency: input.currency,
+        timezone: input.timezone,
+        locale: input.locale,
+        opening_time: input.opening_time,
+        closing_time: input.closing_time,
+        slot_minutes: input.slot_minutes,
+        grace_minutes: input.grace_minutes,
+        inactivity_days: input.inactivity_days,
+        frozen_days: input.frozen_days,
+    }
+}
+
+fn settings_change_contract(record: SettingsChangeRequestRecord) -> SettingsChangeRequest {
+    let proposed = record.proposed;
+    SettingsChangeRequest {
+        id: record.id,
+        requested_by: record.requested_by,
+        requested_by_name: record.requested_by_name,
+        status: record.status,
+        proposed: UpdateGymSettingsInput {
+            business_name: proposed.business_name,
+            legal_name: proposed.legal_name,
+            tax_id: proposed.tax_id,
+            currency: proposed.currency,
+            timezone: proposed.timezone,
+            locale: proposed.locale,
+            opening_time: proposed.opening_time,
+            closing_time: proposed.closing_time,
+            slot_minutes: proposed.slot_minutes,
+            grace_minutes: proposed.grace_minutes,
+            inactivity_days: proposed.inactivity_days,
+            frozen_days: proposed.frozen_days,
+        },
+        created_at: record.created_at,
+        reviewed_by: record.reviewed_by,
+        reviewed_by_name: record.reviewed_by_name,
+        reviewed_at: record.reviewed_at,
+    }
+}
+
 #[tauri::command]
-fn update_gym_settings(
+fn request_settings_change(
     input: UpdateGymSettingsInput,
     state: State<'_, AppState>,
-) -> Result<GymSettings, ApiError> {
+) -> Result<SettingsChangeRequest, ApiError> {
     let session = state.authorize(Permission::ManageSettings)?;
     let db = state.db()?;
-    let settings = db
-        .update_gym_settings(
+    let request = db
+        .request_settings_change(
             &session.organization_id,
-            UpdateGymSettings {
-                business_name: input.business_name,
-                legal_name: input.legal_name,
-                tax_id: input.tax_id,
-                currency: input.currency,
-                timezone: input.timezone,
-                locale: input.locale,
-                opening_time: input.opening_time,
-                closing_time: input.closing_time,
-                slot_minutes: input.slot_minutes,
-                grace_minutes: input.grace_minutes,
-                inactivity_days: input.inactivity_days,
-                frozen_days: input.frozen_days,
-            },
+            &session.user_id,
+            &session.name,
+            gym_settings_update(input),
         )
         .map_err(operations_api_error)?;
     let _ = db.record_audit_event(
         &session.organization_id,
         Some(&session.user_id),
-        "settings.updated",
-        "gym_settings",
+        "settings.change_requested",
+        "settings_change_request",
         "allowed",
         "tauri",
-        Some(&settings.id),
+        Some(&request.id),
     );
-    Ok(gym_settings_contract(settings))
+    Ok(settings_change_contract(request))
+}
+
+#[tauri::command]
+fn list_settings_change_requests(
+    state: State<'_, AppState>,
+) -> Result<Vec<SettingsChangeRequest>, ApiError> {
+    let session = state.authorize(Permission::ViewSettings)?;
+    let db = state.db()?;
+    db.list_settings_change_requests(&session.organization_id)
+        .map_err(operations_api_error)
+        .map(|records| records.into_iter().map(settings_change_contract).collect())
+}
+
+#[tauri::command]
+fn review_settings_change(
+    input: ReviewSettingsChangeInput,
+    state: State<'_, AppState>,
+) -> Result<SettingsChangeRequest, ApiError> {
+    let session = state.authorize(Permission::ManageSettings)?;
+    let db = state.db()?;
+    let request = db
+        .review_settings_change_request(
+            &session.organization_id,
+            &input.id,
+            &session.user_id,
+            &session.name,
+            input.approve,
+        )
+        .map_err(operations_api_error)?;
+    let event = if input.approve {
+        "settings.change_approved"
+    } else {
+        "settings.change_rejected"
+    };
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        event,
+        "settings_change_request",
+        "allowed",
+        "tauri",
+        Some(&request.id),
+    );
+    Ok(settings_change_contract(request))
+}
+
+fn read_sync_settings(path: &Path) -> SyncClientSettings {
+    let empty = SyncClientSettings {
+        base_url: String::new(),
+        client_cert_path: String::new(),
+        client_key_path: String::new(),
+        ca_cert_path: String::new(),
+    };
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(_) => return empty,
+    };
+    serde_json::from_str(&contents).unwrap_or(empty)
+}
+
+fn write_sync_settings(path: &Path, settings: &SyncClientSettings) -> Result<(), ApiError> {
+    let contents = serde_json::to_string_pretty(settings).map_err(|error| {
+        ApiError::new(ErrorCode::Internal, "no se pudo preparar la configuración")
+            .with_details(error.to_string())
+    })?;
+    fs::write(path, contents.as_bytes()).map_err(|error| {
+        ApiError::new(ErrorCode::Storage, "no se pudo guardar la configuración")
+            .with_details(error.to_string())
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_sync_settings(state: State<'_, AppState>) -> Result<SyncClientSettings, ApiError> {
+    state.authorize(Permission::ViewIntegrations)?;
+    Ok(read_sync_settings(&state.paths.sync_settings_path))
+}
+
+#[tauri::command]
+fn save_sync_settings(
+    input: UpdateSyncClientSettingsInput,
+    state: State<'_, AppState>,
+) -> Result<SyncClientSettings, ApiError> {
+    let session = state.authorize(Permission::ManageIntegrations)?;
+    let base_url = input.base_url.trim().to_string();
+    if !base_url.starts_with("https://") {
+        return Err(ApiError::invalid(
+            "la dirección del servidor de sincronización debe usar https",
+        ));
+    }
+    let client_cert_path = input.client_cert_path.trim().to_string();
+    let client_key_path = input.client_key_path.trim().to_string();
+    let ca_cert_path = input.ca_cert_path.trim().to_string();
+    if client_cert_path.is_empty() || client_key_path.is_empty() || ca_cert_path.is_empty() {
+        return Err(ApiError::invalid(
+            "indica el certificado, la llave y la autoridad del servidor",
+        ));
+    }
+    for path in [&client_cert_path, &client_key_path, &ca_cert_path] {
+        if !Path::new(path).exists() {
+            return Err(ApiError::invalid(format!("no existe el archivo {path}")));
+        }
+    }
+    let settings = SyncClientSettings {
+        base_url,
+        client_cert_path,
+        client_key_path,
+        ca_cert_path,
+    };
+    write_sync_settings(&state.paths.sync_settings_path, &settings)?;
+    let db = state.db()?;
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "sync.settings_saved",
+        "sync_client",
+        "allowed",
+        "tauri",
+        Some(&settings.base_url),
+    );
+    Ok(settings)
+}
+
+#[tauri::command]
+fn run_sync_now(state: State<'_, AppState>) -> Result<SyncRunReport, ApiError> {
+    let session = state.authorize(Permission::ManageIntegrations)?;
+    let settings = read_sync_settings(&state.paths.sync_settings_path);
+    if settings.base_url.is_empty() {
+        return Err(ApiError::invalid(
+            "configura primero el servidor de sincronización",
+        ));
+    }
+    let config = gym_sync::mtls::SyncClientConfig {
+        base_url: settings.base_url.clone(),
+        client_cert_path: PathBuf::from(&settings.client_cert_path),
+        client_key_path: PathBuf::from(&settings.client_key_path),
+        ca_cert_path: PathBuf::from(&settings.ca_cert_path),
+        timeout: std::time::Duration::from_secs(30),
+    };
+    let mut transport = gym_sync::mtls::MtlsSyncTransport::new(&config)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let db = state.db()?;
+    let report = {
+        let mut engine = gym_sync::SyncEngine::new(db, &mut transport);
+        engine
+            .sync_once(&session.organization_id, Utc::now())
+            .map_err(|error| {
+                ApiError::new(ErrorCode::Storage, "no se pudo sincronizar")
+                    .with_details(error.to_string())
+            })?
+    };
+    let _ = db.record_audit_event(
+        &session.organization_id,
+        Some(&session.user_id),
+        "sync.completed",
+        "sync_client",
+        if report.transport_error.is_some() {
+            "degraded"
+        } else {
+            "allowed"
+        },
+        "tauri",
+        Some(&report.transport_error.clone().unwrap_or_default()),
+    );
+    Ok(SyncRunReport {
+        pushed: report.pushed as u64,
+        accepted: report.accepted as u64,
+        retried: report.retried as u64,
+        dead_lettered: report.dead_lettered as u64,
+        pulled: report.pulled as u64,
+        applied: report.applied as u64,
+        duplicates: report.duplicates as u64,
+        transport_error: report.transport_error,
+    })
 }
 
 #[tauri::command]
@@ -4480,6 +4895,7 @@ pub fn run() {
         .ok();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(&data_dir)?;
@@ -4494,6 +4910,7 @@ pub fn run() {
             let paths = AppPaths {
                 backups_dir: data_dir.join("backups"),
                 exports_dir: data_dir.join("exports"),
+                sync_settings_path: data_dir.join("sync-client.json"),
                 db_path,
             };
 
@@ -4571,6 +4988,7 @@ pub fn run() {
             list_payment_charges,
             financial_report,
             export_financial_report_csv,
+            export_report_csv,
             list_inventory,
             list_inventory_movements,
             record_inventory_entry,
@@ -4584,8 +5002,14 @@ pub fn run() {
             record_cash_movement,
             list_audit_events,
             verify_audit_chain,
+            export_audit_csv,
             get_gym_settings,
-            update_gym_settings,
+            request_settings_change,
+            list_settings_change_requests,
+            review_settings_change,
+            get_sync_settings,
+            save_sync_settings,
+            run_sync_now,
             list_integration_links,
             upsert_integration_link,
             integration_journal_summary,
@@ -4635,7 +5059,10 @@ mod security_tests {
             fs::read_to_string(root.join("capabilities/default.json")).expect("reads capabilities");
         let parsed: serde_json::Value =
             serde_json::from_str(&capabilities).expect("valid capabilities JSON");
-        assert_eq!(parsed["permissions"], serde_json::json!(["core:default"]));
+        assert_eq!(
+            parsed["permissions"],
+            serde_json::json!(["core:default", "updater:default"])
+        );
         assert!(!capabilities.contains("shell:"));
         assert!(!capabilities.contains("fs:"));
 

@@ -1,18 +1,21 @@
 # Contrato local · configuración, complementos, clases, marketing, finanzas y mantenimiento
 
-- **Versión de contrato:** 3.1.0
+- **Versión de contrato:** 3.2.0
 - **Estado:** implementado
 - **Ámbito:** app Tauri, core Rust y SQLite local; no cruza la red
-- **Esquema:** v21 (`0021_gym_operations.sql`)
+- **Esquema:** v22 (`0022_critical_settings_approval.sql`)
 
 ## Comandos
 
 | Comando | Entrada | Salida | Permiso |
 | --- | --- | --- | --- |
 | `get_gym_settings` | — | `GymSettings` | `ViewSettings` |
-| `update_gym_settings` | `UpdateGymSettingsInput` | `GymSettings` | `ManageSettings` |
+| `request_settings_change` | `UpdateGymSettingsInput` | `SettingsChangeRequest` | `ManageSettings` |
+| `list_settings_change_requests` | — | `SettingsChangeRequest[]` | `ViewSettings` |
+| `review_settings_change` | `ReviewSettingsChangeInput` | `SettingsChangeRequest` | `ManageSettings` |
 | `list_integration_links` | — | `IntegrationLink[]` | `ViewIntegrations` |
 | `upsert_integration_link` | `UpsertIntegrationLinkInput` | `IntegrationLink` | `ManageIntegrations` |
+| `run_sync_now` | — | `SyncRunReport` | `ManageIntegrations` |
 | `integration_journal_summary` | — | `IntegrationJournalSummary` | `ViewIntegrations` |
 | `list_classes` | — | `ClassSession[]` | `ViewClasses` |
 | `create_class` | `CreateClassInput` | `ClassSession` | `ManageClasses` |
@@ -35,9 +38,14 @@
 
 - Configuración: nombre comercial obligatorio, moneda ISO de 3 letras y límites
   de días de inactividad/vencimiento; razón social y RFC son opcionales y solo
-  acompañan la exportación. Todo cambio queda auditado y sincronizado.
+  acompañan la exportación. Los cambios críticos requieren **aprobación de dos
+  personas**: el solicitante envía una solicitud (`request_settings_change`) y
+  otra persona con `ManageSettings` la aprueba (`review_settings_change`). Todo
+  cambio queda auditado y sincronizado. Pendientes máximos: 1 por gimnasio.
 - Complementos: `module` único por gimnasio; capacidades separadas por coma,
-  `pending` hasta el primer evento de sincronización.
+  `pending` hasta el primer evento de sincronización. Botón **Sincronizar ahora**
+  (permiso `ManageIntegrations`) ejecuta `run_sync_now` y muestra reporte de
+  push/pull.
 - Clases: cupo mínimo de 1; no se puede reducir por debajo de las reservas
   activas; solo clases activas aceptan reservas y un socio no puede duplicarlas.
 - Reservas: estados `booked`, `attended`, `cancelled`, `no_show`; la reactivación
@@ -46,14 +54,17 @@
   del gimnasio para inactividad y vencimiento, con valores por defecto de 30 días.
 - Finanzas: reutiliza `financial_report` y exporta CSV por el flujo de reportes
   existente, con razón social y RFC como metadata; no crea asientos ni calcula
-  impuestos.
+  impuestos. Exportaciones separadas: `export_financial_report_csv` (permiso
+  `ExportFinance`) y `export_report_csv` (permiso `ExportReports`).
 - Mantenimiento: órdenes `open`, `in_progress`, `completed`, `cancelled`;
   equipos `operational`, `maintenance`, `out_of_service`.
 
 ## Persistencia
 
-- `gym_settings`, `integration_links`, `classes`, `class_bookings`, `campaigns`,
-  `equipment` y `maintenance_orders` por `organization_id`.
+- `gym_settings`, `settings_change_requests`, `integration_links`, `classes`,
+  `class_bookings`, `campaigns`, `equipment` y `maintenance_orders` por
+  `organization_id`.
 - Escrituras transaccionales con `sync_outbox` (`settings.updated`,
   `integration.linked`, `class.*`, `class.booking.*`, `campaign.*`,
-  `equipment.*`, `maintenance.order.*`).
+  `equipment.*`, `maintenance.order.*`, `settings.change_approved`,
+  `settings.change_rejected`, `sync.completed`, `sync.settings_saved`).

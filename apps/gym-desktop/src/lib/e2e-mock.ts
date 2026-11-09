@@ -9,6 +9,7 @@ import type {
   MarketingFunnel,
   Permission,
   PermissionEffect,
+  SettingsChangeRequest,
   StaffRole,
 } from "@gym/contracts";
 
@@ -415,6 +416,7 @@ type StoredMembershipPaymentAttempt = {
     membershipReceiptSequence: number;
     memberSequence: number;
     gymSettings: GymSettings | null;
+    settingsChangeRequests: SettingsChangeRequest[];
     integrationLinks: IntegrationLink[];
     classes: ClassSession[];
     classBookings: ClassBooking[];
@@ -457,6 +459,7 @@ type StoredMembershipPaymentAttempt = {
     membershipReceiptSequence: 0,
     memberSequence: 0,
     gymSettings: null,
+    settingsChangeRequests: [],
     integrationLinks: [],
     classes: [],
     classBookings: [],
@@ -468,6 +471,44 @@ type StoredMembershipPaymentAttempt = {
   const now = () => new Date().toISOString();
   const uuid = () => crypto.randomUUID();
   const apiError = (code: string, message: string) => ({ code, message });
+
+  const validateGymSettingsInput = (input: unknown) => {
+    const value = (input ?? {}) as Record<string, unknown>;
+    const businessName = String(value.businessName ?? "").trim();
+    if (!businessName) {
+      throw apiError("invalidRequest", "El nombre comercial es obligatorio.");
+    }
+    const slotMinutes = Number(value.slotMinutes ?? 60);
+    const graceMinutes = Number(value.graceMinutes ?? 10);
+    const inactivityDays = Number(value.inactivityDays ?? 30);
+    const frozenDays = Number(value.frozenDays ?? 0);
+    if (slotMinutes < 15 || slotMinutes > 240) {
+      throw apiError("invalidRequest", "La duración de turno debe estar entre 15 y 240 minutos.");
+    }
+    if (graceMinutes < 0 || graceMinutes > 120) {
+      throw apiError("invalidRequest", "La tolerancia debe estar entre 0 y 120 minutos.");
+    }
+    if (inactivityDays < 1 || inactivityDays > 365) {
+      throw apiError("invalidRequest", "La inactividad debe estar entre 1 y 365 días.");
+    }
+    if (frozenDays < 0 || frozenDays > 365) {
+      throw apiError("invalidRequest", "Los días congelados deben estar entre 0 y 365.");
+    }
+    return {
+      businessName,
+      legalName: String(value.legalName ?? "").trim() || null,
+      taxId: String(value.taxId ?? "").trim() || null,
+      currency: String(value.currency ?? "MXN").trim() || "MXN",
+      timezone: String(value.timezone ?? "America/Mexico_City").trim(),
+      locale: String(value.locale ?? "es-MX").trim(),
+      openingTime: String(value.openingTime ?? "06:00").trim(),
+      closingTime: String(value.closingTime ?? "22:00").trim(),
+      slotMinutes,
+      graceMinutes,
+      inactivityDays,
+      frozenDays,
+    };
+  };
   const recoveryAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const makeRecoveryCode = () => {
     const bytes = crypto.getRandomValues(new Uint8Array(20));
@@ -965,6 +1006,26 @@ type StoredMembershipPaymentAttempt = {
       throw apiError("invalidRequest", "El reporte admite como máximo 366 días.");
     }
     return { fromMs, toMs };
+  };
+
+  const exportFinancialCsvSnapshot = (args: Record<string, unknown>) => {
+    const input = (args.input ?? {}) as Record<string, unknown>;
+    const report = financialReportSnapshot(
+      String(input.from ?? ""),
+      String(input.to ?? ""),
+    );
+    const fileName = `reporte-${report.from.slice(0, 10)}-${report.to.slice(0, 10)}-${Date.now()}.csv`;
+    recordAudit({
+      actor: state.session,
+      action: "report.exported",
+      resource: "financial_report",
+      correlationId: fileName,
+    });
+    return {
+      fileName,
+      path: `/tmp/fitness-gym-e2e/exports/${fileName}`,
+      bytes: 2_048,
+    };
   };
 
   const financialReportSnapshot = (from: string, to: string) => {
@@ -2415,23 +2476,31 @@ type StoredMembershipPaymentAttempt = {
         }
 
         case "export_financial_report_csv": {
-          requirePermission("viewFinance");
-          const input = (args.input ?? {}) as Record<string, unknown>;
-          const report = financialReportSnapshot(
-            String(input.from ?? ""),
-            String(input.to ?? ""),
-          );
-          const fileName = `reporte-${report.from.slice(0, 10)}-${report.to.slice(0, 10)}-${Date.now()}.csv`;
+          requirePermission("exportFinance");
+          return exportFinancialCsvSnapshot(args);
+        }
+
+        case "export_report_csv": {
+          requirePermission("exportReports");
+          return exportFinancialCsvSnapshot(args);
+        }
+
+        case "export_audit_csv": {
+          requirePermission("viewAudit");
+          const fileName = `auditoria-${Date.now()}.csv`;
           recordAudit({
             actor: state.session,
-            action: "report.exported",
-            resource: "financial_report",
+            action: "audit.exported",
+            resource: "audit_event",
             correlationId: fileName,
           });
           return {
             fileName,
             path: `/tmp/fitness-gym-e2e/exports/${fileName}`,
-            bytes: 2_048,
+            bytes: 4_096,
+            checksum: "a".repeat(64),
+            events: state.auditEvents.length,
+            integrityValid: true,
           };
         }
 
@@ -4057,51 +4126,167 @@ type StoredMembershipPaymentAttempt = {
           return { ...state.gymSettings };
         }
 
-        case "update_gym_settings": {
-          requirePermission("manageSettings");
-          const input = (args.input ?? {}) as Record<string, unknown>;
-          const businessName = String(input.businessName ?? "").trim();
-          if (!businessName) {
-            throw apiError("invalidRequest", "El nombre comercial es obligatorio.");
+        case "request_settings_change": {
+          const session = requirePermission("manageSettings");
+          if (state.settingsChangeRequests.some((request) => request.status === "pending")) {
+            throw apiError(
+              "invalidRequest",
+              "Ya existe un cambio de configuración pendiente de aprobación.",
+            );
           }
-          const slotMinutes = Number(input.slotMinutes ?? 60);
-          const graceMinutes = Number(input.graceMinutes ?? 10);
-          const inactivityDays = Number(input.inactivityDays ?? 30);
-          const frozenDays = Number(input.frozenDays ?? 0);
-          if (slotMinutes < 15 || slotMinutes > 240) {
-            throw apiError("invalidRequest", "La duración de turno debe estar entre 15 y 240 minutos.");
-          }
-          if (graceMinutes < 0 || graceMinutes > 120) {
-            throw apiError("invalidRequest", "La tolerancia debe estar entre 0 y 120 minutos.");
-          }
-          if (inactivityDays < 1 || inactivityDays > 365) {
-            throw apiError("invalidRequest", "La inactividad debe estar entre 1 y 365 días.");
-          }
-          if (frozenDays < 0 || frozenDays > 365) {
-            throw apiError("invalidRequest", "Los días congelados deben estar entre 0 y 365.");
-          }
-          state.gymSettings = {
-            id: state.gymSettings?.id ?? uuid(),
-            businessName,
-            legalName: String(input.legalName ?? "").trim() || null,
-            taxId: String(input.taxId ?? "").trim() || null,
-            currency: String(input.currency ?? "MXN").trim() || "MXN",
-            timezone: String(input.timezone ?? "America/Mexico_City").trim(),
-            locale: String(input.locale ?? "es-MX").trim(),
-            openingTime: String(input.openingTime ?? "06:00").trim(),
-            closingTime: String(input.closingTime ?? "22:00").trim(),
-            slotMinutes,
-            graceMinutes,
-            inactivityDays,
-            frozenDays,
-            updatedAt: now(),
+          const proposed = validateGymSettingsInput(args.input);
+          const request: SettingsChangeRequest = {
+            id: uuid(),
+            requestedBy: session.userId,
+            requestedByName: session.name,
+            status: "pending",
+            proposed,
+            createdAt: now(),
+            reviewedBy: null,
+            reviewedByName: null,
+            reviewedAt: null,
           };
+          state.settingsChangeRequests.unshift(request);
           recordAudit({
             actor: state.session,
-            action: "settings.updated",
-            resource: "gym_settings",
+            action: "settings.change_requested",
+            resource: "settings_change_request",
           });
-          return { ...state.gymSettings };
+          return { ...request, proposed: { ...request.proposed } };
+        }
+
+        case "list_settings_change_requests": {
+          requirePermission("viewSettings");
+          return state.settingsChangeRequests.map((request) => ({
+            ...request,
+            proposed: { ...request.proposed },
+          }));
+        }
+
+        case "review_settings_change": {
+          const session = requirePermission("manageSettings");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const id = String(input.id ?? "");
+          const approve = Boolean(input.approve);
+          const request = state.settingsChangeRequests.find((item) => item.id === id);
+          if (!request) {
+            throw apiError("invalidRequest", "La solicitud no existe.");
+          }
+          if (request.status !== "pending") {
+            throw apiError("invalidRequest", "La solicitud ya fue revisada.");
+          }
+          if (request.requestedBy === session.userId) {
+            throw apiError(
+              "invalidRequest",
+              "Quien solicita el cambio no puede aprobarlo.",
+            );
+          }
+          const activeStaff = state.staff.find(
+            (member) =>
+              member.id === session.userId && member.status === "active",
+          );
+          const requesterActive =
+            state.owner?.id === request.requestedBy ||
+            state.staff.some(
+              (member) =>
+                member.id === request.requestedBy && member.status === "active",
+            );
+          if (state.owner?.id !== session.userId && !activeStaff) {
+            throw apiError("forbidden", "El revisor debe ser personal activo.");
+          }
+          if (!requesterActive) {
+            throw apiError(
+              "invalidRequest",
+              "Quien solicitó el cambio ya no es personal activo.",
+            );
+          }
+          request.status = approve ? "approved" : "rejected";
+          request.reviewedBy = session.userId;
+          request.reviewedByName = session.name;
+          request.reviewedAt = now();
+          if (approve) {
+            const proposed = request.proposed;
+            state.gymSettings = {
+              id: state.gymSettings?.id ?? uuid(),
+              businessName: proposed.businessName,
+              legalName: proposed.legalName ?? null,
+              taxId: proposed.taxId ?? null,
+              currency: proposed.currency,
+              timezone: proposed.timezone,
+              locale: proposed.locale,
+              openingTime: proposed.openingTime,
+              closingTime: proposed.closingTime,
+              slotMinutes: proposed.slotMinutes,
+              graceMinutes: proposed.graceMinutes,
+              inactivityDays: proposed.inactivityDays,
+              frozenDays: proposed.frozenDays,
+              updatedAt: now(),
+            };
+            recordAudit({
+              actor: state.session,
+              action: "settings.change_approved",
+              resource: "settings_change_request",
+            });
+          } else {
+            recordAudit({
+              actor: state.session,
+              action: "settings.change_rejected",
+              resource: "settings_change_request",
+            });
+          }
+          return { ...request, proposed: { ...request.proposed } };
+        }
+
+        case "get_sync_settings": {
+          requirePermission("viewIntegrations");
+          return {
+            baseUrl: "https://sync.e2e.test",
+            clientCertPath: "/tmp/fitness-gym-e2e/sync/cliente.pem",
+            clientKeyPath: "/tmp/fitness-gym-e2e/sync/cliente.key",
+            caCertPath: "/tmp/fitness-gym-e2e/sync/autoridad.pem",
+          };
+        }
+
+        case "save_sync_settings": {
+          requirePermission("manageIntegrations");
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const baseUrl = String(input.baseUrl ?? "").trim();
+          if (!baseUrl.startsWith("https://")) {
+            throw apiError(
+              "invalidRequest",
+              "La dirección del servidor de sincronización debe usar https.",
+            );
+          }
+          recordAudit({
+            actor: state.session,
+            action: "sync.settings_saved",
+            resource: "sync_client",
+          });
+          return {
+            baseUrl,
+            clientCertPath: String(input.clientCertPath ?? "").trim(),
+            clientKeyPath: String(input.clientKeyPath ?? "").trim(),
+            caCertPath: String(input.caCertPath ?? "").trim(),
+          };
+        }
+
+        case "run_sync_now": {
+          requirePermission("manageIntegrations");
+          recordAudit({
+            actor: state.session,
+            action: "sync.completed",
+            resource: "sync_client",
+          });
+          return {
+            pushed: 3,
+            accepted: 3,
+            retried: 0,
+            deadLettered: 0,
+            pulled: 2,
+            applied: 2,
+            duplicates: 0,
+            transportError: null,
+          };
         }
 
         case "list_integration_links": {

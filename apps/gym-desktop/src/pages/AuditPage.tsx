@@ -1,6 +1,7 @@
-import type { AuditEventSummary, AuditResult } from "@gym/contracts";
+import type { AuditEventSummary, AuditExport, AuditResult } from "@gym/contracts";
 import { errorMessage } from "@gym/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { formatDateTime } from "../lib/format";
 import { api } from "../lib/tauri";
@@ -18,6 +19,9 @@ const resultClasses: Record<AuditResult, string> = {
 };
 
 export function AuditPage() {
+  const queryClient = useQueryClient();
+  const [exported, setExported] = useState<AuditExport | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const events = useQuery<AuditEventSummary[]>({
     queryKey: ["audit-events"],
     queryFn: () => api.listAuditEvents(200),
@@ -29,6 +33,17 @@ export function AuditPage() {
     staleTime: 0,
   });
 
+  const exportAudit = useMutation({
+    mutationFn: api.exportAuditCsv,
+    onSuccess: (result) => {
+      setExportError(null);
+      setExported(result);
+      void queryClient.invalidateQueries({ queryKey: ["audit-events"] });
+      void queryClient.invalidateQueries({ queryKey: ["audit-integrity"] });
+    },
+    onError: (cause) => setExportError(errorMessage(cause)),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -38,18 +53,49 @@ export function AuditPage() {
             se borra desde la aplicación.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void events.refetch();
-            void integrity.refetch();
-          }}
-          disabled={events.isFetching || integrity.isFetching}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-        >
-          {events.isFetching || integrity.isFetching ? "Verificando…" : "Verificar cadena"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              void events.refetch();
+              void integrity.refetch();
+            }}
+            disabled={events.isFetching || integrity.isFetching}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+          >
+            {events.isFetching || integrity.isFetching ? "Verificando…" : "Verificar cadena"}
+          </button>
+          <button
+            type="button"
+            onClick={() => exportAudit.mutate()}
+            disabled={exportAudit.isPending}
+            className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {exportAudit.isPending ? "Exportando…" : "Exportar auditoría"}
+          </button>
+        </div>
       </div>
+
+      {exportError && (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          {exportError}
+        </p>
+      )}
+      {exported && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+          <p>
+            Exportaste {exported.events} evento(s) a <strong>{exported.fileName}</strong> (
+            {exported.bytes} bytes).
+          </p>
+          <p className="mt-1 break-all text-xs">
+            SHA-256: {exported.checksum}
+          </p>
+          <p className="mt-1 text-xs">
+            Se guardó un archivo <code>.sha256</code> junto al CSV para verificar la copia fuera
+            de la app.
+          </p>
+        </div>
+      )}
 
       <IntegrityBanner
         loading={integrity.isLoading}

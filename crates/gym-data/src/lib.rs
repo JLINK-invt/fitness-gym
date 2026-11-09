@@ -29,9 +29,10 @@ pub use db::{
     NewSaleReturn, NewSaleReturnItem, OrganizationRecord, OwnerRecoveryRecord, PaymentChargeRecord,
     PaymentMethodTotalRecord, PermissionOverrideRecord, ProductSalesRecord, ProspectRecord,
     RecordedModuleEvent, ReportRunRecord, ReportScheduleRecord, SaleItemRecord, SaleRecord,
-    SaleReturnItemRecord, SaleReturnRecord, StaffRecord, SyncFailureRecord, SyncInboxRecord,
-    SyncOutboxRecord, UpdateClass, UpdateEquipment, UpdateGymSettings, UpdateMember,
-    UpdateMembershipPlan, UpdateProspect, UserCredentialRecord, UserRecord,
+    SaleReturnItemRecord, SaleReturnRecord, SettingsChangeRequestRecord, StaffRecord,
+    SyncFailureRecord, SyncInboxRecord, SyncOutboxRecord, UpdateClass, UpdateEquipment,
+    UpdateGymSettings, UpdateMember, UpdateMembershipPlan, UpdateProspect, UserCredentialRecord,
+    UserRecord,
 };
 pub use error::DataError;
 pub use key::{DbKey, EnvKeyProvider, FileKeyProvider, KeyProvider, KeyringKeyProvider};

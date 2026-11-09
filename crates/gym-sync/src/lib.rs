@@ -3,6 +3,10 @@ use gym_data::{Db, InboundSyncEvent, SyncOutboxRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(feature = "mtls")]
+pub mod mtls;
+pub mod wire;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
     #[error("database error: {0}")]
